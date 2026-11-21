@@ -43,10 +43,24 @@ class Settings(BaseSettings):
     max_job_bytes: int = 2 * 1024 * 1024 * 1024  # 2 GiB
     max_playlist_items: int = 50
     max_gallery_items: int = 100
+    max_livestream_duration_seconds: int = 1800  # 30 min live recording cap
     probe_timeout_seconds: int = 25
     download_timeout_seconds: int = 1800
     ffmpeg_timeout_seconds: int = 600
     direct_aria2_threshold_bytes: int = 10 * 1024 * 1024  # >= 10 MiB uses aria2c
+
+    # Browser fallback (Tier-3 Playwright)
+    enable_browser_fallback: bool = True
+    browser_timeout_seconds: int = 18
+    browser_max_contexts: int = 2
+    browser_recycle_after_jobs: int = 50
+
+    # Persistent job store & optional S3/R2 object storage
+    job_db_path: Path | None = None
+    s3_bucket: str | None = None
+    s3_endpoint_url: str | None = None
+    s3_region: str = "auto"
+    s3_key_prefix: str = "neon-sync/artifacts/"
 
     # Concurrency & rate limiting
     max_concurrent_probes: int = 8
@@ -58,6 +72,8 @@ class Settings(BaseSettings):
     # Engine binary overrides (auto-discovered via PATH when None)
     ytdlp_bin: str = "yt-dlp"
     gallery_dl_bin: str = "gallery-dl"
+    streamlink_bin: str = "streamlink"
+    nm3u8dl_bin: str = "N_m3u8DL-RE"
     aria2c_bin: str = "aria2c"
     ffmpeg_bin: str = "ffmpeg"
     ffprobe_bin: str = "ffprobe"
