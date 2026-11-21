@@ -485,7 +485,7 @@
       $("fuel-dl-count").textContent = "∞";
       renderLedStrip($("fuel-ai-leds"), 5, 5, true);
       renderLedStrip($("fuel-dl-leds"), 5, 5, true);
-      $("tier-cta").textContent = t.has_llm_provider ? "Gemini ✓" : "Pro ✓";
+      $("tier-cta").textContent = t.has_llm_provider ? "Gemini Ready" : "Pro Active";
     } else {
       $("fuel-ai-count").textContent = `${t.agent_runs_remaining}/${t.agent_runs_limit_daily}`;
       $("fuel-dl-count").textContent = `${t.downloads_remaining}/${t.downloads_limit_hourly}`;
@@ -506,6 +506,49 @@
   }
 
   /* =========================================================================
+     LUCIDE ICON LIBRARY RENDERER (Zero Emojis · Instant SVG + Offline Safe)
+     ========================================================================= */
+  const LUCIDE_FALLBACK = {
+    film: '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M7 3v18"/><path d="M3 7.5h4"/><path d="M3 12h18"/><path d="M3 16.5h4"/><path d="M17 3v18"/><path d="M17 7.5h4"/><path d="M17 16.5h4"/>',
+    headphones: '<path d="M3 14h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a9 9 0 0 1 18 0v7a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3"/>',
+    subtitles: '<rect width="18" height="14" x="3" y="5" rx="2"/><path d="M7 15h4M15 15h2M7 11h2M13 11h4"/>',
+    image: '<rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/>',
+    sparkles: '<path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/>',
+    "file-down": '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M12 18v-6"/><path d="m9 15 3 3 3-3"/>',
+    "volume-2": '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>',
+    "volume-x": '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="22" x2="16" y1="9" y2="15"/><line x1="16" x2="22" y1="9" y2="15"/>',
+    scissors: '<circle cx="6" cy="6" r="3"/><path d="M8.12 8.12 12 12"/><path d="M20 4 8.12 15.88"/><circle cx="6" cy="18" r="3"/><path d="M14.8 14.8 20 20"/>',
+    zap: '<path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/>',
+    monitor: '<rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/>',
+    tv: '<rect width="20" height="15" x="2" y="7" rx="2" ry="2"/><polyline points="17 2 12 7 7 2"/>',
+    smartphone: '<rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/>',
+    play: '<polygon points="6 3 20 12 6 21 6 3"/>',
+    music: '<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>',
+    "disc-3": '<circle cx="12" cy="12" r="10"/><path d="M6 12c0-1.7.7-3.2 1.8-4.2"/><circle cx="12" cy="12" r="2"/><path d="M18 12c0 1.7-.7 3.2-1.8 4.2"/>',
+    "sliders-horizontal": '<line x1="21" x2="14" y1="4" y2="4"/><line x1="10" x2="3" y1="4" y2="4"/><line x1="21" x2="12" y1="12" y2="12"/><line x1="8" x2="3" y1="12" y2="12"/><line x1="21" x2="16" y1="20" y2="20"/><line x1="12" x2="3" y1="20" y2="20"/><line x1="14" x2="14" y1="2" y2="6"/><line x1="8" x2="8" y1="10" y2="14"/><line x1="16" x2="16" y1="18" y2="22"/>',
+    gem: '<path d="M6 3h12l4 6-10 13L2 9Z"/><path d="M11 3 8 9l4 13 4-13-3-6"/><path d="M2 9h20"/>',
+    "audio-waveform": '<path d="M2 13a2 2 0 0 0 2-2V7a2 2 0 0 1 4 0v13a2 2 0 0 0 4 0V4a2 2 0 0 1 4 0v13a2 2 0 0 0 4 0v-4a2 2 0 0 1 2-2"/>',
+    globe: '<circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/>',
+    "file-text": '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/>',
+    layers: '<path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/><path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"/><path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/>',
+    camera: '<path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/>',
+    terminal: '<polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/>',
+    "chevron-right": '<path d="m9 18 6-6-6-6"/>',
+    download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/>',
+  };
+
+  function iconSvg(name, cls = "ico-sm") {
+    const pascal = String(name || "sparkles").replace(/(^|-)([a-z0-9])/g, (_, __, c) => c.toUpperCase());
+    if (window.lucide && window.lucide.icons && window.lucide.icons[pascal]) {
+      const el = window.lucide.createElement(window.lucide.icons[pascal]);
+      el.setAttribute("class", `lucide ${cls}`);
+      return el.outerHTML;
+    }
+    const inner = LUCIDE_FALLBACK[name] || LUCIDE_FALLBACK.sparkles;
+    return `<svg class="lucide ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">${inner}</svg>`;
+  }
+
+  /* =========================================================================
      PURE CASCADING POSSIBILITY TREE SPEC (Every Click Blooms Next Paths!)
      ========================================================================= */
 
@@ -519,35 +562,35 @@
 
     if (ct === "image" || ct === "gallery") {
       return [
-        { key: "image", theme: "image", icon: "🖼", title: ct === "gallery" ? "Gallery Images" : "Image", sub: "Original · WebP · PNG · JPEG", edgeLabel: "IMAGE", nextStep: "image_format", delta: { mode: "image" } },
-        { key: "agent", theme: "agent", icon: "✦", title: "AI Agent", sub: "Resize, slice or custom command", edgeLabel: "AGENT", nextStep: "agent_paths", delta: {} },
+        { key: "image", theme: "image", icon: "image", title: ct === "gallery" ? "Gallery Images" : "Image", sub: "Original · WebP · PNG · JPEG", edgeLabel: "IMAGE", nextStep: "image_format", delta: { mode: "image" } },
+        { key: "agent", theme: "agent", icon: "sparkles", title: "AI Agent", sub: "Resize, slice or custom command", edgeLabel: "AGENT", nextStep: "agent_paths", delta: {} },
       ];
     }
     if (ct === "audio") {
       const list = [
-        { key: "audio", theme: "audio", icon: "🎧", title: "Audio", sub: "MP3 · M4A · Opus · FLAC · WAV", edgeLabel: "AUDIO", nextStep: "audio_format", delta: { mode: "audio" } },
+        { key: "audio", theme: "audio", icon: "headphones", title: "Audio", sub: "MP3 · M4A · Opus · FLAC · WAV", edgeLabel: "AUDIO", nextStep: "audio_format", delta: { mode: "audio" } },
       ];
-      if (hasThumb) list.push({ key: "image", theme: "image", icon: "🖼", title: "Cover Art", sub: "Extract & convert thumbnail", edgeLabel: "COVER", nextStep: "image_format", delta: { mode: "image", _useThumbnailUrl: true } });
-      list.push({ key: "agent", theme: "agent", icon: "✦", title: "AI Agent", sub: "Trim, normalize or summarize", edgeLabel: "AGENT", nextStep: "agent_paths", delta: {} });
+      if (hasThumb) list.push({ key: "image", theme: "image", icon: "image", title: "Cover Art", sub: "Extract & convert thumbnail", edgeLabel: "COVER", nextStep: "image_format", delta: { mode: "image", _useThumbnailUrl: true } });
+      list.push({ key: "agent", theme: "agent", icon: "sparkles", title: "AI Agent", sub: "Trim, normalize or summarize", edgeLabel: "AGENT", nextStep: "agent_paths", delta: {} });
       return list;
     }
     if (ct === "document" || ct === "archive" || ct === "file") {
       return [
-        { key: "direct", theme: "video", icon: "📄", title: "Direct Download", sub: p?.size_bytes ? `${fmtBytes(p.size_bytes)} · Verified` : "Fast verified file", edgeLabel: "FILE", isLeaf: true, delta: { mode: "direct" } },
-        { key: "agent", theme: "agent", icon: "✦", title: "AI Agent", sub: "Inspect or automate workflow", edgeLabel: "AGENT", nextStep: "agent_paths", delta: {} },
+        { key: "direct", theme: "video", icon: "file-down", title: "Direct Download", sub: p?.size_bytes ? `${fmtBytes(p.size_bytes)} · Verified` : "Fast verified file", edgeLabel: "FILE", isLeaf: true, delta: { mode: "direct" } },
+        { key: "agent", theme: "agent", icon: "sparkles", title: "AI Agent", sub: "Inspect or automate workflow", edgeLabel: "AGENT", nextStep: "agent_paths", delta: {} },
       ];
     }
 
     // Video / YouTube / Social / Stream
     const list = [
-      { key: "video", theme: "video", icon: "🎬", title: "Video", sub: maxH ? `Up to ${maxH >= 2160 ? "4K" : maxH + "p"} · Audio or Muted` : "With Audio · Muted · Trim Clip", edgeLabel: "VIDEO", nextStep: "video_track", delta: { mode: "video" } },
-      { key: "audio", theme: "audio", icon: "🎧", title: "Audio", sub: "MP3 · M4A · Opus · FLAC · WAV", edgeLabel: "AUDIO", nextStep: "audio_format", delta: { mode: "audio" } },
-      { key: "subtitles", theme: "subtitles", icon: "💬", title: "Subtitles", sub: subCount ? `${subCount} track(s) · .txt · AI Brief` : "Auto captions · .txt · AI Brief", edgeLabel: "CAPTIONS", nextStep: "sub_lang", delta: { mode: "video", extract_subtitles: true, subtitles_only: true } },
+      { key: "video", theme: "video", icon: "film", title: "Video", sub: maxH ? `Up to ${maxH >= 2160 ? "4K" : maxH + "p"} · Audio or Muted` : "With Audio · Muted · Trim Clip", edgeLabel: "VIDEO", nextStep: "video_track", delta: { mode: "video" } },
+      { key: "audio", theme: "audio", icon: "headphones", title: "Audio", sub: "MP3 · M4A · Opus · FLAC · WAV", edgeLabel: "AUDIO", nextStep: "audio_format", delta: { mode: "audio" } },
+      { key: "subtitles", theme: "subtitles", icon: "subtitles", title: "Subtitles", sub: subCount ? `${subCount} track(s) · .txt · AI Brief` : "Auto captions · .txt · AI Brief", edgeLabel: "CAPTIONS", nextStep: "sub_lang", delta: { mode: "video", extract_subtitles: true, subtitles_only: true } },
     ];
     if (hasThumb) {
-      list.push({ key: "image", theme: "image", icon: "🖼", title: "Thumbnail", sub: "HD Cover · WebP · PNG · JPEG", edgeLabel: "COVER", nextStep: "image_format", delta: { mode: "image", _useThumbnailUrl: true } });
+      list.push({ key: "image", theme: "image", icon: "image", title: "Thumbnail", sub: "HD Cover · WebP · PNG · JPEG", edgeLabel: "COVER", nextStep: "image_format", delta: { mode: "image", _useThumbnailUrl: true } });
     }
-    list.push({ key: "agent", theme: "agent", icon: "✦", title: "AI Agent", sub: "Smart clips, audio & summaries", edgeLabel: "AGENT", nextStep: "agent_paths", delta: {} });
+    list.push({ key: "agent", theme: "agent", icon: "sparkles", title: "AI Agent", sub: "Smart clips, audio & summaries", edgeLabel: "AGENT", nextStep: "agent_paths", delta: {} });
     return list;
   }
 
@@ -561,18 +604,18 @@
 
     if (step === "video_track") {
       return [
-        { key: "with_audio", theme: "video", icon: "🔊", title: "Video + Audio", sub: "Full video with stereo sound", edgeLabel: "WITH AUDIO", nextStep: "video_quality", delta: { video_only: false } },
-        { key: "video_only", theme: "video", icon: "🔇", title: "Video Only", sub: "Muted visual track for B-roll", edgeLabel: "MUTED", nextStep: "video_quality", delta: { video_only: true } },
-        { key: "trim_video", theme: "video", icon: "✂️", title: "Trim Clip Range", sub: "Cut exact start → end seconds", edgeLabel: "CLIP", inputKind: "trim", isLeaf: true, delta: { video_only: false, video_quality: "1080", video_container: "mp4", video_codec: "h264" } },
+        { key: "with_audio", theme: "video", icon: "volume-2", title: "Video + Audio", sub: "Full video with stereo sound", edgeLabel: "WITH AUDIO", nextStep: "video_quality", delta: { video_only: false } },
+        { key: "video_only", theme: "video", icon: "volume-x", title: "Video Only", sub: "Muted visual track for B-roll", edgeLabel: "MUTED", nextStep: "video_quality", delta: { video_only: true } },
+        { key: "trim_video", theme: "video", icon: "scissors", title: "Trim Clip Range", sub: "Cut exact start → end seconds", edgeLabel: "CLIP", inputKind: "trim", isLeaf: true, delta: { video_only: false, video_quality: "1080", video_container: "mp4", video_codec: "h264" } },
       ];
     }
 
     if (step === "video_quality") {
       return [
-        { key: "q_2160", theme: "video", icon: "⚡", title: "4K · 2160p", sub: "Ultra-HD master stream", edgeLabel: "4K", pro: true, detected: availH.has(2160), nextStep: "video_container", delta: { video_quality: "2160" } },
-        { key: "q_1080", theme: "video", icon: "✨", title: "1080p · Full HD", sub: "Crisp standard high-def", edgeLabel: "1080p", detected: availH.has(1080), nextStep: "video_container", delta: { video_quality: "1080" } },
-        { key: "q_720", theme: "video", icon: "📺", title: "720p · HD", sub: "Fast download · lighter file", edgeLabel: "720p", detected: availH.has(720), nextStep: "video_container", delta: { video_quality: "720" } },
-        { key: "q_480", theme: "video", icon: "📱", title: "480p · Compact", sub: "Mobile friendly & quick", edgeLabel: "480p", detected: availH.has(480), nextStep: "video_container", delta: { video_quality: "480" } },
+        { key: "q_2160", theme: "video", icon: "zap", title: "4K · 2160p", sub: "Ultra-HD master stream", edgeLabel: "4K", pro: true, detected: availH.has(2160), nextStep: "video_container", delta: { video_quality: "2160" } },
+        { key: "q_1080", theme: "video", icon: "monitor", title: "1080p · Full HD", sub: "Crisp standard high-def", edgeLabel: "1080p", detected: availH.has(1080), nextStep: "video_container", delta: { video_quality: "1080" } },
+        { key: "q_720", theme: "video", icon: "tv", title: "720p · HD", sub: "Fast download · lighter file", edgeLabel: "720p", detected: availH.has(720), nextStep: "video_container", delta: { video_quality: "720" } },
+        { key: "q_480", theme: "video", icon: "smartphone", title: "480p · Compact", sub: "Mobile friendly & quick", edgeLabel: "480p", detected: availH.has(480), nextStep: "video_container", delta: { video_quality: "480" } },
       ];
     }
 
@@ -580,38 +623,38 @@
       const qLbl = acc.video_quality === "2160" ? "4K" : `${acc.video_quality || "1080"}p`;
       const mLbl = acc.video_only ? "Muted" : "With Audio";
       return [
-        { key: "c_mp4", theme: "video", icon: "▶", title: "MP4 · H.264", sub: `${qLbl} ${mLbl} · Plays everywhere`, edgeLabel: "MP4", isLeaf: true, delta: { video_container: "mp4", video_codec: "h264", remux_faststart: true } },
-        { key: "c_mkv", theme: "video", icon: "▶", title: "MKV · Best Codec", sub: `${qLbl} ${mLbl} · Zero re-encode`, edgeLabel: "MKV", isLeaf: true, delta: { video_container: "mkv", video_codec: "auto" } },
-        { key: "c_webm", theme: "video", icon: "▶", title: "WebM · VP9/AV1", sub: `${qLbl} ${mLbl} · Smallest size`, edgeLabel: "WEBM", isLeaf: true, delta: { video_container: "webm", video_codec: "vp9" } },
-        { key: "c_subs", theme: "video", icon: "▶", title: "MP4 + Embedded Subs", sub: `${qLbl} · Includes captions`, edgeLabel: "MP4+SUBS", isLeaf: true, delta: { video_container: "mp4", video_codec: "h264", extract_subtitles: true, embed_subtitles: true } },
+        { key: "c_mp4", theme: "video", icon: "download", title: "MP4 · H.264", sub: `${qLbl} ${mLbl} · Plays everywhere`, edgeLabel: "MP4", isLeaf: true, delta: { video_container: "mp4", video_codec: "h264", remux_faststart: true } },
+        { key: "c_mkv", theme: "video", icon: "download", title: "MKV · Best Codec", sub: `${qLbl} ${mLbl} · Zero re-encode`, edgeLabel: "MKV", isLeaf: true, delta: { video_container: "mkv", video_codec: "auto" } },
+        { key: "c_webm", theme: "video", icon: "download", title: "WebM · VP9/AV1", sub: `${qLbl} ${mLbl} · Smallest size`, edgeLabel: "WEBM", isLeaf: true, delta: { video_container: "webm", video_codec: "vp9" } },
+        { key: "c_subs", theme: "video", icon: "subtitles", title: "MP4 + Embedded Subs", sub: `${qLbl} · Includes captions`, edgeLabel: "MP4+SUBS", isLeaf: true, delta: { video_container: "mp4", video_codec: "h264", extract_subtitles: true, embed_subtitles: true } },
       ];
     }
 
     if (step === "audio_format") {
       return [
-        { key: "af_mp3", theme: "audio", icon: "🎵", title: "MP3", sub: "Universal stereo compatibility", edgeLabel: "MP3", nextStep: "audio_quality", delta: { audio_format: "mp3" } },
-        { key: "af_m4a", theme: "audio", icon: "🍎", title: "M4A · AAC", sub: "Native Apple & mobile audio", edgeLabel: "M4A", nextStep: "audio_quality", delta: { audio_format: "m4a" } },
-        { key: "af_opus", theme: "audio", icon: "🎛", title: "Opus", sub: "Ultra-clean web compression", edgeLabel: "OPUS", nextStep: "audio_quality", delta: { audio_format: "opus" } },
-        { key: "af_flac", theme: "audio", icon: "💎", title: "FLAC · Lossless", sub: "Bit-perfect studio master", edgeLabel: "FLAC", pro: true, nextStep: "audio_lossless", delta: { audio_format: "flac", audio_bitrate: "auto" } },
-        { key: "af_wav", theme: "audio", icon: "🎚", title: "WAV · Raw PCM", sub: "Uncompressed DAW edit track", edgeLabel: "WAV", pro: true, nextStep: "audio_lossless", delta: { audio_format: "wav", audio_bitrate: "auto" } },
+        { key: "af_mp3", theme: "audio", icon: "music", title: "MP3", sub: "Universal stereo compatibility", edgeLabel: "MP3", nextStep: "audio_quality", delta: { audio_format: "mp3" } },
+        { key: "af_m4a", theme: "audio", icon: "disc-3", title: "M4A · AAC", sub: "Native Apple & mobile audio", edgeLabel: "M4A", nextStep: "audio_quality", delta: { audio_format: "m4a" } },
+        { key: "af_opus", theme: "audio", icon: "sliders-horizontal", title: "Opus", sub: "Ultra-clean web compression", edgeLabel: "OPUS", nextStep: "audio_quality", delta: { audio_format: "opus" } },
+        { key: "af_flac", theme: "audio", icon: "gem", title: "FLAC · Lossless", sub: "Bit-perfect studio master", edgeLabel: "FLAC", pro: true, nextStep: "audio_lossless", delta: { audio_format: "flac", audio_bitrate: "auto" } },
+        { key: "af_wav", theme: "audio", icon: "audio-waveform", title: "WAV · Raw PCM", sub: "Uncompressed DAW edit track", edgeLabel: "WAV", pro: true, nextStep: "audio_lossless", delta: { audio_format: "wav", audio_bitrate: "auto" } },
       ];
     }
 
     if (step === "audio_quality") {
       const fmt = (acc.audio_format || "mp3").toUpperCase();
       return [
-        { key: "aq_320n", theme: "audio", icon: "▶", title: `320k · Loudnorm`, sub: `${fmt} · EBU R128 leveled volume`, edgeLabel: "320K+NORM", isLeaf: true, delta: { audio_bitrate: "320k", normalize_audio: true, embed_metadata: true } },
-        { key: "aq_320", theme: "audio", icon: "▶", title: `320k · Original`, sub: `${fmt} · Maximum bitrate stereo`, edgeLabel: "320K", isLeaf: true, delta: { audio_bitrate: "320k", normalize_audio: false, embed_metadata: true } },
-        { key: "aq_192", theme: "audio", icon: "▶", title: `192k · Balanced`, sub: `${fmt} · Fast & compact`, edgeLabel: "192K", isLeaf: true, delta: { audio_bitrate: "192k", normalize_audio: false, embed_metadata: true } },
-        { key: "aq_trim", theme: "audio", icon: "✂️", title: "Trim Audio Range", sub: `Cut exact clip in ${fmt} 320k`, edgeLabel: "TRIM", inputKind: "trim", isLeaf: true, delta: { audio_bitrate: "320k", normalize_audio: true } },
+        { key: "aq_320n", theme: "audio", icon: "audio-waveform", title: `320k · Loudnorm`, sub: `${fmt} · EBU R128 leveled volume`, edgeLabel: "320K+NORM", isLeaf: true, delta: { audio_bitrate: "320k", normalize_audio: true, embed_metadata: true } },
+        { key: "aq_320", theme: "audio", icon: "download", title: `320k · Original`, sub: `${fmt} · Maximum bitrate stereo`, edgeLabel: "320K", isLeaf: true, delta: { audio_bitrate: "320k", normalize_audio: false, embed_metadata: true } },
+        { key: "aq_192", theme: "audio", icon: "download", title: `192k · Balanced`, sub: `${fmt} · Fast & compact`, edgeLabel: "192K", isLeaf: true, delta: { audio_bitrate: "192k", normalize_audio: false, embed_metadata: true } },
+        { key: "aq_trim", theme: "audio", icon: "scissors", title: "Trim Audio Range", sub: `Cut exact clip in ${fmt} 320k`, edgeLabel: "TRIM", inputKind: "trim", isLeaf: true, delta: { audio_bitrate: "320k", normalize_audio: true } },
       ];
     }
 
     if (step === "audio_lossless") {
       const fmt = (acc.audio_format || "flac").toUpperCase();
       return [
-        { key: "al_norm", theme: "audio", icon: "▶", title: `${fmt} · Loudnorm`, sub: "Broadcast EBU R128 loudness", edgeLabel: "NORM", isLeaf: true, delta: { normalize_audio: true, embed_metadata: true } },
-        { key: "al_raw", theme: "audio", icon: "▶", title: `${fmt} · Untouched`, sub: "Original dynamic range", edgeLabel: "RAW", isLeaf: true, delta: { normalize_audio: false, embed_metadata: true } },
+        { key: "al_norm", theme: "audio", icon: "audio-waveform", title: `${fmt} · Loudnorm`, sub: "Broadcast EBU R128 loudness", edgeLabel: "NORM", isLeaf: true, delta: { normalize_audio: true, embed_metadata: true } },
+        { key: "al_raw", theme: "audio", icon: "download", title: `${fmt} · Untouched`, sub: "Original dynamic range", edgeLabel: "RAW", isLeaf: true, delta: { normalize_audio: false, embed_metadata: true } },
       ];
     }
 
@@ -621,7 +664,7 @@
         ? detected.map((s) => ({
             key: `lang_${s.language}`,
             theme: "subtitles",
-            icon: "🌐",
+            icon: "globe",
             title: `${s.language.toUpperCase()} Captions`,
             sub: s.is_auto_generated ? "Auto-generated track" : "Manual human track",
             edgeLabel: s.language.toUpperCase(),
@@ -630,13 +673,13 @@
             delta: { subtitle_languages: [s.language], subtitle_mode: "include_auto" },
           }))
         : [
-            { key: "lang_en", theme: "subtitles", icon: "🌐", title: "English (EN)", sub: "Manual or auto captions", edgeLabel: "EN", nextStep: "sub_format", delta: { subtitle_languages: ["en"], subtitle_mode: "include_auto" } },
-            { key: "lang_hi", theme: "subtitles", icon: "🌐", title: "Hindi (HI)", sub: "Manual or auto captions", edgeLabel: "HI", nextStep: "sub_format", delta: { subtitle_languages: ["hi"], subtitle_mode: "include_auto" } },
+            { key: "lang_en", theme: "subtitles", icon: "globe", title: "English (EN)", sub: "Manual or auto captions", edgeLabel: "EN", nextStep: "sub_format", delta: { subtitle_languages: ["en"], subtitle_mode: "include_auto" } },
+            { key: "lang_hi", theme: "subtitles", icon: "globe", title: "Hindi (HI)", sub: "Manual or auto captions", edgeLabel: "HI", nextStep: "sub_format", delta: { subtitle_languages: ["hi"], subtitle_mode: "include_auto" } },
           ];
       langNodes.push({
         key: "sub_ai_brief",
         theme: "agent",
-        icon: "▶",
+        icon: "sparkles",
         title: "AI Summary Brief",
         sub: "Instant key points via Neon Agent",
         edgeLabel: "AI BRIEF",
@@ -648,37 +691,37 @@
 
     if (step === "sub_format") {
       return [
-        { key: "sf_txt", theme: "subtitles", icon: "▶", title: "Clean .txt + VTT", sub: "Stripped readable transcript", edgeLabel: "TXT+VTT", isLeaf: true, delta: { subtitle_format: "vtt", generate_transcript: true } },
-        { key: "sf_srt", theme: "subtitles", icon: "▶", title: "SubRip (.srt)", sub: "Ready for Premiere / DaVinci", edgeLabel: "SRT", isLeaf: true, delta: { subtitle_format: "srt", generate_transcript: true } },
-        { key: "sf_vtt", theme: "subtitles", icon: "▶", title: "WebVTT (.vtt)", sub: "Standard HTML5 player track", edgeLabel: "VTT", isLeaf: true, delta: { subtitle_format: "vtt", generate_transcript: false } },
+        { key: "sf_txt", theme: "subtitles", icon: "file-text", title: "Clean .txt + VTT", sub: "Stripped readable transcript", edgeLabel: "TXT+VTT", isLeaf: true, delta: { subtitle_format: "vtt", generate_transcript: true } },
+        { key: "sf_srt", theme: "subtitles", icon: "subtitles", title: "SubRip (.srt)", sub: "Ready for Premiere / DaVinci", edgeLabel: "SRT", isLeaf: true, delta: { subtitle_format: "srt", generate_transcript: true } },
+        { key: "sf_vtt", theme: "subtitles", icon: "subtitles", title: "WebVTT (.vtt)", sub: "Standard HTML5 player track", edgeLabel: "VTT", isLeaf: true, delta: { subtitle_format: "vtt", generate_transcript: false } },
       ];
     }
 
     if (step === "image_format") {
       return [
-        { key: "if_orig", theme: "image", icon: "▶", title: "Original HD", sub: "Exact source resolution", edgeLabel: "ORIGINAL", isLeaf: true, delta: { image_format: "original" } },
-        { key: "if_webp", theme: "image", icon: "⚡", title: "WebP", sub: "Ultra-fast modern web image", edgeLabel: "WEBP", nextStep: "image_size", delta: { image_format: "webp", image_quality: 90 } },
-        { key: "if_png", theme: "image", icon: "🎨", title: "PNG · Lossless", sub: "Crisp lossless pixels", edgeLabel: "PNG", nextStep: "image_size", delta: { image_format: "png", image_quality: 95 } },
-        { key: "if_jpg", theme: "image", icon: "📷", title: "JPEG", sub: "Universal photo format", edgeLabel: "JPEG", nextStep: "image_size", delta: { image_format: "jpg", image_quality: 90 } },
+        { key: "if_orig", theme: "image", icon: "download", title: "Original HD", sub: "Exact source resolution", edgeLabel: "ORIGINAL", isLeaf: true, delta: { image_format: "original" } },
+        { key: "if_webp", theme: "image", icon: "zap", title: "WebP", sub: "Ultra-fast modern web image", edgeLabel: "WEBP", nextStep: "image_size", delta: { image_format: "webp", image_quality: 90 } },
+        { key: "if_png", theme: "image", icon: "layers", title: "PNG · Lossless", sub: "Crisp lossless pixels", edgeLabel: "PNG", nextStep: "image_size", delta: { image_format: "png", image_quality: 95 } },
+        { key: "if_jpg", theme: "image", icon: "camera", title: "JPEG", sub: "Universal photo format", edgeLabel: "JPEG", nextStep: "image_size", delta: { image_format: "jpg", image_quality: 90 } },
       ];
     }
 
     if (step === "image_size") {
       const fmt = (acc.image_format || "webp").toUpperCase();
       return [
-        { key: "is_orig", theme: "image", icon: "▶", title: `${fmt} · Full Size`, sub: "Keep original dimensions", edgeLabel: "FULL", isLeaf: true, delta: { image_max_width: null } },
-        { key: "is_1920", theme: "image", icon: "▶", title: `${fmt} · 1920px`, sub: "Full HD width resize", edgeLabel: "1920px", isLeaf: true, delta: { image_max_width: 1920 } },
-        { key: "is_1280", theme: "image", icon: "▶", title: `${fmt} · 1280px`, sub: "Web / Thumbnail HD size", edgeLabel: "1280px", isLeaf: true, delta: { image_max_width: 1280 } },
-        { key: "is_800", theme: "image", icon: "▶", title: `${fmt} · 800px`, sub: "Compact social preview", edgeLabel: "800px", isLeaf: true, delta: { image_max_width: 800 } },
+        { key: "is_orig", theme: "image", icon: "download", title: `${fmt} · Full Size`, sub: "Keep original dimensions", edgeLabel: "FULL", isLeaf: true, delta: { image_max_width: null } },
+        { key: "is_1920", theme: "image", icon: "monitor", title: `${fmt} · 1920px`, sub: "Full HD width resize", edgeLabel: "1920px", isLeaf: true, delta: { image_max_width: 1920 } },
+        { key: "is_1280", theme: "image", icon: "tv", title: `${fmt} · 1280px`, sub: "Web / Thumbnail HD size", edgeLabel: "1280px", isLeaf: true, delta: { image_max_width: 1280 } },
+        { key: "is_800", theme: "image", icon: "smartphone", title: `${fmt} · 800px`, sub: "Compact social preview", edgeLabel: "800px", isLeaf: true, delta: { image_max_width: 800 } },
       ];
     }
 
     if (step === "agent_paths") {
       return [
-        { key: "ag_clip", theme: "agent", icon: "▶", title: "15s Reel Clip", sub: "0:30–0:45 · 1080p H.264 MP4", edgeLabel: "AI CLIP", isLeaf: true, delta: { _agentPrompt: "clip 0:30 to 0:45 in 1080p h264 mp4" } },
-        { key: "ag_mp3", theme: "agent", icon: "▶", title: "Mastered 320k MP3", sub: "Extract audio + Loudnorm", edgeLabel: "AI AUDIO", isLeaf: true, delta: { _agentPrompt: "extract audio as 320k mp3 and normalize volume" } },
-        { key: "ag_sum", theme: "agent", icon: "▶", title: "Summarize Media", sub: "Key takeaways & metadata", edgeLabel: "AI BRIEF", isLeaf: true, delta: { _agentPrompt: "summarize the key points from" } },
-        { key: "ag_custom", theme: "agent", icon: "⌨️", title: "Custom AI Command", sub: "Tell Neon Agent what to build", edgeLabel: "PROMPT", inputKind: "agent_prompt", isLeaf: true, delta: {} },
+        { key: "ag_clip", theme: "agent", icon: "scissors", title: "15s Reel Clip", sub: "0:30–0:45 · 1080p H.264 MP4", edgeLabel: "AI CLIP", isLeaf: true, delta: { _agentPrompt: "clip 0:30 to 0:45 in 1080p h264 mp4" } },
+        { key: "ag_mp3", theme: "agent", icon: "headphones", title: "Mastered 320k MP3", sub: "Extract audio + Loudnorm", edgeLabel: "AI AUDIO", isLeaf: true, delta: { _agentPrompt: "extract audio as 320k mp3 and normalize volume" } },
+        { key: "ag_sum", theme: "agent", icon: "sparkles", title: "Summarize Media", sub: "Key takeaways & metadata", edgeLabel: "AI BRIEF", isLeaf: true, delta: { _agentPrompt: "summarize the key points from" } },
+        { key: "ag_custom", theme: "agent", icon: "terminal", title: "Custom AI Command", sub: "Tell Neon Agent what to build", edgeLabel: "PROMPT", inputKind: "agent_prompt", isLeaf: true, delta: {} },
       ];
     }
 
@@ -1239,7 +1282,11 @@
         <div class="port port-in" data-port="in" data-node="${esc(node.id)}"></div>
         <div class="port port-out" data-port="out" data-node="${esc(node.id)}"><span class="port-tip mono">Drag to link</span></div>
       `;
-      const arrowLabel = node.inputKind ? "" : node.isLeaf ? "▶ Run" : (node.expanded ? "●" : "▸");
+      const arrowHtml = node.inputKind
+        ? ""
+        : node.isLeaf
+          ? `${iconSvg("play", "ico-xs")}<span>Run</span>`
+          : (node.expanded ? `<span class="detected-dot" style="background:currentColor;"></span>` : iconSvg("chevron-right", "ico-xs"));
       let inlineExtra = "";
 
       if (node.inputKind === "trim") {
@@ -1250,14 +1297,14 @@
               <span class="muted">→</span>
               <input type="text" class="cfg-input mono" data-trim-end value="${esc(node.clipEnd)}" placeholder="0:15" />
             </div>
-            <button class="reactor-fire btn-sm" data-run-inline-leaf="${esc(node.id)}">▶ Extract Clip</button>
+            <button class="reactor-fire btn-sm" data-run-inline-leaf="${esc(node.id)}">${iconSvg("play", "ico-xs")}<span>Extract Clip</span></button>
           </div>
         `;
       } else if (node.inputKind === "agent_prompt") {
         inlineExtra = `
           <div class="choice-inline-body">
             <input type="text" class="cfg-input" data-agent-prompt value="${esc(node.customPrompt)}" placeholder="clip 0:30 to 0:45 in 1080p…" />
-            <button class="reactor-fire btn-sm btn-agent" data-run-inline-leaf="${esc(node.id)}">▶ Run Agent</button>
+            <button class="reactor-fire btn-sm btn-agent" data-run-inline-leaf="${esc(node.id)}">${iconSvg("sparkles", "ico-xs")}<span>Run Agent</span></button>
           </div>
         `;
       }
@@ -1266,7 +1313,7 @@
         ${ports}
         <div class="choice-card" ${node.inputKind ? 'data-drag-handle="1"' : `data-choice-click="${esc(node.id)}"`}>
           <div class="choice-left">
-            <div class="choice-icon">${node.icon}</div>
+            <div class="choice-icon">${iconSvg(node.icon)}</div>
             <div style="min-width:0;">
               <div class="choice-title">
                 ${node.detected ? '<span class="detected-dot" title="Detected in stream"></span>' : ""}
@@ -1276,7 +1323,7 @@
               <div class="choice-sub mono">${esc(node.sub || "")}</div>
             </div>
           </div>
-          ${arrowLabel ? `<span class="choice-arrow mono">${arrowLabel}</span>` : ""}
+          ${arrowHtml ? `<span class="choice-arrow mono">${arrowHtml}</span>` : ""}
         </div>
         ${inlineExtra}
       `;
@@ -2184,6 +2231,9 @@
 
   /* ---------- Boot ---------- */
   (async () => {
+    if (window.lucide && typeof window.lucide.createIcons === "function") {
+      window.lucide.createIcons();
+    }
     bindAllEvents();
     await Promise.all([refreshTier(), loadEngines(false)]);
     await hydrateFromBackend();

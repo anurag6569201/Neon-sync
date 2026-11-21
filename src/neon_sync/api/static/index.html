@@ -55,10 +55,12 @@
 
     <div class="bezel-controls">
       <button class="hw-btn" id="history-toggle-btn" title="Open searchable history & pin past jobs">
+        <i data-lucide="history" class="ico-sm"></i>
         <span>History</span>
         <span class="count-chip mono num" id="history-count-chip">0</span>
       </button>
       <button class="hw-btn" id="tidy-graph-btn" title="Auto-arrange all nodes cleanly">
+        <i data-lucide="layout-grid" class="ico-sm"></i>
         <span>Tidy</span>
       </button>
       <button class="hw-btn active" id="autosave-pill" title="Auto-save extracted files straight to Downloads">
@@ -74,6 +76,7 @@
         <span class="mono num" id="engines-pill-text">Engines</span>
       </button>
       <button class="hw-btn" id="api-modal-btn" title="Copy live API cURL / JSON">
+        <i data-lucide="code-2" class="ico-sm"></i>
         <span class="mono">API</span>
       </button>
       <button class="hw-btn" id="theme-btn" title="Switch Obsidian / Ceramic theme">
@@ -112,7 +115,7 @@
     <!-- Subtle Top-Center Banner For Default Starter Tree -->
     <div id="sandbox-banner" class="sandbox-banner hidden">
       <span class="pulse-dot"></span>
-      <span class="mono">CLICK ANY NODE TO BLOOM ITS NEXT PATHS — CLICK A <strong style="color:var(--accent);">▶</strong> LEAF TO EXTRACT, OR PASTE ANY LINK (<kbd>⌘V</kbd>)</span>
+      <span class="mono">CLICK ANY NODE TO BLOOM ITS NEXT PATHS · CLICK A <strong style="color:var(--accent);">RUN</strong> LEAF TO EXTRACT, OR PASTE ANY LINK (<kbd>⌘V</kbd>)</span>
       <button class="link-btn mono" id="clear-sandbox-btn">Blank Desk</button>
     </div>
   </main>
@@ -120,13 +123,13 @@
   <!-- Context Patch-Action Menu (Drag Cable to Empty Canvas) -->
   <div id="patch-menu" class="patch-menu hidden">
     <div class="patch-menu-head mono">SPAWN NEW PATH</div>
-    <button class="patch-item" data-patch-action="branch_video"><span>🎬 Video Path Configurator</span><kbd class="mono">VID</kbd></button>
-    <button class="patch-item" data-patch-action="branch_audio"><span>🎧 Audio Master Configurator</span><kbd class="mono">AUD</kbd></button>
-    <button class="patch-item" data-patch-action="branch_subtitles"><span>💬 Subtitles &amp; AI Brief</span><kbd class="mono">SUB</kbd></button>
-    <button class="patch-item" data-patch-action="branch_image"><span>🖼 Thumbnail / Image Path</span><kbd class="mono">IMG</kbd></button>
-    <button class="patch-item" data-patch-action="branch_agent"><span>✦ Custom AI Agent Node</span><kbd class="mono">AI</kbd></button>
+    <button class="patch-item" data-patch-action="branch_video"><span class="patch-item-label"><i data-lucide="film" class="ico-sm accent"></i> Video Paths</span><kbd class="mono">VID</kbd></button>
+    <button class="patch-item" data-patch-action="branch_audio"><span class="patch-item-label"><i data-lucide="headphones" class="ico-sm" style="color:var(--violet)"></i> Audio Master</span><kbd class="mono">AUD</kbd></button>
+    <button class="patch-item" data-patch-action="branch_subtitles"><span class="patch-item-label"><i data-lucide="subtitles" class="ico-sm" style="color:var(--info)"></i> Subtitles &amp; Brief</span><kbd class="mono">SUB</kbd></button>
+    <button class="patch-item" data-patch-action="branch_image"><span class="patch-item-label"><i data-lucide="image" class="ico-sm" style="color:var(--warn)"></i> Thumbnail / Image</span><kbd class="mono">IMG</kbd></button>
+    <button class="patch-item" data-patch-action="branch_agent"><span class="patch-item-label"><i data-lucide="sparkles" class="ico-sm" style="color:var(--ok)"></i> Neon AI Agent</span><kbd class="mono">AI</kbd></button>
     <div class="patch-sep"></div>
-    <button class="patch-item" data-patch-action="note"><span>📝 Attach Linked Studio Note</span><kbd class="mono">NOTE</kbd></button>
+    <button class="patch-item" data-patch-action="note"><span class="patch-item-label"><i data-lucide="sticky-note" class="ico-sm" style="color:var(--warn)"></i> Attach Studio Note</span><kbd class="mono">NOTE</kbd></button>
   </div>
 
   <!-- Slide-Over History & Spatial Graph Index Drawer -->
@@ -339,6 +342,7 @@
   </div>
 
   <div class="toast-stack" id="toast-stack" aria-live="polite"></div>
+  <script src="https://unpkg.com/lucide@0.469.0/dist/umd/lucide.min.js"></script>
   <script src="/static/app.js"></script>
 </body>
 </html>
