@@ -135,17 +135,30 @@ class ExtractionOrchestrator:
             ),
         )
 
-        # Stage 3-6: Route & Probe
-        probe_opts = ProbeOptions(
-            timeout_seconds=self._settings.probe_timeout_seconds,
-            max_items=request.max_items,
-            include_subtitles=request.extract_subtitles,
-            preferred_engine=request.preferred_engine,
-            allow_browser_fallback=(
-                request.allow_browser_fallback and self._settings.enable_browser_fallback
-            ),
+        # Stage 3-6: Route & Probe (reuse fresh cached probe when available to avoid double-probing!)
+        cache_key = (
+            validated.canonical_url,
+            request.preferred_engine,
+            request.max_items,
+            request.allow_browser_fallback,
         )
-        result = await self._router.probe_with_fallback(ctx, probe_opts, cancel_token=cancel_token)
+        now = time.monotonic()
+        cached_entry = self._probe_cache.get(cache_key)
+        if cached_entry is not None and (now - cached_entry[0]) < self._settings.probe_cache_ttl_seconds:
+            result = cached_entry[1].model_copy(deep=True)
+            result.job_id = job_id
+        else:
+            probe_opts = ProbeOptions(
+                timeout_seconds=self._settings.probe_timeout_seconds,
+                max_items=request.max_items,
+                include_subtitles=request.extract_subtitles,
+                preferred_engine=request.preferred_engine,
+                allow_browser_fallback=(
+                    request.allow_browser_fallback and self._settings.enable_browser_fallback
+                ),
+            )
+            result = await self._router.probe_with_fallback(ctx, probe_opts, cancel_token=cancel_token)
+            self._probe_cache[cache_key] = (now, result.model_copy(deep=True))
 
         # If Tier-3 browser fallback discovered a direct media/manifest URL, hand off to Tier-1/2
         if result.engine.used_browser_fallback and result.available_formats:
@@ -393,6 +406,17 @@ class ExtractionOrchestrator:
                             source="manual_captions" if request.subtitle_mode == "manual_only" else "auto_captions",
                             artifact_url=stored_txt.download_url,
                         )
+
+            # Use human-readable media title for the delivered filename when available
+            ext = Path(final_filename).suffix or final_path.suffix or ".bin"
+            if (
+                result.title
+                and result.engine.engine_used in {"yt-dlp", "streamlink", "n-m3u8dl-re", "playwright"}
+                and ext.lower() != ".zip"
+                and ext.lower() != ".tar"
+            ):
+                human_stem = sanitize_filename(result.title, fallback=Path(final_filename).stem, max_len=90)
+                final_filename = f"{human_stem}{ext}"
 
             # Optional sanitized custom filename prefix
             if request.custom_filename_prefix.strip():

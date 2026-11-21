@@ -250,20 +250,55 @@ async def stream_job_events(job_id: str, request: Request) -> StreamingResponse:
     )
 
 
+_SAFE_INLINE_MIMES = frozenset(
+    {
+        "video/mp4",
+        "video/webm",
+        "video/quicktime",
+        "audio/mpeg",
+        "audio/mp3",
+        "audio/mp4",
+        "audio/ogg",
+        "audio/opus",
+        "audio/wav",
+        "audio/flac",
+        "audio/webm",
+        "image/jpeg",
+        "image/png",
+        "image/webp",
+        "image/gif",
+        "image/avif",
+        "application/pdf",
+    }
+)
+
+
 @router.get("/artifacts/{job_id}/{filename}", tags=["artifacts"])
-async def download_artifact(job_id: str, filename: str, request: Request) -> FileResponse:
+async def download_artifact(
+    job_id: str,
+    filename: str,
+    request: Request,
+    inline: bool = False,
+) -> FileResponse:
     c = _container(request)
     artifact = c.storage.resolve(job_id, filename)
-    if artifact is None:
+    if artifact is None or artifact.disk_path is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Artifact not found or expired")
+
+    base_mime = (artifact.mime_type or "").split(";")[0].strip().lower()
+    disposition = (
+        f'inline; filename="{artifact.filename}"'
+        if (inline and base_mime in _SAFE_INLINE_MIMES)
+        else build_content_disposition(artifact.filename)
+    )
 
     return FileResponse(
         path=artifact.disk_path,
         media_type=artifact.mime_type,
         headers={
-            "Content-Disposition": build_content_disposition(artifact.filename),
+            "Content-Disposition": disposition,
             "X-Content-Type-Options": "nosniff",
-            "Content-Security-Policy": "default-src 'none'; sandbox",
+            "Content-Security-Policy": "default-src 'none'; media-src 'self'; img-src 'self'; sandbox",
             "Cache-Control": "private, max-age=300",
         },
     )

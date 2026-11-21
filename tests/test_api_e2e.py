@@ -150,13 +150,18 @@ async def test_api_full_probe_download_sse_and_safe_artifact_delivery(
         assert "event: progress" in sse.text
         assert '"completed"' in sse.text
 
-        # 5. Fetch artifact and verify strict delivery security headers
+        # 5. Fetch artifact and verify strict delivery security headers + inline preview mode
         art = await client.get(f"/v1/artifacts/{job_id}/{dl['filename']}")
         assert art.status_code == 200
         assert art.content == b"%PDF-1.7\nNeon Sync Guide"
         assert art.headers["content-disposition"].startswith('attachment; filename="Neon_Guide.pdf"')
         assert art.headers["x-content-type-options"] == "nosniff"
         assert "default-src 'none'" in art.headers["content-security-policy"]
+
+        inline_art = await client.get(f"/v1/artifacts/{job_id}/{dl['filename']}?inline=true")
+        assert inline_art.status_code == 200
+        assert inline_art.headers["content-disposition"] == 'inline; filename="Neon_Guide.pdf"'
+        assert inline_art.headers["x-content-type-options"] == "nosniff"
 
 
 async def test_api_rate_limiting_enforced(tmp_path: Path):

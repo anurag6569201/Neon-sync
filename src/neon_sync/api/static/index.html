@@ -3,375 +3,328 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Neon Sync — Media Extraction Workstation</title>
+  <title>Neon Sync — Universal Media Downloader</title>
   <link rel="stylesheet" href="/static/app.css" />
 </head>
 <body>
-  <div class="app-shell">
-    <!-- Sidebar -->
-    <aside class="sidebar">
-      <div>
-        <div class="brand-row">
-          <div class="brand-mark">
-            <span class="logo-box" aria-hidden="true">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
-                <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
-              </svg>
-            </span>
-            <span>Neon Sync</span>
-          </div>
-          <span class="ver-tag" id="app-version">v0.1.0</span>
-        </div>
+  <div id="drop-overlay" class="drop-overlay hidden">Drop any link to inspect &amp; download</div>
 
-        <div class="nav-section-label">Workspace</div>
-        <nav class="nav-list">
-          <button class="nav-item active" data-view="extract">
-            <span class="nav-left">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
-              </svg>
-              <span>Extract</span>
-            </span>
-          </button>
+  <!-- Minimal Consumer Header -->
+  <header class="navbar">
+    <a href="/" class="brand">
+      <span class="brand-icon" aria-hidden="true">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+        </svg>
+      </span>
+      <span>Neon Sync</span>
+    </a>
 
-          <button class="nav-item" data-view="queue">
-            <span class="nav-left">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>
-              </svg>
-              <span>Queue &amp; History</span>
-            </span>
-            <span class="nav-badge num" id="nav-job-count">0</span>
-          </button>
+    <div class="nav-controls">
+      <button class="nav-pill active" id="autosave-pill" title="Automatically save finished files to your device's Downloads folder">
+        <span class="dot-live" id="autosave-dot"></span>
+        <span>Auto-save</span>
+      </button>
 
-          <button class="nav-item" data-view="engines">
-            <span class="nav-left">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                <rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/><line x1="20" y1="9" x2="23" y2="9"/><line x1="20" y1="14" x2="23" y2="14"/><line x1="1" y1="9" x2="4" y2="9"/><line x1="1" y1="14" x2="4" y2="14"/>
-              </svg>
-              <span>Engines</span>
-            </span>
-            <span class="nav-badge num" id="nav-engine-count">—</span>
-          </button>
+      <button class="nav-pill" id="engines-modal-btn" title="View installed extraction engines">
+        <span class="dot-live"></span>
+        <span class="num" id="engines-pill-text">Engines</span>
+      </button>
 
-          <button class="nav-item" data-view="api">
-            <span class="nav-left">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>
-              </svg>
-              <span>API &amp; Payload</span>
-            </span>
-          </button>
-        </nav>
+      <button class="nav-pill" id="api-modal-btn" title="Copy API cURL or JSON request">
+        <span>API</span>
+      </button>
+
+      <button class="nav-pill" id="theme-btn" title="Switch Light / Dark theme">
+        <span id="theme-text">Light</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- Centered Single-Canvas Product Experience -->
+  <main class="container">
+    <div class="hero-head">
+      <h1 class="hero-title">Paste any link. Get the file.</h1>
+      <p class="hero-sub">Video, audio, image galleries, live streams, HLS/DASH, or documents — zero signup, ad-free.</p>
+    </div>
+
+    <section class="omnibox-card">
+      <!-- Single URL Input Bar -->
+      <div class="url-bar" id="single-bar">
+        <span class="platform-tag hidden" id="platform-tag">Link</span>
+        <input
+          type="url"
+          class="url-input"
+          id="url-input"
+          placeholder="Paste a link from YouTube, Instagram, X, Reddit, TikTok, Imgur, Twitch, or any URL..."
+          autocomplete="off"
+          spellcheck="false"
+          autofocus
+        />
+        <button class="btn btn-subtle hidden" id="clear-url-btn" title="Clear link">Clear</button>
+        <button class="btn btn-subtle" id="paste-btn" title="Paste link from clipboard (⌘V anywhere)">Paste</button>
+        <button class="btn btn-primary" id="download-btn">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+          </svg>
+          <span>Download</span>
+        </button>
       </div>
 
-      <div class="sidebar-footer">
-        <div class="status-card">
-          <div class="status-indicator">
-            <span class="status-dot" id="sidebar-status-dot"></span>
-            <span id="sidebar-status-text">Checking engines...</span>
+      <!-- Batch Mode Multi-URL Box -->
+      <div id="batch-bar" class="hidden">
+        <textarea class="batch-box" id="batch-input" placeholder="Paste up to 10 links (one per line)..."></textarea>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;">
+          <span class="mono num" style="color:var(--text-muted);" id="batch-count">0 links</span>
+          <div style="display:flex;gap:8px;">
+            <button class="btn btn-subtle" id="exit-batch-btn">Single Link</button>
+            <button class="btn btn-primary" id="download-batch-btn">Download All</button>
           </div>
-          <button class="icon-btn" id="sidebar-refresh" title="Refresh Engine Health">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
-            </svg>
-          </button>
-        </div>
-
-        <div class="footer-actions">
-          <a class="icon-btn" href="/docs" target="_blank" rel="noopener">OpenAPI</a>
-          <button class="icon-btn" id="theme-toggle" title="Toggle Dark / Light theme">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/>
-            </svg>
-            <span id="theme-label">Light</span>
-          </button>
         </div>
       </div>
-    </aside>
 
-    <!-- Main Workspace -->
-    <div class="main-area">
-      <header class="topbar">
-        <div class="topbar-title" id="topbar-title">Extract</div>
-        <div class="topbar-meta">
-          <span class="kbd" title="Focus URL input">⌘K</span>
-          <span class="kbd" title="Start extraction">⌘↵</span>
+      <!-- Primary Mode & Quick Toggles -->
+      <div class="quick-bar">
+        <div class="seg-group" id="mode-group" role="tablist">
+          <button class="seg active" data-mode="auto">Auto</button>
+          <button class="seg" data-mode="video">Video</button>
+          <button class="seg" data-mode="audio">Audio</button>
+          <button class="seg" data-mode="image">Images</button>
         </div>
-      </header>
 
-      <main class="workspace">
-        <!-- VIEW 1: EXTRACT -->
-        <section class="view active" id="view-extract">
-          <div class="panel">
-            <div class="panel-header">
-              <div class="panel-title">Media Source</div>
-              <div class="segmented" role="tablist">
-                <button class="seg-btn active" id="mode-single-btn">Single URL</button>
-                <button class="seg-btn" id="mode-batch-btn">Batch (up to 10)</button>
-              </div>
-            </div>
+        <div style="display:flex;gap:6px;align-items:center;">
+          <button class="q-pill" id="clip-toggle-btn" title="Trim video/audio start and end time">Trim Clip</button>
+          <button class="q-pill" id="subs-toggle-btn" title="Include subtitles &amp; clean transcript">Subtitles</button>
+          <button class="q-pill" id="batch-toggle-btn" title="Paste multiple links at once">Batch</button>
+          <button class="q-pill" id="finetune-toggle-btn">Fine-tune &#9662;</button>
+        </div>
+      </div>
 
-            <div class="panel-body">
-              <!-- Single URL Command Input -->
-              <div class="command-box" id="single-input-wrap">
-                <input
-                  type="url"
-                  class="command-input"
-                  id="url-input"
-                  placeholder="Paste video, audio, image gallery, livestream, HLS/DASH, PDF, or webpage URL..."
-                  autocomplete="off"
-                  spellcheck="false"
-                />
-                <button class="btn btn-ghost btn-sm" id="paste-btn" title="Paste from clipboard" style="height:34px;">Paste</button>
-                <button class="btn btn-secondary" id="probe-btn">Probe</button>
-                <button class="btn btn-primary" id="extract-btn">Extract</button>
-              </div>
+      <!-- Contextual Quality Strip (Morphs automatically for Video vs Audio vs Images) -->
+      <div class="context-strip" id="context-strip-video">
+        <div class="pill-group" id="quality-pills">
+          <span class="group-label">Quality</span>
+          <button class="q-pill active" data-vq="best">Best</button>
+          <button class="q-pill" data-vq="2160">4K</button>
+          <button class="q-pill" data-vq="1440">2K</button>
+          <button class="q-pill" data-vq="1080">1080p</button>
+          <button class="q-pill" data-vq="720">720p</button>
+          <button class="q-pill" data-vq="480">480p</button>
+          <button class="q-pill" data-vq="360">360p</button>
+        </div>
 
-              <!-- Batch Input -->
-              <div id="batch-input-wrap" class="hidden">
-                <textarea class="batch-textarea" id="batch-input" placeholder="https://example.com/video-1&#10;https://example.com/gallery-2&#10;https://example.com/report.pdf"></textarea>
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;">
-                  <span class="mono" style="color:var(--text-muted);" id="batch-line-count">0 URLs</span>
-                  <button class="btn btn-primary" id="batch-submit-btn">Queue Batch</button>
-                </div>
-              </div>
+        <div class="pill-group">
+          <button class="q-pill toggle-on" id="h264-pill" title="Prefer universally compatible H.264 + MP4">H.264 MP4</button>
+        </div>
+      </div>
 
-              <!-- Presets -->
-              <div class="presets-row" id="presets-row"></div>
+      <div class="context-strip hidden" id="context-strip-audio">
+        <div class="pill-group" id="audio-fmt-pills">
+          <span class="group-label">Format</span>
+          <button class="q-pill active" data-af="mp3">MP3</button>
+          <button class="q-pill" data-af="m4a">M4A</button>
+          <button class="q-pill" data-af="flac">FLAC (Lossless)</button>
+          <button class="q-pill" data-af="opus">Opus</button>
+          <button class="q-pill" data-af="wav">WAV</button>
+        </div>
+        <div class="pill-group" id="audio-br-pills">
+          <span class="group-label">Bitrate</span>
+          <button class="q-pill active" data-ab="320k">320k</button>
+          <button class="q-pill" data-ab="192k">192k</button>
+          <button class="q-pill" data-ab="128k">128k</button>
+          <button class="q-pill" id="loudnorm-pill" title="EBU R128 loudness normalization">Normalize Volume</button>
+        </div>
+      </div>
 
-              <!-- Active Configuration Summary + Toggle Drawer -->
-              <div class="overrides-bar">
-                <div class="chips-list" id="active-chips"></div>
-                <div style="display:flex;gap:6px;align-items:center;">
-                  <button class="btn btn-ghost btn-sm" id="reset-btn">Reset</button>
-                  <button class="btn btn-secondary btn-sm" id="toggle-settings-btn">
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                      <line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/>
-                    </svg>
-                    <span id="toggle-settings-label">Configure Options</span>
-                  </button>
-                </div>
-              </div>
-            </div>
+      <div class="context-strip hidden" id="context-strip-image">
+        <div class="pill-group" id="img-fmt-pills">
+          <span class="group-label">Convert</span>
+          <button class="q-pill active" data-if="original">Original</button>
+          <button class="q-pill" data-if="webp">WebP</button>
+          <button class="q-pill" data-if="jpg">JPEG</button>
+          <button class="q-pill" data-if="png">PNG</button>
+          <button class="q-pill" data-if="avif">AVIF</button>
+        </div>
+        <div class="pill-group" id="img-width-pills">
+          <span class="group-label">Size</span>
+          <button class="q-pill active" data-iw="original">Original</button>
+          <button class="q-pill" data-iw="3840">4K</button>
+          <button class="q-pill" data-iw="1920">1920px</button>
+          <button class="q-pill" data-iw="1280">1280px</button>
+        </div>
+      </div>
 
-            <!-- Collapsible Advanced Options Drawer -->
-            <div class="settings-body hidden" id="settings-drawer">
-              <div class="settings-tabs" id="settings-tabs">
-                <button class="tab-btn active" data-tab="video">Video</button>
-                <button class="tab-btn" data-tab="audio">Audio</button>
-                <button class="tab-btn" data-tab="image">Images &amp; Galleries</button>
-                <button class="tab-btn" data-tab="subtitles">Subtitles &amp; Clip</button>
-                <button class="tab-btn" data-tab="engine">Engine &amp; Limits</button>
-              </div>
+      <!-- Interactive Clip Trimmer (Shown when Trim Clip is toggled) -->
+      <div class="clip-box hidden" id="clip-box">
+        <div class="clip-inputs">
+          <span class="group-label">Trim Range</span>
+          <input type="text" id="clip-start" placeholder="0:00" />
+          <span style="color:var(--text-muted);">to</span>
+          <input type="text" id="clip-end" placeholder="End" />
+          <input type="range" id="clip-slider-end" min="1" max="300" value="300" class="hidden" style="flex:1;accent-color:var(--text);" />
+          <span class="mono num" style="color:var(--text-muted);" id="clip-duration-hint"></span>
+        </div>
+      </div>
 
-              <!-- Video Tab -->
-              <div class="tab-pane active" id="tab-video">
-                <div class="field"><label>Extraction Mode</label><select id="mode-select"></select></div>
-                <div class="field"><label>Resolution / Quality</label><select id="video-quality"></select></div>
-                <div class="field"><label>Container</label><select id="video-container"></select></div>
-                <div class="field"><label>Video Codec</label><select id="video-codec"></select></div>
-                <div class="field"><label>Frame Rate Cap</label><select id="fps-limit"></select></div>
+      <!-- Subtitles Quick Box (Shown when Subtitles is toggled) -->
+      <div class="clip-box hidden" id="subs-box">
+        <div class="clip-inputs">
+          <span class="group-label">Captions</span>
+          <input type="text" id="subtitle-languages" value="en" placeholder="en,es" style="width:90px;" />
+          <button class="q-pill toggle-on" id="embed-subs-pill">Embed in Video</button>
+          <button class="q-pill toggle-on" id="transcript-pill">Also create clean .txt Transcript</button>
+        </div>
+      </div>
 
-                <label class="toggle-row">
-                  <span class="toggle-text"><span class="toggle-title">MP4 Faststart</span><span class="toggle-sub">Optimize for web playback</span></span>
-                  <span class="switch"><input type="checkbox" id="remux-faststart" checked /><span class="slider"></span></span>
-                </label>
-                <label class="toggle-row">
-                  <span class="toggle-text"><span class="toggle-title">Embed Metadata</span><span class="toggle-sub">Title, author &amp; chapters</span></span>
-                  <span class="switch"><input type="checkbox" id="embed-metadata" checked /><span class="slider"></span></span>
-                </label>
-                <label class="toggle-row">
-                  <span class="toggle-text"><span class="toggle-title">Embed Thumbnail</span><span class="toggle-sub">Attach cover image</span></span>
-                  <span class="switch"><input type="checkbox" id="embed-thumbnail" /><span class="slider"></span></span>
-                </label>
-              </div>
+      <!-- Fine-Tune Accordion (For Codec, Container, FPS, Gallery Range, Engine Override) -->
+      <div class="finetune-drawer hidden" id="finetune-drawer">
+        <div class="field">
+          <label>Container</label>
+          <select id="video-container">
+            <option value="auto">Auto</option>
+            <option value="mp4" selected>MP4</option>
+            <option value="mkv">MKV</option>
+            <option value="webm">WebM</option>
+            <option value="mov">MOV</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Video Codec</label>
+          <select id="video-codec">
+            <option value="auto">Auto</option>
+            <option value="h264" selected>H.264 (Most Compatible)</option>
+            <option value="hevc">HEVC / H.265</option>
+            <option value="vp9">VP9</option>
+            <option value="av1">AV1</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Max Frame Rate</label>
+          <select id="fps-limit">
+            <option value="any">Any FPS</option>
+            <option value="60">60 fps</option>
+            <option value="30">30 fps</option>
+          </select>
+        </div>
+        <div class="field">
+          <label><span>Image Quality</span><span class="mono num" id="img-q-label">90%</span></label>
+          <input type="range" id="image-quality" min="20" max="100" value="90" style="accent-color:var(--text);margin-top:6px;" />
+        </div>
+        <div class="field">
+          <label>Gallery Items Range</label>
+          <div style="display:flex;gap:6px;">
+            <input type="number" id="gallery-range-start" min="1" max="500" value="1" style="width:50%;" placeholder="From" />
+            <input type="number" id="gallery-range-end" min="1" max="500" style="width:50%;" placeholder="To" />
+          </div>
+        </div>
+        <div class="field">
+          <label>Playlist Items</label>
+          <input type="text" id="playlist-items" placeholder="e.g. 1-5 or 1,3,7" />
+        </div>
+        <div class="field">
+          <label>Filename Prefix</label>
+          <input type="text" id="filename-prefix" maxlength="64" placeholder="Optional prefix" />
+        </div>
+        <div class="field">
+          <label>Engine Override</label>
+          <select id="preferred-engine"><option value="">Auto (Smart Router)</option></select>
+        </div>
+      </div>
+    </section>
 
-              <!-- Audio Tab -->
-              <div class="tab-pane" id="tab-audio">
-                <div class="field"><label>Audio Format</label><select id="audio-format"></select></div>
-                <div class="field"><label>Target Bitrate</label><select id="audio-bitrate"></select></div>
-                <label class="toggle-row">
-                  <span class="toggle-text"><span class="toggle-title">Loudness Normalize</span><span class="toggle-sub">FFmpeg EBU R128 loudnorm</span></span>
-                  <span class="switch"><input type="checkbox" id="normalize-audio" /><span class="slider"></span></span>
-                </label>
-              </div>
+    <!-- Live Auto-Probe Media Stage (Appears automatically when a URL is pasted) -->
+    <section class="preview-stage hidden" id="preview-stage">
+      <div id="preview-loading" class="hidden" style="display:flex;align-items:center;gap:10px;color:var(--text-secondary);font-size:13px;">
+        <span class="dot-live"></span>
+        <span>Inspecting link metadata &amp; available streams…</span>
+      </div>
 
-              <!-- Images & Galleries Tab -->
-              <div class="tab-pane" id="tab-image">
-                <div class="field"><label>Output Format</label><select id="image-format"></select></div>
-                <div class="field">
-                  <label><span>Compression Quality</span><span class="mono num" id="image-quality-val">90%</span></label>
-                  <input type="range" id="image-quality" min="10" max="100" value="90" />
-                </div>
-                <div class="field"><label>Max Width</label><select id="image-max-width"></select></div>
-                <div class="field"><label>Gallery Archive</label><select id="gallery-archive-format"></select></div>
-                <div class="field"><label>Gallery Range Start</label><input type="number" id="gallery-range-start" min="1" max="500" value="1" /></div>
-                <div class="field"><label>Gallery Range End</label><input type="number" id="gallery-range-end" min="1" max="500" placeholder="Auto" /></div>
-              </div>
-
-              <!-- Subtitles & Clip Tab -->
-              <div class="tab-pane" id="tab-subtitles">
-                <label class="toggle-row">
-                  <span class="toggle-text"><span class="toggle-title">Download Subtitles</span><span class="toggle-sub">Fetch caption tracks</span></span>
-                  <span class="switch"><input type="checkbox" id="extract-subtitles" /><span class="slider"></span></span>
-                </label>
-                <label class="toggle-row">
-                  <span class="toggle-text"><span class="toggle-title">Embed Subtitles</span><span class="toggle-sub">Mux into video container</span></span>
-                  <span class="switch"><input type="checkbox" id="embed-subtitles" /><span class="slider"></span></span>
-                </label>
-                <label class="toggle-row">
-                  <span class="toggle-text"><span class="toggle-title">Generate Transcript</span><span class="toggle-sub">Clean .txt from captions</span></span>
-                  <span class="switch"><input type="checkbox" id="generate-transcript" /><span class="slider"></span></span>
-                </label>
-                <div class="field"><label>Subtitle Mode</label><select id="subtitle-mode"></select></div>
-                <div class="field"><label>Subtitle Format</label><select id="subtitle-format"></select></div>
-                <div class="field"><label>Languages</label><input type="text" id="subtitle-languages" value="en" placeholder="en,es,fr" /></div>
-                <div class="field"><label>Clip Start</label><input type="text" id="clip-start" placeholder="0:10 or 10" /></div>
-                <div class="field"><label>Clip End</label><input type="text" id="clip-end" placeholder="0:45 or 45" /></div>
-              </div>
-
-              <!-- Engine & Limits Tab -->
-              <div class="tab-pane" id="tab-engine">
-                <div class="field"><label>Engine Override</label><select id="preferred-engine"><option value="">Auto (Smart Router)</option></select></div>
-                <div class="field"><label>Filename Prefix</label><input type="text" id="filename-prefix" maxlength="64" placeholder="Optional prefix" /></div>
-                <div class="field"><label>Playlist Items</label><input type="text" id="playlist-items" placeholder="e.g. 1-5 or 1,3,7" /></div>
-                <div class="field"><label>Max Items Cap</label><input type="number" id="max-items" min="1" max="200" value="50" /></div>
-                <div class="field"><label>Live Record Cap (sec)</label><input type="number" id="live-max-dur" min="5" max="7200" placeholder="1800" /></div>
-                <label class="toggle-row">
-                  <span class="toggle-text"><span class="toggle-title">Browser Fallback</span><span class="toggle-sub">Tier-3 Playwright JS sniffer</span></span>
-                  <span class="switch"><input type="checkbox" id="browser-fallback" /><span class="slider"></span></span>
-                </label>
-              </div>
+      <div id="preview-content" class="hidden">
+        <div class="preview-row">
+          <div class="preview-thumb hidden" id="preview-thumb-wrap">
+            <img id="preview-thumb-img" src="" alt="Preview" />
+            <span class="dur-badge num" id="preview-dur"></span>
+          </div>
+          <div class="preview-info">
+            <h3 class="preview-title" id="preview-title"></h3>
+            <div class="preview-meta" id="preview-meta"></div>
+            <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+              <button class="btn btn-subtle btn-sm hidden" id="toggle-streams-btn">Choose exact stream</button>
+              <span class="badge hidden" id="locked-stream-badge"></span>
             </div>
           </div>
+        </div>
 
-          <!-- Probe Inspector Panel -->
-          <div class="panel hidden" id="probe-panel">
-            <div class="panel-header">
-              <div class="panel-title">
-                <span>Probe Inspector</span>
-                <span id="probe-header-badges" style="display:inline-flex;gap:6px;"></span>
-              </div>
-              <div style="display:flex;gap:6px;align-items:center;">
-                <div class="segmented" id="fmt-filter-group">
-                  <button class="seg-btn active" data-fmt-filter="all">All</button>
-                  <button class="seg-btn" data-fmt-filter="muxed">Video+Audio</button>
-                  <button class="seg-btn" data-fmt-filter="video">Video</button>
-                  <button class="seg-btn" data-fmt-filter="audio">Audio</button>
-                </div>
-                <button class="btn btn-ghost btn-sm" id="close-probe-btn">Close</button>
-              </div>
-            </div>
-            <div class="panel-body">
-              <div class="probe-grid" id="probe-summary"></div>
-              <div id="probe-formats-section" class="hidden" style="margin-top:16px;">
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-                  <span class="mono" style="color:var(--text-muted);" id="probe-fmt-hint">Click any row to lock a specific format_id</span>
-                  <button class="btn btn-ghost btn-sm hidden" id="clear-fmt-lock-btn">Clear format lock</button>
-                </div>
-                <div class="table-wrap">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>ID</th>
-                        <th>Resolution</th>
-                        <th>FPS</th>
-                        <th>Video</th>
-                        <th>Audio</th>
-                        <th>Container</th>
-                        <th>Size</th>
-                      </tr>
-                    </thead>
-                    <tbody id="probe-formats-tbody"></tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
-          </div>
+        <div class="streams-drawer hidden" id="streams-drawer">
+          <table>
+            <thead>
+              <tr>
+                <th>Stream ID</th>
+                <th>Resolution</th>
+                <th>FPS</th>
+                <th>Video</th>
+                <th>Audio</th>
+                <th>Container</th>
+                <th>Size</th>
+              </tr>
+            </thead>
+            <tbody id="streams-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
 
-          <!-- Recent / Active Jobs Preview -->
-          <div class="panel">
-            <div class="panel-header">
-              <div class="panel-title">
-                <span>Active &amp; Recent Jobs</span>
-                <span class="badge num" id="extract-job-count">0</span>
-              </div>
-              <button class="btn btn-ghost btn-sm" data-jump="queue">View all</button>
-            </div>
-            <div id="extract-jobs-list">
-              <div class="empty-state">No jobs yet. Paste a URL above and press <span class="kbd">⌘↵</span> to extract.</div>
-            </div>
-          </div>
-        </section>
+    <!-- Active & Recent Downloads Feed -->
+    <section class="feed-section" id="feed-section">
+      <div class="section-bar">
+        <span class="section-label">Downloads</span>
+        <span class="mono num" style="color:var(--text-muted);" id="jobs-summary"></span>
+      </div>
+      <div id="downloads-list"></div>
+    </section>
+  </main>
 
-        <!-- VIEW 2: QUEUE & HISTORY -->
-        <section class="view" id="view-queue">
-          <div class="panel">
-            <div class="panel-header">
-              <div class="panel-title">Extraction Queue &amp; History</div>
-              <div class="segmented" id="queue-filter-group">
-                <button class="seg-btn active" data-qfilter="all">All</button>
-                <button class="seg-btn" data-qfilter="active">Active</button>
-                <button class="seg-btn" data-qfilter="completed">Completed</button>
-                <button class="seg-btn" data-qfilter="failed">Failed</button>
-              </div>
-            </div>
-            <div id="full-jobs-list">
-              <div class="empty-state">No extraction history recorded.</div>
-            </div>
-          </div>
-        </section>
+  <!-- Modal: Engine Registry Health -->
+  <div class="modal-backdrop hidden" id="engines-modal">
+    <div class="modal">
+      <div class="modal-head">
+        <span>Extraction Engines</span>
+        <div style="display:flex;gap:8px;">
+          <button class="btn btn-subtle btn-sm" id="refresh-engines-btn">Refresh Health</button>
+          <button class="btn btn-subtle btn-sm" id="close-engines-modal">Close</button>
+        </div>
+      </div>
+      <div class="modal-body">
+        <table>
+          <thead>
+            <tr>
+              <th>Engine</th>
+              <th>Status</th>
+              <th>Version</th>
+              <th>Tier</th>
+              <th>License</th>
+            </tr>
+          </thead>
+          <tbody id="engines-modal-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
 
-        <!-- VIEW 3: ENGINE REGISTRY -->
-        <section class="view" id="view-engines">
-          <div class="panel">
-            <div class="panel-header">
-              <div class="panel-title">
-                <span>Universal Engine Registry</span>
-                <span class="badge num" id="engines-ready-badge">—</span>
-              </div>
-              <button class="btn btn-secondary btn-sm" id="engines-refresh-btn">Re-check Health</button>
-            </div>
-            <div class="table-wrap" style="border:none;border-radius:0;max-height:none;">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Engine</th>
-                    <th>Tier</th>
-                    <th>Status</th>
-                    <th>Version</th>
-                    <th>Priority</th>
-                    <th>Mode</th>
-                    <th>License</th>
-                    <th>Capabilities</th>
-                  </tr>
-                </thead>
-                <tbody id="engines-tbody"></tbody>
-              </table>
-            </div>
-          </div>
-        </section>
-
-        <!-- VIEW 4: API & LIVE PAYLOAD -->
-        <section class="view" id="view-api">
-          <div class="panel">
-            <div class="panel-header">
-              <div class="panel-title">Live Request Payload (Synced with Current Settings)</div>
-              <div style="display:flex;gap:6px;">
-                <button class="btn btn-secondary btn-sm" id="copy-curl-btn">Copy cURL</button>
-                <button class="btn btn-secondary btn-sm" id="copy-json-btn">Copy JSON</button>
-              </div>
-            </div>
-            <div class="panel-body">
-              <p style="margin:0 0 12px;color:var(--text-secondary);font-size:12.5px;">
-                Every setting configured in the Extract workspace maps directly to the versioned <span class="mono">/v1/jobs</span> REST API.
-              </p>
-              <pre class="code-block" id="live-curl-preview"></pre>
-            </div>
-          </div>
-        </section>
-      </main>
+  <!-- Modal: Developer API & Live Payload -->
+  <div class="modal-backdrop hidden" id="api-modal">
+    <div class="modal">
+      <div class="modal-head">
+        <span>API Request (Synced with Current Settings)</span>
+        <div style="display:flex;gap:8px;">
+          <button class="btn btn-subtle btn-sm" id="copy-curl-btn">Copy cURL</button>
+          <button class="btn btn-subtle btn-sm" id="copy-json-btn">Copy JSON</button>
+          <button class="btn btn-subtle btn-sm" id="close-api-modal">Close</button>
+        </div>
+      </div>
+      <div class="modal-body">
+        <pre class="code-pre" id="api-curl-pre"></pre>
+      </div>
     </div>
   </div>
 
