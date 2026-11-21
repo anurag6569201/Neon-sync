@@ -9,9 +9,12 @@ from .base import (
     ProgressCallback,
     UrlContext,
 )
+from .browser_fallback import PlaywrightFallbackAdapter
 from .direct_http import DirectHttpAdapter
 from .ffmpeg import FfmpegAdapter
 from .gallery_dl import GalleryDlAdapter
+from .nm3u8dl import NM3u8DlReAdapter
+from .streamlink import StreamlinkAdapter
 from .ytdlp import YtDlpAdapter
 
 __all__ = [
@@ -22,8 +25,11 @@ __all__ = [
     "ExtractorAdapter",
     "FfmpegAdapter",
     "GalleryDlAdapter",
+    "NM3u8DlReAdapter",
+    "PlaywrightFallbackAdapter",
     "PostProcessorAdapter",
     "ProgressCallback",
+    "StreamlinkAdapter",
     "UrlContext",
     "YtDlpAdapter",
 ]

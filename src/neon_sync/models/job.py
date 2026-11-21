@@ -27,6 +27,7 @@ class ProbeRequest(BaseModel):
     preferred_engine: str | None = None
     max_items: int = Field(default=50, ge=1, le=200)
     include_subtitles: bool = True
+    allow_browser_fallback: bool = False
     bypass_cache: bool = False
 
 
@@ -36,6 +37,7 @@ class DownloadRequest(BaseModel):
     format_id: str | None = None
     audio_format: Literal["best", "mp3", "m4a", "opus", "flac", "wav"] | None = None
     preferred_engine: str | None = None
+    allow_browser_fallback: bool = False
     extract_thumbnail: bool = False
     extract_subtitles: bool = False
     clip_start_seconds: float | None = Field(default=None, ge=0)

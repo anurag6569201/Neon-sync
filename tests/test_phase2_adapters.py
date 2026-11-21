@@ -108,3 +108,43 @@ def test_nm3u8dl_argv_and_matching(tmp_path: Path):
     assert "--custom-proxy" in argv
     assert "--live-record-limit" in argv
     assert "--thread-count" in argv
+
+
+def test_playwright_sniffer_classification_segment_filter_and_js_shell():
+    from neon_sync.adapters.browser_fallback import (
+        PlaywrightFallbackAdapter,
+        classify_sniffed_request,
+        detect_js_shell_html,
+        is_segment_url,
+        rank_sniffed_candidates,
+    )
+
+    # Raw stream chunks must be ignored
+    assert is_segment_url("https://cdn.example.com/seg_0042.ts") is True
+    assert is_segment_url("https://cdn.example.com/video/init.mp4") is True
+    assert is_segment_url("https://cdn.example.com/chunk.m4s?bytestart=1024") is True
+    assert is_segment_url("https://cdn.example.com/master.m3u8") is False
+
+    # Ad tracker video ignored
+    assert classify_sniffed_request("https://doubleclick.net/ad.mp4", "video/mp4", 500_000) is None
+    # Tiny probe chunk ignored
+    assert classify_sniffed_request("https://cdn.example.com/probe.mp4", "video/mp4", 1024) is None
+
+    c_hls = classify_sniffed_request("https://cdn.example.com/master.m3u8", "application/vnd.apple.mpegurl")
+    c_mp4 = classify_sniffed_request("https://cdn.example.com/video.mp4", "video/mp4", 5_000_000)
+    c_vtt = classify_sniffed_request("https://cdn.example.com/en.vtt", "text/vtt")
+    assert c_hls is not None and c_mp4 is not None and c_vtt is not None
+
+    ranked = rank_sniffed_candidates([c_vtt, c_mp4, c_hls, c_hls])
+    assert len(ranked) == 3
+    assert ranked[0].kind == "hls"  # Master manifest ranked above progressive & subtitle
+    assert ranked[1].kind == "video"
+    assert ranked[2].kind == "subtitle"
+
+    assert detect_js_shell_html('<html><body><div id="__next"></div></body></html>') is True
+    assert detect_js_shell_html("<html><body><p>Static blog post</p></body></html>") is False
+
+    # Manifest carries requires_browser=True so Tier-3 is skipped unless opted in
+    pw = PlaywrightFallbackAdapter(Settings())
+    assert pw.manifest().cost_profile.requires_browser is True
+    assert pw.manifest().tier == 3

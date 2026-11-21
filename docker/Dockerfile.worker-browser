@@ -1,0 +1,16 @@
+# Isolated Tier-3 Playwright Browser Fallback Worker
+# Deploy on internal-only network with egress routed strictly via safe-egress-proxy.
+FROM mcr.microsoft.com/playwright/python:v1.52.0-noble AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /app
+COPY pyproject.toml README.md ./
+COPY src ./src
+
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir ".[browser]"
+
+USER pwuser
+CMD ["python", "-m", "neon_sync.api.app"]

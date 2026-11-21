@@ -15,6 +15,9 @@ from neon_sync.adapters import (
     DirectHttpAdapter,
     FfmpegAdapter,
     GalleryDlAdapter,
+    NM3u8DlReAdapter,
+    PlaywrightFallbackAdapter,
+    StreamlinkAdapter,
     YtDlpAdapter,
 )
 from neon_sync.config import Settings, get_settings
@@ -41,12 +44,15 @@ class AppContainer:
 
 
 def build_default_registry(settings: Settings) -> EngineRegistry:
-    """Register all Phase-1 extraction & post-processing adapters."""
+    """Register all extraction & post-processing adapters (Phase 1 + Phase 2)."""
     registry = EngineRegistry()
     registry.register_extractor(DirectHttpAdapter(settings))
     registry.register_extractor(Aria2Adapter(settings))
     registry.register_extractor(YtDlpAdapter(settings))
     registry.register_extractor(GalleryDlAdapter(settings))
+    registry.register_extractor(StreamlinkAdapter(settings))
+    registry.register_extractor(NM3u8DlReAdapter(settings))
+    registry.register_extractor(PlaywrightFallbackAdapter(settings))
     registry.register_postprocessor(FfmpegAdapter(settings))
     return registry
 

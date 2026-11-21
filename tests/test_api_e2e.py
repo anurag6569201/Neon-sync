@@ -73,7 +73,16 @@ async def test_api_health_engines_and_ssrf_blocking(tmp_path: Path):
         eng = await client.get("/v1/engines")
         assert eng.status_code == 200
         ids = {e["id"] for e in eng.json()}
-        assert {"direct-http", "aria2", "yt-dlp", "gallery-dl", "ffmpeg"}.issubset(ids)
+        assert {
+            "direct-http",
+            "aria2",
+            "yt-dlp",
+            "gallery-dl",
+            "streamlink",
+            "n-m3u8dl-re",
+            "playwright",
+            "ffmpeg",
+        }.issubset(ids)
 
         # SSRF attempt blocked at ingress with 403
         ssrf = await client.post("/v1/probe", json={"url": "http://169.254.169.254/latest/meta-data/"})

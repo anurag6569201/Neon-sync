@@ -50,7 +50,7 @@ class ExtractionOrchestrator:
         self._registry = registry
         self._storage = storage
         self._router = UrlRouter(registry)
-        self._probe_cache: dict[tuple[str, str | None, int], tuple[float, NormalizedMediaOutput]] = {}
+        self._probe_cache: dict[tuple[str, str | None, int, bool], tuple[float, NormalizedMediaOutput]] = {}
 
     async def probe(
         self,
@@ -64,7 +64,12 @@ class ExtractionOrchestrator:
             max_length=self._settings.max_url_length,
         )
 
-        cache_key = (validated.canonical_url, request.preferred_engine, request.max_items)
+        cache_key = (
+            validated.canonical_url,
+            request.preferred_engine,
+            request.max_items,
+            request.allow_browser_fallback,
+        )
         now = time.monotonic()
         if not request.bypass_cache and cache_key in self._probe_cache:
             ts, cached = self._probe_cache[cache_key]
@@ -79,6 +84,9 @@ class ExtractionOrchestrator:
             max_items=request.max_items,
             include_subtitles=request.include_subtitles,
             preferred_engine=request.preferred_engine,
+            allow_browser_fallback=(
+                request.allow_browser_fallback and self._settings.enable_browser_fallback
+            ),
         )
         result = await self._router.probe_with_fallback(ctx, options, cancel_token=cancel_token)
         self._probe_cache[cache_key] = (now, result.model_copy(deep=True))
@@ -130,8 +138,31 @@ class ExtractionOrchestrator:
             max_items=request.max_items,
             include_subtitles=request.extract_subtitles,
             preferred_engine=request.preferred_engine,
+            allow_browser_fallback=(
+                request.allow_browser_fallback and self._settings.enable_browser_fallback
+            ),
         )
         result = await self._router.probe_with_fallback(ctx, probe_opts, cancel_token=cancel_token)
+
+        # If Tier-3 browser fallback discovered a direct media/manifest URL, hand off to Tier-1/2
+        if result.engine.used_browser_fallback and result.available_formats:
+            chosen_fmt = next(
+                (f for f in result.available_formats if f.format_id == request.format_id and f.direct_media_url),
+                next((f for f in result.available_formats if f.direct_media_url), None),
+            )
+            if chosen_fmt and chosen_fmt.direct_media_url:
+                handoff_validated = validate_and_canonicalize_url(
+                    chosen_fmt.direct_media_url,
+                    allow_private=self._settings.allow_private_addresses,
+                    max_length=self._settings.max_url_length,
+                )
+                ctx = UrlContext(
+                    validated=handoff_validated,
+                    job_id=job_id,
+                    mode=request.mode,
+                    head_content_type=chosen_fmt.mime_type,
+                    head_content_length=chosen_fmt.size_bytes,
+                )
 
         # Pre-flight size quota check if known
         if result.size_bytes is not None and result.size_bytes > self._settings.max_job_bytes:
