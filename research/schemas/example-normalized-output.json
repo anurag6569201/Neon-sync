@@ -1,0 +1,142 @@
+{
+  "schema_version": "1.0.0",
+  "job_id": "job_01JFX9K2M8R4V7N2Q5W8Z1C3B6",
+  "original_url": "https://youtu.be/aqz-KE-bpKQ?si=exampletracking",
+  "url": "https://www.youtube.com/watch?v=aqz-KE-bpKQ",
+  "source": {
+    "domain": "youtube.com",
+    "platform": "youtube",
+    "extractor_key": "Youtube",
+    "external_id": "aqz-KE-bpKQ"
+  },
+  "content_type": "video",
+  "is_live": false,
+  "title": "Big Buck Bunny 60fps 4K - Official Blender Foundation Short Film",
+  "description": "Big Buck Bunny is an open-source short computer-animated comedy film by the Blender Institute.",
+  "thumbnail": {
+    "url": "https://i.ytimg.com/vi/aqz-KE-bpKQ/maxresdefault.jpg",
+    "width": 1280,
+    "height": 720,
+    "mime_type": "image/jpeg"
+  },
+  "duration_seconds": 634.5,
+  "size_bytes": 142840912,
+  "author": {
+    "name": "Blender Foundation",
+    "id": "UCSMOQeBJ2RAnuFungnQOxLg",
+    "url": "https://www.youtube.com/@BlenderOfficial"
+  },
+  "available_formats": [
+    {
+      "format_id": "299+140",
+      "label": "1080p60 H.264 (MP4)",
+      "container": "mp4",
+      "mime_type": "video/mp4",
+      "resolution": "1920x1080",
+      "width": 1920,
+      "height": 1080,
+      "fps": 60,
+      "video_codec": "avc1.64002a",
+      "audio_codec": "mp4a.40.2",
+      "video_bitrate_kbps": 1680.4,
+      "audio_bitrate_kbps": 129.5,
+      "size_bytes": 142840912,
+      "size_is_approx": false,
+      "protocol": "https",
+      "has_video": true,
+      "has_audio": true,
+      "requires_muxing": true,
+      "direct_media_url": null,
+      "expires_at": "2026-11-22T01:00:00Z"
+    },
+    {
+      "format_id": "251",
+      "label": "Audio Only (Opus 160kbps)",
+      "container": "webm",
+      "mime_type": "audio/webm",
+      "resolution": "audio_only",
+      "width": null,
+      "height": null,
+      "fps": null,
+      "video_codec": null,
+      "audio_codec": "opus",
+      "video_bitrate_kbps": null,
+      "audio_bitrate_kbps": 158.2,
+      "size_bytes": 12540190,
+      "size_is_approx": false,
+      "protocol": "https",
+      "has_video": false,
+      "has_audio": true,
+      "requires_muxing": false,
+      "direct_media_url": "https://rr1---sn-example.googlevideo.com/videoplayback?expire=1795289000&...",
+      "expires_at": "2026-11-22T01:00:00Z"
+    }
+  ],
+  "subtitles": [
+    {
+      "language": "en",
+      "name": "English",
+      "is_auto_generated": false,
+      "formats": ["vtt", "srt"],
+      "url": "https://dl-usercontent.example.net/v1/artifacts/job_01JFX9K2M8R4V7N2Q5W8Z1C3B6/en.vtt?sig=..."
+    }
+  ],
+  "transcript": {
+    "available": true,
+    "language": "en",
+    "source": "manual_captions",
+    "artifact_url": "https://dl-usercontent.example.net/v1/artifacts/job_01JFX9K2M8R4V7N2Q5W8Z1C3B6/transcript.en.txt?sig=..."
+  },
+  "items": [],
+  "metadata": {
+    "published_at": "2014-11-10T14:00:00Z",
+    "view_count": 21450982,
+    "like_count": 284100,
+    "tags": ["blender", "open-movie", "4k", "animation"],
+    "item_count_total": 1,
+    "item_count_returned": 1,
+    "chapters": [
+      {
+        "title": "Opening",
+        "start_seconds": 0,
+        "end_seconds": 124.5
+      },
+      {
+        "title": "The Forest",
+        "start_seconds": 124.5,
+        "end_seconds": 634.5
+      }
+    ],
+    "extra": {
+      "license": "Creative Commons Attribution 3.0"
+    }
+  },
+  "download": {
+    "status": "completed",
+    "selected_format_id": "299+140",
+    "artifact_url": "https://dl-usercontent.example.net/v1/artifacts/job_01JFX9K2M8R4V7N2Q5W8Z1C3B6/media.mp4?sig=abc123",
+    "filename": "Big_Buck_Bunny_60fps_4K_1080p.mp4",
+    "mime_type": "video/mp4",
+    "size_bytes": 142840912,
+    "sha256": "4b227777d4dd1fc61c6f884f48641d02b4d121d3fd328cb08b5531fcacdabf8a",
+    "expires_at": "2026-11-22T06:45:00Z"
+  },
+  "engine": {
+    "engine_used": "yt-dlp",
+    "engine_version": "2026.10.26",
+    "post_processor": "ffmpeg-9.1",
+    "fallback_chain": ["yt-dlp"],
+    "used_browser_fallback": false,
+    "used_authentication": false,
+    "probe_duration_ms": 1380,
+    "download_duration_ms": 9420
+  },
+  "warnings": [
+    {
+      "code": "WARN_FORMAT_MUXED",
+      "message": "Selected 1080p60 video and AAC audio streams were losslessly muxed via FFmpeg.",
+      "engine": "ffmpeg"
+    }
+  ],
+  "errors": []
+}

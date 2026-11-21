@@ -1,0 +1,284 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/schemas/normalized-media-output.v1.schema.json",
+  "title": "NormalizedMediaOutput",
+  "description": "Engine-agnostic normalized response produced by the Universal Media Extraction Engine.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "job_id",
+    "original_url",
+    "url",
+    "source",
+    "content_type",
+    "available_formats",
+    "subtitles",
+    "download",
+    "engine",
+    "warnings",
+    "errors"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0.0"
+    },
+    "job_id": {
+      "type": "string",
+      "description": "Unique job/probe identifier."
+    },
+    "original_url": {
+      "type": "string",
+      "format": "uri",
+      "description": "Exact URL submitted by the caller."
+    },
+    "url": {
+      "type": "string",
+      "format": "uri",
+      "description": "Canonicalized / post-redirect resolved URL."
+    },
+    "source": {
+      "type": "object",
+      "required": ["domain"],
+      "properties": {
+        "domain": { "type": "string" },
+        "platform": { "type": ["string", "null"] },
+        "extractor_key": { "type": ["string", "null"] },
+        "external_id": { "type": ["string", "null"] }
+      }
+    },
+    "content_type": {
+      "type": "string",
+      "enum": [
+        "video",
+        "audio",
+        "image",
+        "gallery",
+        "playlist",
+        "livestream",
+        "document",
+        "archive",
+        "webpage",
+        "file",
+        "unknown"
+      ]
+    },
+    "is_live": {
+      "type": "boolean",
+      "default": false
+    },
+    "title": {
+      "type": ["string", "null"]
+    },
+    "description": {
+      "type": ["string", "null"]
+    },
+    "thumbnail": {
+      "type": ["object", "null"],
+      "properties": {
+        "url": { "type": "string", "format": "uri" },
+        "width": { "type": ["integer", "null"], "minimum": 1 },
+        "height": { "type": ["integer", "null"], "minimum": 1 },
+        "mime_type": { "type": ["string", "null"] }
+      },
+      "required": ["url"]
+    },
+    "duration_seconds": {
+      "type": ["number", "null"],
+      "minimum": 0
+    },
+    "size_bytes": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "Total or primary estimated/actual media size in bytes."
+    },
+    "author": {
+      "type": ["object", "null"],
+      "properties": {
+        "name": { "type": ["string", "null"] },
+        "id": { "type": ["string", "null"] },
+        "url": { "type": ["string", "null"], "format": "uri" }
+      }
+    },
+    "available_formats": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["format_id", "container", "mime_type", "protocol"],
+        "properties": {
+          "format_id": { "type": "string" },
+          "label": { "type": ["string", "null"] },
+          "container": { "type": "string" },
+          "mime_type": { "type": "string" },
+          "resolution": { "type": ["string", "null"], "examples": ["1920x1080", "audio_only"] },
+          "width": { "type": ["integer", "null"], "minimum": 1 },
+          "height": { "type": ["integer", "null"], "minimum": 1 },
+          "fps": { "type": ["number", "null"], "minimum": 0 },
+          "video_codec": { "type": ["string", "null"] },
+          "audio_codec": { "type": ["string", "null"] },
+          "video_bitrate_kbps": { "type": ["number", "null"], "minimum": 0 },
+          "audio_bitrate_kbps": { "type": ["number", "null"], "minimum": 0 },
+          "size_bytes": { "type": ["integer", "null"], "minimum": 0 },
+          "size_is_approx": { "type": "boolean", "default": false },
+          "protocol": { "type": "string", "enum": ["https", "http", "hls", "dash", "ism", "rtmp", "other"] },
+          "has_video": { "type": "boolean" },
+          "has_audio": { "type": "boolean" },
+          "requires_muxing": { "type": "boolean", "default": false },
+          "direct_media_url": {
+            "type": ["string", "null"],
+            "format": "uri",
+            "description": "Direct media or manifest URL when safe and available; null if requires server-side muxing or private headers."
+          },
+          "expires_at": { "type": ["string", "null"], "format": "date-time" }
+        }
+      }
+    },
+    "subtitles": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["language", "is_auto_generated", "formats"],
+        "properties": {
+          "language": { "type": "string", "description": "BCP-47 / ISO-639 language tag." },
+          "name": { "type": ["string", "null"] },
+          "is_auto_generated": { "type": "boolean" },
+          "formats": { "type": "array", "items": { "type": "string" } },
+          "url": { "type": ["string", "null"], "format": "uri" }
+        }
+      }
+    },
+    "transcript": {
+      "type": ["object", "null"],
+      "properties": {
+        "available": { "type": "boolean" },
+        "language": { "type": ["string", "null"] },
+        "source": { "type": ["string", "null"], "enum": ["manual_captions", "auto_captions", "webpage_text", null] },
+        "artifact_url": { "type": ["string", "null"], "format": "uri" }
+      }
+    },
+    "items": {
+      "type": "array",
+      "description": "Child entries for galleries, albums, or playlists (bounded by pagination/quota).",
+      "items": {
+        "type": "object",
+        "required": ["index", "url", "content_type"],
+        "properties": {
+          "index": { "type": "integer", "minimum": 1 },
+          "external_id": { "type": ["string", "null"] },
+          "url": { "type": "string", "format": "uri" },
+          "title": { "type": ["string", "null"] },
+          "content_type": { "type": "string" },
+          "mime_type": { "type": ["string", "null"] },
+          "width": { "type": ["integer", "null"] },
+          "height": { "type": ["integer", "null"] },
+          "duration_seconds": { "type": ["number", "null"] },
+          "size_bytes": { "type": ["integer", "null"] },
+          "thumbnail_url": { "type": ["string", "null"], "format": "uri" },
+          "direct_media_url": { "type": ["string", "null"], "format": "uri" }
+        }
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Normalized supplementary metadata (publication date, counts, chapters, tags, OG/JSON-LD fields).",
+      "properties": {
+        "published_at": { "type": ["string", "null"], "format": "date-time" },
+        "view_count": { "type": ["integer", "null"] },
+        "like_count": { "type": ["integer", "null"] },
+        "tags": { "type": "array", "items": { "type": "string" } },
+        "item_count_total": { "type": ["integer", "null"] },
+        "item_count_returned": { "type": ["integer", "null"] },
+        "chapters": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["title", "start_seconds", "end_seconds"],
+            "properties": {
+              "title": { "type": "string" },
+              "start_seconds": { "type": "number" },
+              "end_seconds": { "type": "number" }
+            }
+          }
+        },
+        "extra": { "type": "object" }
+      }
+    },
+    "download": {
+      "type": "object",
+      "required": ["status"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["not_requested", "queued", "probing", "downloading", "post_processing", "uploading", "completed", "failed", "cancelled"]
+        },
+        "selected_format_id": { "type": ["string", "null"] },
+        "artifact_url": { "type": ["string", "null"], "format": "uri" },
+        "filename": { "type": ["string", "null"] },
+        "mime_type": { "type": ["string", "null"] },
+        "size_bytes": { "type": ["integer", "null"], "minimum": 0 },
+        "sha256": { "type": ["string", "null"], "pattern": "^[a-f0-9]{64}$" },
+        "expires_at": { "type": ["string", "null"], "format": "date-time" }
+      }
+    },
+    "engine": {
+      "type": "object",
+      "required": ["engine_used", "engine_version", "fallback_chain"],
+      "properties": {
+        "engine_used": { "type": "string" },
+        "engine_version": { "type": "string" },
+        "post_processor": { "type": ["string", "null"] },
+        "fallback_chain": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "used_browser_fallback": { "type": "boolean", "default": false },
+        "used_authentication": { "type": "boolean", "default": false },
+        "probe_duration_ms": { "type": ["integer", "null"], "minimum": 0 },
+        "download_duration_ms": { "type": ["integer", "null"], "minimum": 0 }
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["code", "message"],
+        "properties": {
+          "code": { "type": "string" },
+          "message": { "type": "string" },
+          "engine": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "errors": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["code", "message", "retryable"],
+        "properties": {
+          "code": {
+            "type": "string",
+            "enum": [
+              "ERR_INVALID_URL",
+              "ERR_SSRF_BLOCKED",
+              "ERR_UNSUPPORTED_URL",
+              "ERR_DRM_PROTECTED",
+              "ERR_AUTH_REQUIRED",
+              "ERR_CHALLENGE_REQUIRED",
+              "ERR_NOT_FOUND",
+              "ERR_GEO_BLOCKED",
+              "ERR_RATE_LIMITED",
+              "ERR_QUOTA_EXCEEDED",
+              "ERR_TIMEOUT",
+              "ERR_EXTRACTOR_OUTDATED",
+              "ERR_VALIDATION_FAILED",
+              "ERR_INTERNAL"
+            ]
+          },
+          "message": { "type": "string" },
+          "retryable": { "type": "boolean" },
+          "engine": { "type": ["string", "null"] }
+        }
+      }
+    }
+  }
+}

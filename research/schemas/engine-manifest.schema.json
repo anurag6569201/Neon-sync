@@ -1,0 +1,140 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/schemas/engine-manifest.v1.schema.json",
+  "title": "EngineManifest",
+  "description": "Capability and health descriptor registered by every adapter in the Universal Engine Registry.",
+  "type": "object",
+  "required": [
+    "id",
+    "name",
+    "version",
+    "tier",
+    "supported_content_types",
+    "supported_domains",
+    "protocols",
+    "capabilities",
+    "auth_requirements",
+    "priority",
+    "installation_status",
+    "health_status",
+    "license",
+    "invocation_mode"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{1,31}$"
+    },
+    "name": { "type": "string" },
+    "version": { "type": "string" },
+    "tier": {
+      "type": "integer",
+      "enum": [1, 2, 3],
+      "description": "1 = Fast Direct/HTTP, 2 = Specialized Extractor CLI, 3 = Sandboxed Browser Fallback"
+    },
+    "supported_content_types": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "enum": [
+          "video",
+          "audio",
+          "image",
+          "gallery",
+          "playlist",
+          "livestream",
+          "hls",
+          "dash",
+          "document",
+          "archive",
+          "webpage",
+          "file"
+        ]
+      }
+    },
+    "supported_domains": {
+      "type": "object",
+      "required": ["mode"],
+      "properties": {
+        "mode": { "type": "string", "enum": ["allowlist", "pattern_list", "wildcard"] },
+        "domains": { "type": "array", "items": { "type": "string" } },
+        "exclude_domains": { "type": "array", "items": { "type": "string" } },
+        "site_count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "protocols": {
+      "type": "array",
+      "items": { "type": "string", "enum": ["http", "https", "hls", "dash", "ism", "rtmp"] }
+    },
+    "capabilities": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "enum": [
+          "extract_metadata",
+          "enumerate_formats",
+          "extract_media_url",
+          "download_media",
+          "download_direct_file",
+          "download_gallery",
+          "download_playlist",
+          "extract_subtitles",
+          "extract_thumbnail",
+          "extract_audio",
+          "process_media",
+          "record_livestream",
+          "render_javascript",
+          "support_authenticated_content"
+        ]
+      }
+    },
+    "auth_requirements": {
+      "type": "object",
+      "required": ["supports_cookies", "supports_oauth", "supports_headers"],
+      "properties": {
+        "supports_cookies": { "type": "boolean" },
+        "supports_oauth": { "type": "boolean" },
+        "supports_headers": { "type": "boolean" },
+        "required_for_domains": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "cost_profile": {
+      "type": "object",
+      "properties": {
+        "avg_probe_ms": { "type": "integer", "minimum": 0 },
+        "memory_mb": { "type": "integer", "minimum": 1 },
+        "requires_browser": { "type": "boolean" }
+      }
+    },
+    "priority": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000
+    },
+    "installation_status": {
+      "type": "string",
+      "enum": ["installed", "missing", "misconfigured"]
+    },
+    "health_status": {
+      "type": "object",
+      "required": ["state", "last_checked_at"],
+      "properties": {
+        "state": { "type": "string", "enum": ["healthy", "degraded", "circuit_open", "unavailable"] },
+        "last_checked_at": { "type": "string", "format": "date-time" },
+        "consecutive_failures": { "type": "integer", "minimum": 0 },
+        "error_rate_5m": { "type": "number", "minimum": 0, "maximum": 1 },
+        "outdated_detected": { "type": "boolean" }
+      }
+    },
+    "license": {
+      "type": "string",
+      "description": "SPDX license identifier for compliance tracking."
+    },
+    "invocation_mode": {
+      "type": "string",
+      "enum": ["subprocess", "http_sidecar", "in_process"]
+    }
+  }
+}
