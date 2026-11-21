@@ -39,11 +39,14 @@ docker compose up --build
 
 | Method & Path | Description |
 |---|---|
+| `GET /` | **Neon Sync Studio Web UI** (presets, tabbed video/audio/image/subtitle/clip settings, format picker, batch queue, live SSE progress) |
 | `GET /v1/health` | Service status + installed/missing engine overview |
+| `GET /v1/formats` | Declarative catalog of supported qualities, codecs, containers, bitrates, image formats & presets |
 | `GET /v1/engines` | List all registered engine manifests, capabilities, versions, and circuit/health telemetry |
 | `POST /v1/engines/refresh` | Re-run live health & version checks across all registered adapters |
 | `POST /v1/probe` | Non-downloading metadata & format probe (canonical cached, SSRF-checked, normalized output) |
-| `POST /v1/jobs` | Enqueue an async extraction/download job (idempotency keys, concurrency caps, rate limits) |
+| `POST /v1/jobs` | Enqueue an async extraction/download job with advanced video/audio/image/subtitle/clipping options |
+| `POST /v1/jobs/batch` | Validate & enqueue up to 10 URLs at once sharing advanced extraction settings |
 | `GET /v1/jobs` / `GET /v1/jobs/{job_id}` | List or inspect job status, progress, and normalized output |
 | `GET /v1/jobs/{job_id}/events` | Real-time **Server-Sent Events (SSE)** progress stream |
 | `POST /v1/jobs/{job_id}/cancel` | Preemptively cancel job (`SIGTERM` → `SIGKILL` entire subprocess group) |
