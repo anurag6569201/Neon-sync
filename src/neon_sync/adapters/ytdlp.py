@@ -502,42 +502,51 @@ class YtDlpAdapter(ExtractorAdapter):
             str(plan.output_dir / "%(id)s.%(ext)s"),
         ]
 
-        selector = build_ytdlp_format_selector(
-            mode=plan.mode,
-            format_id=plan.format_id,
-            video_quality=plan.video_quality,
-            video_codec=plan.video_codec,
-            video_container=plan.video_container,
-            fps_limit=plan.fps_limit,
-        )
-        argv.extend(["-f", selector])
-
-        if plan.mode == "audio":
-            if plan.audio_format and plan.audio_format != "best":
-                argv.extend(["-x", "--audio-format", plan.audio_format])
-                if plan.audio_bitrate != "auto":
-                    argv.extend(["--audio-quality", plan.audio_bitrate.upper()])
-        elif plan.video_container != "auto":
-            argv.extend(["--merge-output-format", plan.video_container])
-
-        if plan.playlist_items:
-            argv.extend(["--playlist-items", plan.playlist_items])
-
-        if plan.extract_subtitles or plan.embed_subtitles or plan.generate_transcript:
+        if plan.subtitles_only:
+            argv.append("--skip-download")
             langs = ",".join(plan.subtitle_languages or ["en"])
             argv.append("--write-subs")
             if plan.subtitle_mode in {"prefer_manual", "include_auto"}:
                 argv.append("--write-auto-subs")
             argv.extend(["--sub-langs", langs, "--sub-format", f"{plan.subtitle_format}/best"])
-            if plan.embed_subtitles and plan.mode != "audio":
-                argv.append("--embed-subs")
+        else:
+            selector = build_ytdlp_format_selector(
+                mode=plan.mode,
+                format_id=plan.format_id,
+                video_quality=plan.video_quality,
+                video_codec=plan.video_codec,
+                video_container=plan.video_container,
+                fps_limit=plan.fps_limit,
+                video_only=plan.video_only,
+            )
+            argv.extend(["-f", selector])
 
-        if plan.embed_metadata:
-            argv.append("--embed-metadata")
-        if plan.embed_thumbnail:
-            argv.append("--embed-thumbnail")
-        elif plan.extract_thumbnail:
-            argv.append("--write-thumbnail")
+            if plan.mode == "audio":
+                if plan.audio_format and plan.audio_format != "best":
+                    argv.extend(["-x", "--audio-format", plan.audio_format])
+                    if plan.audio_bitrate != "auto":
+                        argv.extend(["--audio-quality", plan.audio_bitrate.upper()])
+            elif plan.video_container != "auto":
+                argv.extend(["--merge-output-format", plan.video_container])
+
+            if plan.playlist_items:
+                argv.extend(["--playlist-items", plan.playlist_items])
+
+            if plan.extract_subtitles or plan.embed_subtitles or plan.generate_transcript:
+                langs = ",".join(plan.subtitle_languages or ["en"])
+                argv.append("--write-subs")
+                if plan.subtitle_mode in {"prefer_manual", "include_auto"}:
+                    argv.append("--write-auto-subs")
+                argv.extend(["--sub-langs", langs, "--sub-format", f"{plan.subtitle_format}/best"])
+                if plan.embed_subtitles and plan.mode != "audio":
+                    argv.append("--embed-subs")
+
+            if plan.embed_metadata:
+                argv.append("--embed-metadata")
+            if plan.embed_thumbnail:
+                argv.append("--embed-thumbnail")
+            elif plan.extract_thumbnail:
+                argv.append("--write-thumbnail")
 
         if self._settings.egress_proxy_url:
             argv.extend(["--proxy", self._settings.egress_proxy_url])
@@ -651,6 +660,12 @@ class YtDlpAdapter(ExtractorAdapter):
             reverse=True,
         )
         if not files:
+            if plan.subtitles_only:
+                raise AdapterError(
+                    ErrorCode.ERR_NOT_FOUND,
+                    "No subtitles or captions were available for the requested language(s) on this video.",
+                    engine_id=self.id,
+                )
             raise AdapterError(
                 ErrorCode.ERR_INTERNAL,
                 "yt-dlp completed but produced no output files.",

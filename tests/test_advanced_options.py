@@ -55,10 +55,29 @@ def test_format_catalog_and_ytdlp_format_selectors():
     assert "bestaudio[ext=m4a]" in sel
     assert sel.endswith("bestvideo+bestaudio/best")
 
+    # Muted video-only selector
+    vo = build_ytdlp_format_selector(mode="video", video_quality="1080", video_only=True)
+    assert vo == "bestvideo[height<=1080]/bestvideo"
+    assert "bestaudio" not in vo
+
 
 def test_ytdlp_and_gallery_dl_advanced_argv_flags(tmp_path: Path):
     settings = Settings(egress_proxy_url="http://127.0.0.1:3128")
     yt = YtDlpAdapter(settings)
+    sub_plan = DownloadPlan(
+        job_id="job_sub_only",
+        output_dir=tmp_path,
+        mode="video",
+        subtitles_only=True,
+        subtitle_languages=["en", "hi"],
+        subtitle_mode="include_auto",
+        subtitle_format="vtt",
+    )
+    sub_argv = yt.build_download_argv("https://youtu.be/YW7Uc5_ixtM", sub_plan)
+    assert "--skip-download" in sub_argv
+    assert "--write-subs" in sub_argv and "--write-auto-subs" in sub_argv
+    assert "en,hi" in sub_argv
+
     plan = DownloadPlan(
         job_id="job_adv_1",
         output_dir=tmp_path,

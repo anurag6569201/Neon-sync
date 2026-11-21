@@ -226,6 +226,7 @@ class ExtractionOrchestrator:
                 video_container=request.video_container,
                 video_codec=request.video_codec,
                 fps_limit=request.fps_limit,
+                video_only=request.video_only,
                 remux_faststart=request.remux_faststart,
                 audio_format=request.audio_format,
                 audio_bitrate=request.audio_bitrate,
@@ -240,6 +241,7 @@ class ExtractionOrchestrator:
                 embed_thumbnail=request.embed_thumbnail,
                 embed_metadata=request.embed_metadata,
                 extract_subtitles=request.extract_subtitles,
+                subtitles_only=request.subtitles_only,
                 embed_subtitles=request.embed_subtitles,
                 subtitle_languages=request.subtitle_languages,
                 subtitle_mode=request.subtitle_mode,
@@ -268,7 +270,11 @@ class ExtractionOrchestrator:
             final_mime = artifact.mime_type or "application/octet-stream"
             ffmpeg = self._registry.get_postprocessor("ffmpeg")
 
-            if isinstance(ffmpeg, FfmpegAdapter) and ffmpeg.manifest().installation_status == "installed":
+            if (
+                not request.subtitles_only
+                and isinstance(ffmpeg, FfmpegAdapter)
+                and ffmpeg.manifest().installation_status == "installed"
+            ):
                 await self._emit(
                     progress_cb,
                     ProgressEvent(
@@ -383,9 +389,10 @@ class ExtractionOrchestrator:
                         )
 
             # Optional clean transcript generation from downloaded subtitle files
-            if request.generate_transcript and artifact.extra_files:
+            sub_candidates = [*artifact.extra_files, final_path] if request.subtitles_only else list(artifact.extra_files)
+            if request.generate_transcript and sub_candidates:
                 sub_file = next(
-                    (p for p in artifact.extra_files if p.suffix.lower() in {".vtt", ".srt"}),
+                    (p for p in sub_candidates if p.suffix.lower() in {".vtt", ".srt"}),
                     None,
                 )
                 if sub_file is not None:

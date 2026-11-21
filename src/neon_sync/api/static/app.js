@@ -1,10 +1,11 @@
-/* Neon Sync — Infinite Spatial Media Workbench, Live Patchbay Threads & Minimap Engine */
+/* Neon Sync — Infinite Spatial Media Possibility Tree & Threaded Patchbay Engine */
 (() => {
   "use strict";
 
   const $ = (id) => document.getElementById(id);
   const URL_RE = /https?:\/\/[^\s<>"')]+/i;
-  const LAYOUT_STORAGE_KEY = "neon_sync_spatial_layout_v3";
+  const LAYOUT_STORAGE_KEY = "neon_sync_spatial_layout_v4";
+
   const SHOWCASE_VIDEO = {
     url: "https://youtu.be/YW7Uc5_ixtM",
     title: "Sajan Sajan remix | by Abhishek Mehra",
@@ -13,27 +14,11 @@
     views: "8.0M views",
     thumbnail: "https://i.ytimg.com/vi/YW7Uc5_ixtM/maxresdefault.jpg",
   };
-  const DEMO_VIDEO_URL = SHOWCASE_VIDEO.url;
 
   /* ---------- Application State ---------- */
   const state = {
-    mode: "auto",
     forceAgent: false,
-    videoQuality: "best",
-    h264Mp4: true,
-    audioFormat: "mp3",
-    audioBitrate: "320k",
-    loudnorm: false,
-    imageFormat: "original",
-    imageMaxWidth: "original",
-    browserFallback: false,
-    clipEnabled: false,
-    subsEnabled: false,
-    embedSubs: true,
-    generateTranscript: true,
-    finetuneOpen: false,
-    batchMode: false,
-    popoverOpen: false,
+    batchOpen: false,
     autoSave: localStorage.getItem("neon_autosave") !== "false",
     sfxEnabled: localStorage.getItem("neon_sfx") !== "false",
     tier: null,
@@ -45,13 +30,14 @@
     historyFilter: "all",
     historyJobs: [],
     selectedNodeId: null,
-    nodes: new Map(), // id -> { id, type: 'source'|'blueprint'|'agent'|'result'|'note', x, y, demo?: bool, collapsed?: bool, ... }
+    nodes: new Map(), // id -> { id, type: 'source'|'branch'|'agent'|'result'|'note', x, y, ... }
     edges: [],        // { id, from, to, kind, label, active?: bool, demo?: bool }
     sourceByUrl: new Map(),
     resultByJobId: new Map(),
     savedPositions: {},
     pendingPatch: null,
     hasDemoGraph: false,
+    lastApiPayload: null,
   };
 
   try {
@@ -66,9 +52,7 @@
     for (const n of state.nodes.values()) {
       if (n.demo) continue;
       positions[n.id] = { x: Math.round(n.x), y: Math.round(n.y), collapsed: !!n.collapsed };
-      if (n.type === "note") {
-        notes.push({ id: n.id, x: Math.round(n.x), y: Math.round(n.y), text: n.text || "" });
-      }
+      if (n.type === "note") notes.push({ id: n.id, x: Math.round(n.x), y: Math.round(n.y), text: n.text || "" });
     }
     for (const e of state.edges) {
       if (e.demo) continue;
@@ -77,9 +61,7 @@
       }
     }
     state.savedPositions = positions;
-    try {
-      localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify({ positions, notes, customEdges }));
-    } catch (_) {}
+    try { localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify({ positions, notes, customEdges })); } catch (_) {}
   }
 
   /* ---------- Web Audio Tactile Micro-Synthesizer ---------- */
@@ -111,6 +93,7 @@
     return {
       click: () => tone(520, 0.025, "triangle", 0.028, 220),
       snap: () => tone(780, 0.022, "sine", 0.026, 980),
+      unfold: () => tone(380, 0.06, "sine", 0.03, 620),
       capture: () => {
         tone(340, 0.085, "sine", 0.04, 760);
         setTimeout(() => tone(880, 0.075, "sine", 0.026), 52);
@@ -149,18 +132,12 @@
 
   function screenToWorld(sx, sy) {
     const vp = $("viewport").getBoundingClientRect();
-    return {
-      x: (sx - vp.left - camera.x) / camera.zoom,
-      y: (sy - vp.top - camera.y) / camera.zoom,
-    };
+    return { x: (sx - vp.left - camera.x) / camera.zoom, y: (sy - vp.top - camera.y) / camera.zoom };
   }
 
   function worldToScreen(wx, wy) {
     const vp = $("viewport").getBoundingClientRect();
-    return {
-      x: vp.left + camera.x + wx * camera.zoom,
-      y: vp.top + camera.y + wy * camera.zoom,
-    };
+    return { x: vp.left + camera.x + wx * camera.zoom, y: vp.top + camera.y + wy * camera.zoom };
   }
 
   function getViewportCenterWorld() {
@@ -175,7 +152,7 @@
     const ty = vp.height * 0.43 - wy * targetZoom;
     const startX = camera.x, startY = camera.y, startZ = camera.zoom;
     const t0 = performance.now();
-    const dur = 360;
+    const dur = 340;
     function tick(now) {
       const p = Math.min(1, (now - t0) / dur);
       const ease = 1 - Math.pow(1 - p, 3);
@@ -194,8 +171,8 @@
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (const n of state.nodes.values()) {
       const el = document.querySelector(`[data-node-id="${CSS.escape(n.id)}"]`);
-      const nw = el ? el.offsetWidth : 350;
-      const nh = el ? el.offsetHeight : 210;
+      const nw = el ? el.offsetWidth : 340;
+      const nh = el ? el.offsetHeight : 140;
       minX = Math.min(minX, n.x);
       minY = Math.min(minY, n.y);
       maxX = Math.max(maxX, n.x + nw);
@@ -208,10 +185,10 @@
     if (!state.nodes.size) return glideToWorld(0, 0, 1);
     const b = getGraphBounds();
     const vp = $("viewport").getBoundingClientRect();
-    const spanX = Math.max(420, b.maxX - b.minX);
-    const spanY = Math.max(260, b.maxY - b.minY);
-    const z = Math.max(0.35, Math.min(1.0, Math.min((vp.width - 140) / spanX, (vp.height - 210) / spanY)));
-    glideToWorld((b.minX + b.maxX) / 2, (b.minY + b.maxY) / 2 + 24, z);
+    const spanX = Math.max(460, b.maxX - b.minX);
+    const spanY = Math.max(280, b.maxY - b.minY);
+    const z = Math.max(0.4, Math.min(0.96, Math.min((vp.width - 140) / spanX, (vp.height - 210) / spanY)));
+    glideToWorld((b.minX + b.maxX) / 2, (b.minY + b.maxY) / 2 + 18, z);
   }
 
   /* ---------- Live Interactive Spatial Minimap ---------- */
@@ -226,54 +203,45 @@
     const b = getGraphBounds();
     const pad = 220;
     const bx = b.minX - pad, by = b.minY - pad;
-    const bw = Math.max(900, (b.maxX - b.minX) + pad * 2);
-    const bh = Math.max(560, (b.maxY - b.minY) + pad * 2);
+    const bw = Math.max(920, (b.maxX - b.minX) + pad * 2);
+    const bh = Math.max(580, (b.maxY - b.minY) + pad * 2);
     const scale = Math.min(mw / bw, mh / bh);
     const ox = (mw - bw * scale) / 2 - bx * scale;
     const oy = (mh - bh * scale) / 2 - by * scale;
     minimapMeta = { scale, ox, oy };
 
-    // Draw threads
     ctx.lineWidth = 1;
     for (const e of state.edges) {
-      const n1 = state.nodes.get(e.from);
-      const n2 = state.nodes.get(e.to);
+      const n1 = state.nodes.get(e.from), n2 = state.nodes.get(e.to);
       if (!n1 || !n2) continue;
-      ctx.strokeStyle = e.kind === "agent" ? "rgba(22,196,127,0.55)" : e.kind === "note" ? "rgba(245,183,0,0.55)" : "rgba(255,77,0,0.55)";
+      ctx.strokeStyle = e.kind === "agent" ? "rgba(22,196,127,0.55)" : e.kind === "audio" ? "rgba(168,85,247,0.55)" : e.kind === "subtitles" ? "rgba(59,130,246,0.55)" : "rgba(255,77,0,0.55)";
       ctx.beginPath();
-      ctx.moveTo(ox + (n1.x + 170) * scale, oy + (n1.y + 90) * scale);
-      ctx.lineTo(ox + (n2.x + 170) * scale, oy + (n2.y + 90) * scale);
+      ctx.moveTo(ox + (n1.x + 150) * scale, oy + (n1.y + 50) * scale);
+      ctx.lineTo(ox + (n2.x + 150) * scale, oy + (n2.y + 50) * scale);
       ctx.stroke();
     }
 
-    // Draw nodes
     for (const n of state.nodes.values()) {
       const el = document.querySelector(`[data-node-id="${CSS.escape(n.id)}"]`);
-      const nw = Math.max(8, (el ? el.offsetWidth : 350) * scale);
-      const nh = Math.max(5, (el ? el.offsetHeight : 190) * scale);
-      ctx.fillStyle = (n.type === "agent" || (n.type === "blueprint" && n.kind === "agent"))
-        ? "#16c47f"
-        : n.type === "note"
-          ? "#f5b700"
-          : n.type === "result"
-            ? "#a1a1aa"
-            : "#ff4d00";
+      const nw = Math.max(7, (el ? el.offsetWidth : 310) * scale);
+      const nh = Math.max(4, (el ? el.offsetHeight : 90) * scale);
+      ctx.fillStyle = n.type === "source" ? "#ff4d00"
+        : n.type === "agent" || n.branchKind === "agent" ? "#16c47f"
+        : n.branchKind === "audio" ? "#a855f7"
+        : n.branchKind === "subtitles" ? "#3b82f6"
+        : n.type === "note" || n.branchKind === "image" ? "#f5b700"
+        : "#a1a1aa";
       ctx.fillRect(ox + n.x * scale, oy + n.y * scale, nw, nh);
     }
 
-    // Draw current viewport frame
     const vp = $("viewport").getBoundingClientRect();
     const tl = screenToWorld(vp.left, vp.top);
     const br = screenToWorld(vp.right, vp.bottom);
     ctx.strokeStyle = "rgba(255,77,0,0.8)";
     ctx.fillStyle = "rgba(255,77,0,0.04)";
     ctx.lineWidth = 1.2;
-    const vx = ox + tl.x * scale;
-    const vy = oy + tl.y * scale;
-    const vw = (br.x - tl.x) * scale;
-    const vh = (br.y - tl.y) * scale;
-    ctx.fillRect(vx, vy, vw, vh);
-    ctx.strokeRect(vx, vy, vw, vh);
+    ctx.fillRect(ox + tl.x * scale, oy + tl.y * scale, (br.x - tl.x) * scale, (br.y - tl.y) * scale);
+    ctx.strokeRect(ox + tl.x * scale, oy + tl.y * scale, (br.x - tl.x) * scale, (br.y - tl.y) * scale);
   }
 
   /* ---------- 60fps Infinite Camera-Synced Gravitational Dot Field ---------- */
@@ -414,17 +382,11 @@
     el.className = `toast ${kind}`;
     el.textContent = msg;
     stack.appendChild(el);
-    setTimeout(() => {
-      el.style.opacity = "0";
-      el.style.transition = "opacity .18s";
-      setTimeout(() => el.remove(), 200);
-    }, 3200);
+    setTimeout(() => { el.style.opacity = "0"; el.style.transition = "opacity .18s"; setTimeout(() => el.remove(), 200); }, 3200);
   }
-
   function esc(str) {
     return String(str ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   }
-
   function fmtBytes(n) {
     if (n === null || n === undefined) return "";
     const units = ["B", "KB", "MB", "GB"];
@@ -432,14 +394,12 @@
     while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
     return `${v.toFixed(i ? 1 : 0)} ${units[i]}`;
   }
-
   function fmtDuration(sec) {
     if (sec === null || sec === undefined) return "";
     const s = Math.max(0, Math.round(Number(sec)));
     const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), r = s % 60;
     return h ? `${h}:${String(m).padStart(2, "0")}:${String(r).padStart(2, "0")}` : `${m}:${String(r).padStart(2, "0")}`;
   }
-
   function fmtRelativeTime(iso) {
     if (!iso) return "";
     const diff = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000));
@@ -448,7 +408,6 @@
     if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
     return `${Math.floor(diff / 86400)}d ago`;
   }
-
   function parseTime(raw) {
     const s = (raw || "").trim();
     if (!s) return null;
@@ -459,12 +418,10 @@
     if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
     return null;
   }
-
   function extractUrl(text) {
     const m = (text || "").match(URL_RE);
     return m ? m[0].replace(/[.,;:]+$/, "") : null;
   }
-
   function isNaturalLanguageCommand(raw) {
     const trimmed = (raw || "").trim();
     if (!trimmed) return false;
@@ -473,11 +430,9 @@
     if (!url) return trimmed.includes(" ");
     return trimmed.replace(url, "").trim().length >= 3;
   }
-
   function shortHost(url) {
     try { return new URL(url).hostname.replace(/^www\./, ""); } catch (_) { return "link"; }
   }
-
   function hashUrl(str) {
     let h1 = 0x811c9dc5, h2 = 0x9e3779b9;
     for (let i = 0; i < str.length; i++) {
@@ -487,20 +442,21 @@
     }
     return ((h1 >>> 0).toString(36) + (h2 >>> 0).toString(36)).slice(0, 14);
   }
-
   function uid(prefix) { return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`; }
 
   function jobThreadLabel(job) {
     const req = job?.request;
-    if (!req) return "EXTRACT";
-    if (req.mode === "audio" || req.audio_format) return `AUDIO · ${(req.audio_format || "MP3").toUpperCase()}`;
+    if (!req) return "OUTPUT";
+    if (req.subtitles_only) return `SUBS · ${(req.subtitle_format || "VTT").toUpperCase()}`;
+    if (req.mode === "audio" || req.audio_format) return `${(req.audio_format || "MP3").toUpperCase()} · ${req.audio_bitrate || "320k"}`;
     if (req.mode === "image" || (req.image_format && req.image_format !== "original")) return `IMG · ${(req.image_format || "ORIG").toUpperCase()}`;
-    if (req.clip_start_seconds !== null && req.clip_start_seconds !== undefined) return `CLIP · ${fmtDuration(req.clip_start_seconds)}–${fmtDuration(req.clip_end_seconds || 0)}`;
-    if (req.video_quality && req.video_quality !== "best") return `VIDEO · ${req.video_quality}p`;
-    return `${(req.video_container || "AUTO").toUpperCase()} · BEST`;
+    const muteTag = req.video_only ? " (MUTED)" : "";
+    if (req.clip_start_seconds !== null && req.clip_start_seconds !== undefined) return `CLIP ${fmtDuration(req.clip_start_seconds)}–${fmtDuration(req.clip_end_seconds || 0)}${muteTag}`;
+    if (req.video_quality && req.video_quality !== "best") return `${req.video_quality}p${muteTag}`;
+    return `BEST${muteTag}`;
   }
 
-  /* ---------- SaaS Tier & API Headers ---------- */
+  /* ---------- SaaS Tier & Headers ---------- */
   function apiHeaders(extra = {}) {
     const h = { ...extra };
     if (state.proKey) h["X-Neon-Pro-Key"] = state.proKey;
@@ -560,20 +516,200 @@
     $("upgrade-modal").classList.remove("hidden");
   }
 
-  /* ---------- Interactive First-Run Sandbox Showcase (Default Outlook!) ---------- */
+  /* ---------- POSSIBILITY TREE GENERATOR (Discovers Real Paths Per URL!) ---------- */
+  function createDefaultBranchConfig(kind, sourceNode) {
+    const subs = sourceNode?.probe?.subtitles || [];
+    const defaultLang = subs[0]?.language || "en";
+    if (kind === "video") {
+      return {
+        video_quality: "1080",
+        video_only: false,
+        video_container: "mp4",
+        video_codec: "h264",
+        fps_limit: "any",
+        embed_subtitles: false,
+        clip_start: "",
+        clip_end: "",
+        lockedFormatId: null,
+        streamsOpen: false,
+      };
+    }
+    if (kind === "audio") {
+      return {
+        audio_format: "mp3",
+        audio_bitrate: "320k",
+        normalize_audio: true,
+        embed_metadata: true,
+        clip_start: "",
+        clip_end: "",
+      };
+    }
+    if (kind === "subtitles") {
+      return {
+        subtitle_languages: defaultLang,
+        subtitle_format: "vtt",
+        subtitle_mode: "include_auto",
+        generate_transcript: true,
+      };
+    }
+    if (kind === "image") {
+      return {
+        image_format: "webp",
+        image_max_width: "original",
+        image_quality: 90,
+        gallery_range_start: 1,
+        gallery_range_end: "",
+        gallery_archive_format: "zip",
+      };
+    }
+    if (kind === "agent") {
+      return {
+        prompt: "clip 0:30 to 0:45 in 1080p h264 mp4",
+      };
+    }
+    return { custom_filename_prefix: "" }; // direct file
+  }
+
+  function inferPathsForSource(sourceNode) {
+    const p = sourceNode.probe;
+    const ct = p?.content_type || "video";
+    const hasThumb = !!p?.thumbnail?.url;
+
+    if (ct === "image" || ct === "gallery") {
+      return ["image", "agent"];
+    }
+    if (ct === "audio") {
+      return hasThumb ? ["audio", "image", "agent"] : ["audio", "agent"];
+    }
+    if (ct === "document" || ct === "archive" || ct === "file") {
+      return ["direct", "agent"];
+    }
+    // Video / Livestream / Playlist / YouTube / Social media
+    const paths = ["video", "audio", "subtitles"];
+    if (hasThumb) paths.push("image");
+    paths.push("agent");
+    return paths;
+  }
+
+  function spawnPossibilityBranches(sourceNode, expandKind = null) {
+    // Remove old auto-generated branches for this source if re-probed
+    for (const [id, n] of Array.from(state.nodes.entries())) {
+      if (n.type === "branch" && n.parentSourceId === sourceNode.id && !n.hasOutputs) {
+        state.nodes.delete(id);
+        state.edges = state.edges.filter((e) => e.from !== id && e.to !== id);
+        document.querySelector(`[data-node-id="${CSS.escape(id)}"]`)?.remove();
+      }
+    }
+
+    const kinds = inferPathsForSource(sourceNode);
+    const created = [];
+    kinds.forEach((kind) => {
+      const id = `br_${sourceNode.id}_${kind}`;
+      if (state.nodes.has(id)) return;
+      const node = {
+        id,
+        type: "branch",
+        branchKind: kind,
+        parentSourceId: sourceNode.id,
+        url: sourceNode.url,
+        expanded: expandKind === kind,
+        demo: !!sourceNode.demo,
+        x: sourceNode.x + 485,
+        y: sourceNode.y,
+        cfg: createDefaultBranchConfig(kind, sourceNode),
+        hasOutputs: false,
+      };
+      state.nodes.set(id, node);
+      renderNode(node);
+      const labelMap = {
+        video: "VIDEO",
+        audio: "AUDIO",
+        subtitles: "SUBTITLES",
+        image: sourceNode.probe?.content_type === "gallery" ? "GALLERY" : "THUMBNAIL",
+        agent: "AI AGENT",
+        direct: "DIRECT FILE",
+      };
+      addEdge(sourceNode.id, id, kind, node.expanded, labelMap[kind] || "PATH", !!sourceNode.demo);
+      created.push(node);
+    });
+
+    rebalanceBranches(sourceNode.id);
+    return created;
+  }
+
+  function rebalanceBranches(sourceId) {
+    const src = state.nodes.get(sourceId);
+    if (!src) return;
+    const branches = Array.from(state.nodes.values()).filter((n) => n.type === "branch" && n.parentSourceId === sourceId);
+    if (!branches.length) return;
+
+    // Calculate clean vertical stack centered on the Source Node so NOTHING EVER OVERLAPS!
+    const gap = 16;
+    const heights = branches.map((b) => {
+      const el = document.querySelector(`[data-node-id="${CSS.escape(b.id)}"]`);
+      return el ? el.offsetHeight : (b.expanded ? 320 : 62);
+    });
+    const totalH = heights.reduce((a, h) => a + h, 0) + gap * (branches.length - 1);
+    const srcEl = document.querySelector(`[data-node-id="${CSS.escape(sourceId)}"]`);
+    const srcCenterY = src.y + (srcEl ? srcEl.offsetHeight / 2 : 140);
+    let curY = Math.round(srcCenterY - totalH / 2);
+
+    branches.forEach((b, i) => {
+      b.x = src.x + (srcEl ? srcEl.offsetWidth : 344) + 140;
+      b.y = curY;
+      const el = document.querySelector(`[data-node-id="${CSS.escape(b.id)}"]`);
+      if (el) { el.style.left = `${b.x}px`; el.style.top = `${b.y}px`; }
+      curY += heights[i] + gap;
+    });
+    requestAnimationFrame(renderThreads);
+  }
+
+  function spawnBranchNodeManually(sourceNode, kind, dropPos) {
+    const id = uid(`br_${kind}`);
+    const node = {
+      id,
+      type: "branch",
+      branchKind: kind,
+      parentSourceId: sourceNode.id,
+      url: sourceNode.url,
+      expanded: true,
+      demo: false,
+      x: Math.round(dropPos.x),
+      y: Math.round(dropPos.y - 60),
+      cfg: createDefaultBranchConfig(kind, sourceNode),
+      hasOutputs: false,
+    };
+    state.nodes.set(id, node);
+    renderNode(node);
+    addEdge(sourceNode.id, id, kind, true, kind.toUpperCase());
+    sfx.unfold();
+    return node;
+  }
+
+  /* ---------- Interactive Live Default Example Tree (Sajan Sajan Remix) ---------- */
   function clearDemoGraph() {
     if (!state.hasDemoGraph) return;
     for (const [id, n] of Array.from(state.nodes.entries())) {
       if (n.demo) {
+        if (n.type === "source" && n.url) state.sourceByUrl.delete(n.url);
         state.nodes.delete(id);
-        const el = document.querySelector(`[data-node-id="${CSS.escape(id)}"]`);
-        if (el) el.remove();
+        document.querySelector(`[data-node-id="${CSS.escape(id)}"]`)?.remove();
       }
     }
     state.edges = state.edges.filter((e) => !e.demo);
     state.hasDemoGraph = false;
     $("sandbox-banner").classList.add("hidden");
     renderThreads();
+    syncWorkspaceMeta();
+  }
+
+  function promoteDemoTreeToReal() {
+    if (!state.hasDemoGraph) return;
+    state.hasDemoGraph = false;
+    $("sandbox-banner").classList.add("hidden");
+    for (const n of state.nodes.values()) n.demo = false;
+    for (const e of state.edges) e.demo = false;
+    persistWorkspace();
     syncWorkspaceMeta();
   }
 
@@ -584,16 +720,14 @@
 
     const v = SHOWCASE_VIDEO;
     const src = {
-      id: "demo_source",
+      id: `src_${hashUrl(v.url)}`,
       type: "source",
       demo: true,
       url: v.url,
       title: v.title,
-      x: -445,
+      x: -460,
       y: -145,
       probing: false,
-      streamsOpen: false,
-      lockedFormatId: null,
       probe: {
         title: v.title,
         duration_seconds: v.duration,
@@ -603,78 +737,34 @@
         author: { name: `${v.uploader} · ${v.views}` },
         thumbnail: { url: v.thumbnail },
         engine: { engine_used: "yt-dlp" },
-        available_formats: [],
+        available_formats: [
+          { format_id: "137", resolution: "1920x1080", height: 1080, fps: 30, container: "mp4", video_codec: "avc1" },
+          { format_id: "136", resolution: "1280x720", height: 720, fps: 30, container: "mp4", video_codec: "avc1" },
+          { format_id: "135", resolution: "854x480", height: 480, fps: 30, container: "mp4", video_codec: "avc1" },
+          { format_id: "140", resolution: "audio only", container: "m4a", audio_codec: "mp4a" },
+        ],
+        subtitles: [{ language: "hi", is_auto_generated: true }, { language: "en", is_auto_generated: true }],
       },
     };
 
-    const bpAudio = {
-      id: "demo_bp_audio",
-      type: "blueprint",
-      demo: true,
-      kind: "extract",
-      url: v.url,
-      x: 115,
-      y: -255,
-      badge: "AUDIO MASTER · 320K",
-      title: "Mastered 320k MP3 Track",
-      desc: "Extract clean stereo audio with EBU R128 loudness normalization — ready for DJ sets or offline listening.",
-      specs: ["MP3 320kbps", "Loudnorm", "Metadata Embedded"],
-      cta: "▶ Extract MP3 Live",
-      actionType: "agent",
-      prompt: `extract audio as 320k mp3 and normalize volume ${v.url}`,
-    };
-
-    const bpClip = {
-      id: "demo_bp_clip",
-      type: "blueprint",
-      demo: true,
-      kind: "agent",
-      url: v.url,
-      x: 115,
-      y: -20,
-      badge: "AI AGENT · REEL HOOK",
-      title: "15s Viral Drop Clip (0:30–0:45)",
-      desc: "Let Neon Agent trim the exact drop in 1080p H.264 MP4 with faststart streaming so it uploads anywhere.",
-      specs: ["0:30 → 0:45", "1080p H.264 MP4", "FFmpeg Faststart"],
-      cta: "▶ Run AI Clip Live",
-      actionType: "agent",
-      prompt: `clip 0:30 to 0:45 in 1080p h264 mp4 ${v.url}`,
-    };
-
-    const note = {
-      id: "demo_note",
-      type: "note",
-      demo: true,
-      x: 115,
-      y: 225,
-      text: "🎵 Sajan Sajan Remix — Creative Board\n• Drop Hook: 0:30 – 0:45 (15s Reel cut)\n• Original: Alka Yagnik / Anu Malik (Aarzoo)\n• Drag the orange jack (●) onto empty desk to chain more!",
-    };
-
     state.nodes.set(src.id, src);
-    state.nodes.set(bpAudio.id, bpAudio);
-    state.nodes.set(bpClip.id, bpClip);
-    state.nodes.set(note.id, note);
+    state.sourceByUrl.set(v.url, src.id);
     renderNode(src);
-    renderNode(bpAudio);
-    renderNode(bpClip);
-    renderNode(note);
-
-    addEdge(src.id, bpAudio.id, "extract", true, "AUDIO · 320k MP3", true);
-    addEdge(src.id, bpClip.id, "agent", true, "AI · REEL 0:30–0:45", true);
-    addEdge(src.id, note.id, "note", false, "CREDITS & HOOKS", true);
+    // Fan out ALL real paths right away, with Video unfolded so the possibility model is instant!
+    spawnPossibilityBranches(src, "video");
     setTimeout(() => {
-      renderThreads();
-      glideToWorld(-40, 20, Math.min(0.94, Math.max(0.76, window.innerWidth / 1380)));
-    }, 55);
+      rebalanceBranches(src.id);
+      fitAllNodes();
+    }, 60);
   }
 
-  /* ---------- Spatial Graph Core: Nodes + Labeled Animated Bezier Threads ---------- */
+  /* ---------- Spatial Graph Core: Threads & Layout ---------- */
   function syncWorkspaceMeta() {
     const realNodes = Array.from(state.nodes.values()).filter((n) => !n.demo);
     const realEdges = state.edges.filter((e) => !e.demo);
     const totalHist = state.historyJobs.length + realNodes.filter((n) => n.type === "note" || n.type === "agent").length;
     $("history-count-chip").textContent = String(totalHist);
-    $("history-stats").textContent = `${realNodes.length} on desk · ${state.historyJobs.length} saved jobs · ${realEdges.length} threads`;
+    $("history-stats").textContent = `${realNodes.length} on desk · ${state.historyJobs.length} saved · ${realEdges.length} threads`;
     drawMinimap();
   }
 
@@ -687,8 +777,7 @@
       renderThreads();
       return exists;
     }
-    const defaultLabel = label || (kind === "agent" ? "AI AGENT" : kind === "note" ? "NOTE" : kind === "custom" ? "THREAD" : "EXTRACT");
-    const edge = { id: uid("edge"), from: fromId, to: toId, kind, label: defaultLabel, active, demo: isDemo, customLabel };
+    const edge = { id: uid("edge"), from: fromId, to: toId, kind, label: label || kind.toUpperCase(), active, demo: isDemo, customLabel };
     state.edges.push(edge);
     renderThreads();
     syncWorkspaceMeta();
@@ -711,8 +800,7 @@
     if (n.type === "result" && n.jobId) state.resultByJobId.delete(n.jobId);
     state.nodes.delete(nodeId);
     state.edges = state.edges.filter((e) => e.from !== nodeId && e.to !== nodeId);
-    const el = document.querySelector(`[data-node-id="${CSS.escape(nodeId)}"]`);
-    if (el) el.remove();
+    document.querySelector(`[data-node-id="${CSS.escape(nodeId)}"]`)?.remove();
     sfx.click();
     renderThreads();
     renderHistoryList();
@@ -738,8 +826,8 @@
     const n = state.nodes.get(nodeId);
     if (!n) return null;
     const el = document.querySelector(`[data-node-id="${CSS.escape(nodeId)}"]`);
-    const w = el ? el.offsetWidth : 348;
-    const h = el ? el.offsetHeight : 180;
+    const w = el ? el.offsetWidth : 340;
+    const h = el ? el.offsetHeight : 140;
     return { x: side === "out" ? n.x + w : n.x, y: n.y + h / 2 };
   }
 
@@ -754,7 +842,7 @@
       const d = bezierPath(p1.x, p1.y, p2.x, p2.y);
       const mid = bezierMidpoint(p1.x, p1.y, p2.x, p2.y);
       const text = (e.label || "THREAD").slice(0, 22);
-      const pillW = Math.max(52, text.length * 6.2 + 18);
+      const pillW = Math.max(48, text.length * 6.0 + 16);
 
       html += `
         <g class="thread-group kind-${esc(e.kind)} ${e.active ? "is-active" : ""}" data-edge-id="${esc(e.id)}">
@@ -763,7 +851,7 @@
           <path class="thread-base kind-${esc(e.kind)}" d="${d}" />
           <path class="thread-pulse kind-${esc(e.kind)} ${e.active ? "" : "idle"}" d="${d}" />
           <g class="thread-pill" data-rename-edge="${esc(e.id)}" transform="translate(${mid.x}, ${mid.y})">
-            <rect class="thread-pill-bg" x="${(-pillW / 2).toFixed(1)}" y="-10" width="${pillW.toFixed(1)}" height="20" rx="10" />
+            <rect class="thread-pill-bg" x="${(-pillW / 2).toFixed(1)}" y="-9.5" width="${pillW.toFixed(1)}" height="19" rx="9.5" />
             <text class="thread-pill-text">${esc(text)}</text>
           </g>
           <g class="thread-unplug" data-del-edge="${esc(e.id)}" transform="translate(${(mid.x + pillW / 2 + 11).toFixed(1)}, ${mid.y.toFixed(1)})">
@@ -797,19 +885,19 @@
 
   function pickChildPosition(parentNode, offsetIndex = 0) {
     const el = document.querySelector(`[data-node-id="${CSS.escape(parentNode.id)}"]`);
-    const pw = el ? el.offsetWidth : 350;
-    return { x: parentNode.x + pw + 135, y: parentNode.y + offsetIndex * 265 };
+    const pw = el ? el.offsetWidth : 370;
+    return { x: parentNode.x + pw + 135, y: parentNode.y + offsetIndex * 240 };
   }
 
   function pickNewRootPosition() {
     const roots = Array.from(state.nodes.values()).filter((n) => n.type === "source" && !n.demo);
     if (!roots.length) {
       const c = getViewportCenterWorld();
-      return { x: Math.round(c.x - 190), y: Math.round(c.y - 110) };
+      return { x: Math.round(c.x - 420), y: Math.round(c.y - 120) };
     }
     let maxY = -Infinity;
     for (const n of state.nodes.values()) if (!n.demo) maxY = Math.max(maxY, n.y);
-    return { x: roots[0].x, y: maxY + 325 };
+    return { x: roots[0].x, y: maxY + 420 };
   }
 
   function tidyGraphLayout() {
@@ -835,19 +923,373 @@
       const el = document.querySelector(`[data-node-id="${CSS.escape(n.id)}"]`);
       if (el) { el.style.left = `${n.x}px`; el.style.top = `${n.y}px`; }
       const kids = (outgoing.get(nodeId) || []).filter((cid) => !visited.has(cid));
-      if (!kids.length) return baseY + (el ? el.offsetHeight + 48 : 250);
+      if (!kids.length) return baseY + (el ? el.offsetHeight + 22 : 120);
       let childY = baseY;
       for (const cid of kids) childY = layoutTree(cid, depth + 1, childY);
-      return Math.max(childY, baseY + (el ? el.offsetHeight + 48 : 250));
+      return Math.max(childY, baseY + (el ? el.offsetHeight + 22 : 120));
     }
 
-    for (const r of roots) cursorY = layoutTree(r.id, 0, cursorY) + 36;
-    for (const n of state.nodes.values()) if (!visited.has(n.id)) cursorY = layoutTree(n.id, 0, cursorY) + 36;
+    for (const r of roots) cursorY = layoutTree(r.id, 0, cursorY) + 40;
+    for (const n of state.nodes.values()) if (!visited.has(n.id)) cursorY = layoutTree(n.id, 0, cursorY) + 40;
 
     sfx.click();
     renderThreads();
     persistWorkspace();
     fitAllNodes();
+  }
+
+  /* ---------- Branch Node HTML Builder (Video / Audio / Subtitles / Thumbnail / Agent / File) ---------- */
+  function buildBranchInnerHtml(node) {
+    const src = state.nodes.get(node.parentSourceId);
+    const probe = src?.probe;
+    const kind = node.branchKind;
+    const cfg = node.cfg;
+
+    const meta = {
+      video: {
+        icon: "🎬",
+        title: "Video",
+        tag: "VIDEO PATH",
+        sub: (() => {
+          const hs = (probe?.available_formats || []).map((f) => f.height).filter(Boolean);
+          const maxH = hs.length ? Math.max(...hs) : 1080;
+          return `Up to ${maxH >= 2160 ? "4K" : maxH + "p"} · With Audio or Muted · Trim`;
+        })(),
+      },
+      audio: {
+        icon: "🎧",
+        title: "Audio Master",
+        tag: "AUDIO PATH",
+        sub: "MP3 320k · M4A · Opus · FLAC · Loudnorm",
+      },
+      subtitles: {
+        icon: "💬",
+        title: "Subtitles & Brief",
+        tag: "CAPTIONS PATH",
+        sub: (probe?.subtitles || []).length
+          ? `${probe.subtitles.length} caption track(s) · Clean .txt · AI Summary`
+          : "Auto captions · Clean .txt · AI Summary",
+      },
+      image: {
+        icon: "🖼",
+        title: probe?.content_type === "gallery" || probe?.content_type === "image" ? "Images & Convert" : "Thumbnail / Cover",
+        tag: probe?.content_type === "gallery" ? "GALLERY PATH" : "VISUAL PATH",
+        sub: "Original · WebP · PNG · JPEG · Resize",
+      },
+      agent: {
+        icon: "✦",
+        title: "AI Agent",
+        tag: "NEON AGENT PATH",
+        sub: "Natural language clip, transcode or summary",
+      },
+      direct: {
+        icon: "📄",
+        title: "Direct File",
+        tag: "FILE PATH",
+        sub: probe?.size_bytes ? `${fmtBytes(probe.size_bytes)} · Verified download` : "Resumable verified download",
+      },
+    }[kind] || { icon: "⚡", title: "Extract", tag: "PATH", sub: "" };
+
+    const ports = `
+      <div class="port port-in" data-port="in" data-node="${esc(node.id)}"></div>
+      <div class="port port-out" data-port="out" data-node="${esc(node.id)}"><span class="port-tip mono">Drag to link</span></div>
+    `;
+
+    // Compact scannable possibility pill card when collapsed!
+    if (!node.expanded) {
+      return `
+        ${ports}
+        <div class="branch-compact-row" data-branch-expand="${esc(node.id)}">
+          <div class="branch-compact-left">
+            <div class="branch-icon-box">${meta.icon}</div>
+            <div style="min-width:0;">
+              <div class="branch-compact-title">${esc(meta.title)}</div>
+              <div class="branch-compact-sub mono">${esc(meta.sub)}</div>
+            </div>
+          </div>
+          <span class="branch-expand-tag mono">Open ▸</span>
+        </div>
+      `;
+    }
+
+    // Expanded bespoke studio configurator per path!
+    let body = "";
+    if (kind === "video") {
+      const fmts = probe?.available_formats || [];
+      const availHeights = new Set(fmts.map((f) => f.height).filter(Boolean));
+      const quals = [
+        { id: "best", label: "Best" },
+        { id: "2160", label: "4K", pro: true },
+        { id: "1440", label: "2K", pro: true },
+        { id: "1080", label: "1080p", h: 1080 },
+        { id: "720", label: "720p", h: 720 },
+        { id: "480", label: "480p", h: 480 },
+        { id: "360", label: "360p", h: 360 },
+      ];
+      const durHint = probe?.duration_seconds ? `Max ${fmtDuration(probe.duration_seconds)}` : "Optional";
+      const streamsHtml = cfg.streamsOpen && fmts.length > 1
+        ? `<div class="node-streams"><table><thead><tr><th>ID</th><th>Res</th><th>Ext</th><th>Size</th></tr></thead><tbody>${
+            fmts.slice(0, 22).map((f) => `<tr class="stream-row ${cfg.lockedFormatId === f.format_id ? "selected" : ""}" data-br-fmt="${esc(f.format_id)}"><td class="mono">${esc(f.format_id)}</td><td>${esc(f.resolution || f.label || "—")}</td><td class="mono">${esc(f.container)}</td><td class="mono num">${fmtBytes(f.size_bytes) || "—"}</td></tr>`).join("")
+          }</tbody></table></div>` : "";
+
+      body = `
+        <div class="cfg-section">
+          <div class="cfg-label mono"><span>RESOLUTION</span><span>${cfg.lockedFormatId ? `Stream #${esc(cfg.lockedFormatId)}` : "Green dot = detected"}</span></div>
+          <div class="cfg-pills">
+            ${quals.map((q) => {
+              const detected = q.h && availHeights.has(q.h);
+              return `<button class="tac-pill ${cfg.video_quality === q.id && !cfg.lockedFormatId ? "active" : ""} ${detected ? "has-stream" : ""}" data-br-set="video_quality" data-val="${q.id}" ${q.pro ? 'data-pro="1"' : ""}>${q.label}${q.pro ? ' <span class="pro-tag mono">PRO</span>' : ""}</button>`;
+            }).join("")}
+          </div>
+        </div>
+        <div class="cfg-section">
+          <div class="cfg-label mono"><span>AUDIO TRACK</span></div>
+          <div class="cfg-seg">
+            <button class="cfg-seg-btn ${!cfg.video_only ? "active" : ""}" data-br-bool="video_only" data-val="false">🔊 With Audio</button>
+            <button class="cfg-seg-btn ${cfg.video_only ? "active" : ""}" data-br-bool="video_only" data-val="true">🔇 Video Only (Muted)</button>
+          </div>
+        </div>
+        <div class="cfg-section">
+          <div class="cfg-label mono"><span>CONTAINER &amp; CODEC</span></div>
+          <div class="cfg-pills">
+            ${["mp4", "mkv", "webm", "auto"].map((c) => `<button class="tac-pill ${cfg.video_container === c ? "active" : ""}" data-br-set="video_container" data-val="${c}">${c.toUpperCase()}</button>`).join("")}
+            <span style="width:6px;"></span>
+            ${[["h264", "H.264"], ["hevc", "HEVC"], ["av1", "AV1"], ["auto", "Auto"]].map(([c, lbl]) => `<button class="tac-pill ${cfg.video_codec === c ? "active" : ""}" data-br-set="video_codec" data-val="${c}">${lbl}</button>`).join("")}
+          </div>
+        </div>
+        <div class="cfg-section">
+          <div class="cfg-label mono"><span>TRIM CLIP (OPTIONAL)</span><span>${esc(durHint)}</span></div>
+          <div class="cfg-row">
+            <input type="text" class="cfg-input mono" data-br-input="clip_start" value="${esc(cfg.clip_start)}" placeholder="Start 0:00" />
+            <span class="muted">→</span>
+            <input type="text" class="cfg-input mono" data-br-input="clip_end" value="${esc(cfg.clip_end)}" placeholder="End" />
+          </div>
+        </div>
+        <div class="cfg-pills">
+          <button class="tac-pill ${cfg.embed_subtitles ? "toggle-on" : ""}" data-br-toggle="embed_subtitles">Embed Subtitles</button>
+          ${fmts.length > 1 ? `<button class="ghost-btn btn-xs" data-br-toggle="streamsOpen">Streams (${fmts.length})</button>` : ""}
+        </div>
+        ${streamsHtml}
+        <div class="cfg-footer">
+          <span class="mono muted" style="font-size:10px;">${cfg.video_only ? "Muted video stream" : `${cfg.video_quality === "best" ? "Best" : cfg.video_quality + "p"} ${cfg.video_container.toUpperCase()}`}</span>
+          <button class="reactor-fire btn-sm" data-br-run="${esc(node.id)}">Extract Video →</button>
+        </div>
+      `;
+    } else if (kind === "audio") {
+      const fmts = [
+        { id: "mp3", label: "MP3" },
+        { id: "m4a", label: "M4A" },
+        { id: "opus", label: "Opus" },
+        { id: "flac", label: "FLAC", pro: true },
+        { id: "wav", label: "WAV", pro: true },
+      ];
+      body = `
+        <div class="cfg-section">
+          <div class="cfg-label mono"><span>AUDIO FORMAT</span></div>
+          <div class="cfg-pills">
+            ${fmts.map((f) => `<button class="tac-pill ${cfg.audio_format === f.id ? "active" : ""}" data-br-set="audio_format" data-val="${f.id}" ${f.pro ? 'data-pro="1"' : ""}>${f.label}${f.pro ? ' <span class="pro-tag mono">PRO</span>' : ""}</button>`).join("")}
+          </div>
+        </div>
+        <div class="cfg-section">
+          <div class="cfg-label mono"><span>BITRATE &amp; MASTERING</span></div>
+          <div class="cfg-pills">
+            ${["320k", "256k", "192k", "128k"].map((b) => `<button class="tac-pill ${cfg.audio_bitrate === b ? "active" : ""}" data-br-set="audio_bitrate" data-val="${b}">${b}</button>`).join("")}
+            <button class="tac-pill ${cfg.normalize_audio ? "toggle-on" : ""}" data-br-toggle="normalize_audio">Loudnorm</button>
+            <button class="tac-pill ${cfg.embed_metadata ? "toggle-on" : ""}" data-br-toggle="embed_metadata">Embed Tags</button>
+          </div>
+        </div>
+        <div class="cfg-section">
+          <div class="cfg-label mono"><span>TRIM AUDIO (OPTIONAL)</span></div>
+          <div class="cfg-row">
+            <input type="text" class="cfg-input mono" data-br-input="clip_start" value="${esc(cfg.clip_start)}" placeholder="Start 0:00" />
+            <span class="muted">→</span>
+            <input type="text" class="cfg-input mono" data-br-input="clip_end" value="${esc(cfg.clip_end)}" placeholder="End" />
+          </div>
+        </div>
+        <div class="cfg-footer">
+          <span class="mono muted" style="font-size:10px;">${cfg.audio_format.toUpperCase()} · ${cfg.audio_bitrate}</span>
+          <button class="reactor-fire btn-sm" data-br-run="${esc(node.id)}">Extract Audio →</button>
+        </div>
+      `;
+    } else if (kind === "subtitles") {
+      const detectedLangs = (probe?.subtitles || []).map((s) => s.language).filter(Boolean).slice(0, 6);
+      body = `
+        <div class="cfg-section">
+          <div class="cfg-label mono"><span>LANGUAGES</span><span>Fast · skips heavy video</span></div>
+          <input type="text" class="cfg-input mono" data-br-input="subtitle_languages" value="${esc(cfg.subtitle_languages)}" placeholder="en,hi,es" />
+          ${detectedLangs.length ? `<div class="cfg-pills" style="margin-top:6px;">${detectedLangs.map((l) => `<button class="tac-pill ${cfg.subtitle_languages === l ? "active" : ""}" data-br-set="subtitle_languages" data-val="${esc(l)}">${esc(l)}</button>`).join("")}</div>` : ""}
+        </div>
+        <div class="cfg-section">
+          <div class="cfg-label mono"><span>CAPTION FORMAT &amp; TRANSCRIPT</span></div>
+          <div class="cfg-pills">
+            ${["vtt", "srt"].map((f) => `<button class="tac-pill ${cfg.subtitle_format === f ? "active" : ""}" data-br-set="subtitle_format" data-val="${f}">${f.toUpperCase()}</button>`).join("")}
+            <button class="tac-pill ${cfg.subtitle_mode === "include_auto" ? "toggle-on" : ""}" data-br-set="subtitle_mode" data-val="${cfg.subtitle_mode === "include_auto" ? "manual_only" : "include_auto"}">Include Auto-Captions</button>
+            <button class="tac-pill ${cfg.generate_transcript ? "toggle-on" : ""}" data-br-toggle="generate_transcript">Clean .txt</button>
+          </div>
+        </div>
+        <div class="cfg-footer">
+          <button class="ghost-btn btn-xs" data-br-summarize="${esc(node.id)}">🧠 AI Brief</button>
+          <button class="reactor-fire btn-sm" data-br-run="${esc(node.id)}">Extract Captions →</button>
+        </div>
+      `;
+    } else if (kind === "image") {
+      const isVideoCover = probe?.content_type !== "image" && probe?.content_type !== "gallery" && !!probe?.thumbnail?.url;
+      body = `
+        ${isVideoCover ? `<div class="cfg-thumb-mini"><img src="${esc(probe.thumbnail.url)}" alt="Cover preview" /></div>` : ""}
+        <div class="cfg-section">
+          <div class="cfg-label mono"><span>CONVERT FORMAT</span></div>
+          <div class="cfg-pills">
+            ${["original", "webp", "png", "jpg", "avif"].map((f) => `<button class="tac-pill ${cfg.image_format === f ? "active" : ""}" data-br-set="image_format" data-val="${f}">${f === "original" ? "Original" : f.toUpperCase()}</button>`).join("")}
+          </div>
+        </div>
+        <div class="cfg-section">
+          <div class="cfg-label mono"><span>MAX WIDTH</span></div>
+          <div class="cfg-pills">
+            ${[["original", "Original"], ["1920", "1920px"], ["1280", "1280px"], ["800", "800px"]].map(([v, lbl]) => `<button class="tac-pill ${cfg.image_max_width === v ? "active" : ""}" data-br-set="image_max_width" data-val="${v}">${lbl}</button>`).join("")}
+          </div>
+        </div>
+        <div class="cfg-section">
+          <div class="cfg-label mono"><span>QUALITY</span><span class="num">${cfg.image_quality}%</span></div>
+          <input type="range" class="range-track" min="20" max="100" value="${cfg.image_quality}" data-br-range="image_quality" />
+        </div>
+        ${!isVideoCover ? `
+          <div class="cfg-section">
+            <div class="cfg-label mono"><span>GALLERY RANGE (OPTIONAL)</span></div>
+            <div class="cfg-row">
+              <input type="number" class="cfg-input mono" data-br-input="gallery_range_start" value="${esc(cfg.gallery_range_start)}" min="1" placeholder="From" />
+              <span class="muted">→</span>
+              <input type="number" class="cfg-input mono" data-br-input="gallery_range_end" value="${esc(cfg.gallery_range_end)}" min="1" placeholder="All" />
+            </div>
+          </div>` : ""}
+        <div class="cfg-footer">
+          <span class="mono muted" style="font-size:10px;">${isVideoCover ? "HD Video Cover Art" : "Pillow / gallery-dl"}</span>
+          <button class="reactor-fire btn-sm" data-br-run="${esc(node.id)}">${isVideoCover ? "Extract Cover →" : "Extract Images →"}</button>
+        </div>
+      `;
+    } else if (kind === "agent") {
+      body = `
+        <div class="cfg-section">
+          <div class="cfg-label mono"><span>COMMAND NEON AGENT IN PLAIN ENGLISH</span></div>
+          <input type="text" class="cfg-input" data-br-input="prompt" value="${esc(cfg.prompt)}" placeholder="e.g. clip 0:30 to 0:45 in 1080p mp4" />
+        </div>
+        <div class="cfg-pills" style="margin-bottom:4px;">
+          <button class="tac-pill" data-br-preset="clip 0:30 to 0:45 in 1080p h264 mp4">✂️ 15s Hook</button>
+          <button class="tac-pill" data-br-preset="extract audio as 320k mp3 and normalize volume">🎧 320k MP3</button>
+          <button class="tac-pill" data-br-preset="summarize the key points from">🧠 Summarize</button>
+        </div>
+        <div class="cfg-footer">
+          <span class="mono muted" style="font-size:10px;">Streams live SSE steps</span>
+          <button class="reactor-fire btn-sm btn-agent" data-br-run="${esc(node.id)}">Run Agent →</button>
+        </div>
+      `;
+    } else {
+      body = `
+        <div class="cfg-section">
+          <div class="cfg-label mono"><span>CUSTOM FILENAME PREFIX (OPTIONAL)</span></div>
+          <input type="text" class="cfg-input" data-br-input="custom_filename_prefix" value="${esc(cfg.custom_filename_prefix || "")}" placeholder="Optional prefix" />
+        </div>
+        <div class="cfg-footer">
+          <span class="mono muted" style="font-size:10px;">Direct verified download</span>
+          <button class="reactor-fire btn-sm" data-br-run="${esc(node.id)}">Download File →</button>
+        </div>
+      `;
+    }
+
+    return `
+      ${ports}
+      <div class="node-head" data-drag-handle="1">
+        <span class="node-type-pill mono"><span class="node-type-dot"></span>${meta.icon} ${esc(meta.tag)}</span>
+        <div class="node-head-right">
+          <button class="node-icon-btn" data-branch-collapse="${esc(node.id)}" title="Collapse path">▾</button>
+          <button class="node-icon-btn" data-node-del="${esc(node.id)}" title="Remove">×</button>
+        </div>
+      </div>
+      <div class="node-body">${body}</div>
+    `;
+  }
+
+  /* ---------- Build Real Backend Request Payload From a Branch Node ---------- */
+  function buildPayloadFromBranch(branchNode) {
+    const src = state.nodes.get(branchNode.parentSourceId);
+    const kind = branchNode.branchKind;
+    const cfg = branchNode.cfg;
+
+    if (kind === "image" && src?.probe?.content_type !== "image" && src?.probe?.content_type !== "gallery" && src?.probe?.thumbnail?.url) {
+      return {
+        url: src.probe.thumbnail.url,
+        mode: "image",
+        image_format: cfg.image_format,
+        image_quality: parseInt(cfg.image_quality, 10) || 90,
+        image_max_width: cfg.image_max_width !== "original" ? parseInt(cfg.image_max_width, 10) : null,
+        custom_filename_prefix: (src.title || "cover").replace(/[^a-zA-Z0-9_-]+/g, "_").slice(0, 32),
+      };
+    }
+
+    if (kind === "video") {
+      const p = {
+        url: branchNode.url,
+        mode: "video",
+        video_quality: cfg.video_quality,
+        video_only: !!cfg.video_only,
+        video_container: cfg.video_container,
+        video_codec: cfg.video_codec,
+        fps_limit: cfg.fps_limit && cfg.fps_limit !== "any" ? parseInt(cfg.fps_limit, 10) : null,
+        remux_faststart: true,
+        embed_metadata: true,
+        extract_subtitles: !!cfg.embed_subtitles,
+        embed_subtitles: !!cfg.embed_subtitles,
+        clip_start_seconds: parseTime(cfg.clip_start),
+        clip_end_seconds: parseTime(cfg.clip_end),
+      };
+      if (cfg.lockedFormatId) p.format_id = cfg.lockedFormatId;
+      return p;
+    }
+
+    if (kind === "audio") {
+      return {
+        url: branchNode.url,
+        mode: "audio",
+        audio_format: cfg.audio_format,
+        audio_bitrate: cfg.audio_bitrate,
+        normalize_audio: !!cfg.normalize_audio,
+        embed_metadata: !!cfg.embed_metadata,
+        clip_start_seconds: parseTime(cfg.clip_start),
+        clip_end_seconds: parseTime(cfg.clip_end),
+      };
+    }
+
+    if (kind === "subtitles") {
+      const langs = (cfg.subtitle_languages || "en").split(",").map((x) => x.trim()).filter(Boolean);
+      return {
+        url: branchNode.url,
+        mode: "video",
+        extract_subtitles: true,
+        subtitles_only: true,
+        subtitle_languages: langs.length ? langs : ["en"],
+        subtitle_format: cfg.subtitle_format || "vtt",
+        subtitle_mode: cfg.subtitle_mode || "include_auto",
+        generate_transcript: !!cfg.generate_transcript,
+      };
+    }
+
+    if (kind === "image") {
+      return {
+        url: branchNode.url,
+        mode: "image",
+        image_format: cfg.image_format,
+        image_quality: parseInt(cfg.image_quality, 10) || 90,
+        image_max_width: cfg.image_max_width !== "original" ? parseInt(cfg.image_max_width, 10) : null,
+        gallery_range_start: Math.max(1, parseInt(cfg.gallery_range_start || "1", 10)),
+        gallery_range_end: cfg.gallery_range_end ? parseInt(cfg.gallery_range_end, 10) : null,
+        gallery_archive_format: cfg.gallery_archive_format || "zip",
+      };
+    }
+
+    return {
+      url: branchNode.url,
+      mode: "direct",
+      custom_filename_prefix: (cfg.custom_filename_prefix || "").trim(),
+    };
   }
 
   /* ---------- Node Renderer & Magnetic Port Wiring ---------- */
@@ -870,35 +1312,17 @@
       layer.appendChild(el);
     }
 
-    el.className = `node node-${node.type} ${state.selectedNodeId === node.id ? "selected" : ""} ${node.collapsed ? "collapsed" : ""}`;
+    const extraCls = node.type === "branch"
+      ? `branch-${node.branchKind} ${node.expanded ? "branch-expanded" : ""}`
+      : "";
+    el.className = `node node-${node.type} ${extraCls} ${state.selectedNodeId === node.id ? "selected" : ""} ${node.collapsed ? "collapsed" : ""}`;
     el.style.left = `${node.x}px`;
     el.style.top = `${node.y}px`;
 
     let inner = "";
 
-    if (node.type === "blueprint") {
-      el.classList.toggle("bp-agent", node.kind === "agent");
-      const specsHtml = (node.specs || []).map((s) => `<span class="spec-chip mono">${esc(s)}</span>`).join("");
-      inner = `
-        <div class="port port-in" data-port="in" data-node="${esc(node.id)}"></div>
-        <div class="port port-out" data-port="out" data-node="${esc(node.id)}"><span class="port-tip mono">Drag to extend chain</span></div>
-        <div class="node-head" data-drag-handle="1">
-          <span class="node-type-pill mono"><span class="node-type-dot"></span>${esc(node.badge || "WORKFLOW STEP")}</span>
-          <div class="node-head-right">
-            <span class="status-pill mono ${node.kind === "agent" ? "ok" : "warn"}">READY</span>
-            <button class="node-icon-btn" data-node-del="${esc(node.id)}">×</button>
-          </div>
-        </div>
-        <div class="node-body">
-          <h3 class="node-title">${esc(node.title)}</h3>
-          <p class="bp-desc">${esc(node.desc || "")}</p>
-          <div class="bp-specs">${specsHtml}</div>
-          <div class="bp-footer">
-            <span class="bp-hint mono">1-click live execution</span>
-            <button class="reactor-fire btn-sm" data-run-blueprint="${esc(node.id)}">${esc(node.cta || "▶ Run Live")}</button>
-          </div>
-        </div>
-      `;
+    if (node.type === "branch") {
+      inner = buildBranchInnerHtml(node);
     } else if (node.type === "source") {
       const p = node.probe;
       const thumbHtml = p?.thumbnail?.url
@@ -908,21 +1332,25 @@
            </div>` : "";
       const metaBits = p
         ? [p.source?.domain, p.author?.name, p.content_type?.toUpperCase(), p.size_bytes ? fmtBytes(p.size_bytes) : null, `via ${p.engine?.engine_used}`].filter(Boolean)
-        : [shortHost(node.url), node.probing ? "Probing metadata…" : "Ready"];
-      const fmts = p?.available_formats || [];
-      const streamsHtml = node.streamsOpen && fmts.length > 1
-        ? `<div class="node-streams"><table><thead><tr><th>ID</th><th>Res</th><th>Ext</th><th>Size</th></tr></thead><tbody>${
-            fmts.slice(0, 20).map((f) => `<tr class="stream-row ${node.lockedFormatId === f.format_id ? "selected" : ""}" data-src-fmt="${esc(f.format_id)}"><td class="mono">${esc(f.format_id)}</td><td>${esc(f.resolution || f.label || "—")}</td><td class="mono">${esc(f.container)}</td><td class="mono num">${fmtBytes(f.size_bytes) || "—"}</td></tr>`).join("")
-          }</tbody></table></div>` : "";
+        : [shortHost(node.url), node.probing ? "Probing available paths…" : "Ready"];
+
+      const caps = [];
+      if (p) {
+        const fmts = p.available_formats || [];
+        if (fmts.length) caps.push(`${fmts.length} streams`);
+        if ((p.subtitles || []).length) caps.push(`${p.subtitles.length} captions`);
+        if (p.thumbnail?.url) caps.push("HD Cover");
+      }
 
       inner = `
         <div class="port port-in" data-port="in" data-node="${esc(node.id)}"></div>
-        <div class="port port-out" data-port="out" data-node="${esc(node.id)}"><span class="port-tip mono">Drag to link or chain action</span></div>
+        <div class="port port-out" data-port="out" data-node="${esc(node.id)}"><span class="port-tip mono">Drag to add path or note</span></div>
         <div class="node-head" data-drag-handle="1">
           <span class="node-type-pill mono"><span class="node-type-dot"></span>SOURCE · ${esc(shortHost(node.url).toUpperCase())}</span>
           <div class="node-head-right">
-            <button class="node-icon-btn" data-node-collapse="${esc(node.id)}" title="Collapse / Expand">${node.collapsed ? "▸" : "▾"}</button>
-            <button class="node-icon-btn" data-node-del="${esc(node.id)}" title="Remove">×</button>
+            <span class="status-pill mono ${node.probing ? "warn" : "ok"}">${node.probing ? "probing" : "ready"}</span>
+            <button class="node-icon-btn" data-node-collapse="${esc(node.id)}">${node.collapsed ? "▸" : "▾"}</button>
+            <button class="node-icon-btn" data-node-del="${esc(node.id)}">×</button>
           </div>
         </div>
         <div class="node-body">
@@ -930,14 +1358,7 @@
           <div class="node-body-collapsible">
             ${thumbHtml}
             <div class="node-meta mono">${esc(metaBits.join(" · "))}</div>
-            <div class="node-actions">
-              <button class="tac-pill" data-src-extract="${esc(node.id)}">⚡ ${node.lockedFormatId ? `Extract #${esc(node.lockedFormatId)}` : "Extract"}</button>
-              <button class="tac-pill" data-src-clip="${esc(node.id)}">✂️ Clip 15s</button>
-              <button class="tac-pill" data-src-mp3="${esc(node.id)}">🎧 MP3</button>
-              <button class="tac-pill" data-src-sum="${esc(node.id)}">🧠 Brief</button>
-              ${fmts.length > 1 ? `<button class="ghost-btn btn-xs" data-src-streams="${esc(node.id)}">Streams (${fmts.length})</button>` : ""}
-            </div>
-            ${streamsHtml}
+            ${caps.length ? `<div class="node-caps">${caps.map((c) => `<span class="cap-tag mono">${esc(c)}</span>`).join("")}</div>` : ""}
           </div>
         </div>
       `;
@@ -1015,12 +1436,10 @@
     } else if (node.type === "note") {
       inner = `
         <div class="port port-in" data-port="in" data-node="${esc(node.id)}"></div>
-        <div class="port port-out" data-port="out" data-node="${esc(node.id)}"><span class="port-tip mono">Link note to any node</span></div>
+        <div class="port port-out" data-port="out" data-node="${esc(node.id)}"><span class="port-tip mono">Link note</span></div>
         <div class="node-head" data-drag-handle="1">
           <span class="node-type-pill mono"><span class="node-type-dot"></span>STUDIO NOTE</span>
-          <div class="node-head-right">
-            <button class="node-icon-btn" data-node-del="${esc(node.id)}">×</button>
-          </div>
+          <div class="node-head-right"><button class="node-icon-btn" data-node-del="${esc(node.id)}">×</button></div>
         </div>
         <div class="node-body">
           <textarea class="note-textarea" data-note-input="${esc(node.id)}" placeholder="Write timestamps, edits, ideas…">${esc(node.text || "")}</textarea>
@@ -1037,9 +1456,9 @@
 
   function findNearestInputPort(wx, wy, excludeNodeId) {
     let best = null;
-    let bestDist = 42 / camera.zoom; // 42px magnetic snap radius!
+    let bestDist = 42 / camera.zoom;
     for (const n of state.nodes.values()) {
-      if (n.id === excludeNodeId || n.type === "portal") continue;
+      if (n.id === excludeNodeId) continue;
       const pt = getPortWorldCoords(n.id, "in");
       if (!pt) continue;
       const d = Math.hypot(pt.x - wx, pt.y - wy);
@@ -1078,7 +1497,7 @@
       };
     }
 
-    // Magnetic Patch Cable Dragging from Output Jack!
+    // Magnetic Patch Cable Dragging from Output Jack
     const outPort = el.querySelector(".port-out");
     if (outPort) {
       outPort.onpointerdown = (e) => {
@@ -1086,14 +1505,10 @@
         e.preventDefault();
         sfx.click();
         $("viewport").classList.add("wiring");
-        const draftGrp = $("draft-wire-group");
-        const draft = $("draft-wire");
-        const draftGlow = $("draft-wire-glow");
-        const draftTip = $("draft-wire-tip");
+        const draftGrp = $("draft-wire-group"), draft = $("draft-wire"), draftGlow = $("draft-wire-glow"), draftTip = $("draft-wire-tip");
         draftGrp.classList.remove("hidden");
         const start = getPortWorldCoords(node.id, "out");
         let snapped = null;
-
         const clearSnapCss = () => document.querySelectorAll(".port-in.snap-locked").forEach((p) => p.classList.remove("snap-locked"));
 
         const onMove = (mv) => {
@@ -1103,11 +1518,8 @@
           if (near) {
             if (!snapped || snapped.nodeId !== near.nodeId) sfx.snap();
             snapped = near;
-            const pEl = document.querySelector(`[data-node="${CSS.escape(near.nodeId)}"][data-port="in"]`);
-            if (pEl) pEl.classList.add("snap-locked");
-          } else {
-            snapped = null;
-          }
+            document.querySelector(`[data-node="${CSS.escape(near.nodeId)}"][data-port="in"]`)?.classList.add("snap-locked");
+          } else snapped = null;
           const end = snapped ? snapped.pt : cur;
           const d = bezierPath(start.x, start.y, end.x, end.y);
           draft.setAttribute("d", d);
@@ -1125,16 +1537,15 @@
 
           if (snapped) {
             sfx.plug();
-            addEdge(node.id, snapped.nodeId, node.type === "note" ? "note" : "custom", false, node.type === "note" ? "NOTE" : "LINKED", !!(node.demo));
+            addEdge(node.id, snapped.nodeId, node.type === "note" ? "note" : "custom", false, node.type === "note" ? "NOTE" : "LINKED", !!node.demo);
             toast("Patch cable connected!", "ok");
             return;
           }
-
           const targetEl = document.elementFromPoint(up.clientX, up.clientY);
           const targetNodeEl = targetEl?.closest("[data-node-id]");
           if (targetNodeEl && targetNodeEl.dataset.nodeId !== node.id) {
             sfx.plug();
-            addEdge(node.id, targetNodeEl.dataset.nodeId, node.type === "note" ? "note" : "custom", false, "LINKED", !!(node.demo));
+            addEdge(node.id, targetNodeEl.dataset.nodeId, node.type === "note" ? "note" : "custom", false, "LINKED", !!node.demo);
             toast("Patch cable connected!", "ok");
           } else {
             const wPos = screenToWorld(up.clientX, up.clientY);
@@ -1146,77 +1557,120 @@
       };
     }
 
-    // Executable Blueprint Node ("Run Live" turns demo showcase into a real live workflow!)
-    el.querySelector("[data-run-blueprint]")?.addEventListener("click", () => {
-      const targetPos = { x: node.x, y: node.y };
-      const bpUrl = node.url || SHOWCASE_VIDEO.url;
-      const bpPrompt = node.prompt;
-      const bpKind = node.actionType;
-      // Promote the demo source node to a real persisted workspace node while keeping other cards clean
-      if (state.hasDemoGraph) {
-        const demoSrc = state.nodes.get("demo_source");
-        const srcPos = demoSrc ? { x: demoSrc.x, y: demoSrc.y } : { x: -445, y: -145 };
-        const srcProbe = demoSrc?.probe || null;
-        clearDemoGraph();
-        const realSrc = ensureSourceNode(bpUrl, srcPos, false);
-        if (srcProbe) { realSrc.probe = srcProbe; realSrc.title = srcProbe.title; renderNode(realSrc); }
-        if (bpKind === "agent") launchAgentFromSource(realSrc, bpPrompt, targetPos);
-        else launchDirectExtraction(realSrc, targetPos);
-        return;
-      }
-      const realSrc = ensureSourceNode(bpUrl, null, false);
-      removeNode(node.id);
-      if (bpKind === "agent") launchAgentFromSource(realSrc, bpPrompt, targetPos);
-      else launchDirectExtraction(realSrc, targetPos);
-    });
+    // Branch Path Expand / Collapse & Configurator Controls
+    if (node.type === "branch") {
+      el.querySelector("[data-branch-expand]")?.addEventListener("click", (e) => {
+        e.stopPropagation();
+        sfx.unfold();
+        // Accordion feel: collapse sibling untouched branches so canvas stays ultra-clean!
+        for (const other of state.nodes.values()) {
+          if (other.type === "branch" && other.parentSourceId === node.parentSourceId && other.id !== node.id && other.expanded) {
+            other.expanded = false;
+            for (const ed of state.edges) if (ed.to === other.id) ed.active = false;
+            renderNode(other);
+          }
+        }
+        node.expanded = true;
+        for (const ed of state.edges) if (ed.to === node.id) ed.active = true;
+        renderNode(node);
+        rebalanceBranches(node.parentSourceId);
+      });
 
-    // Standard Node buttons
+      el.querySelector("[data-branch-collapse]")?.addEventListener("click", (e) => {
+        e.stopPropagation();
+        sfx.click();
+        node.expanded = false;
+        for (const ed of state.edges) if (ed.to === node.id) ed.active = false;
+        renderNode(node);
+        rebalanceBranches(node.parentSourceId);
+      });
+
+      el.querySelectorAll("[data-br-set]").forEach((btn) => {
+        btn.onclick = (e) => {
+          e.stopPropagation();
+          if (btn.dataset.pro === "1" && !isPro()) {
+            return openUpgradeModal(`${btn.textContent.trim()} requires Neon Pro (Guest includes up to 1080p & MP3 320k).`);
+          }
+          sfx.click();
+          node.cfg[btn.dataset.brSet] = btn.dataset.val;
+          if (btn.dataset.brSet === "video_quality") node.cfg.lockedFormatId = null;
+          renderNode(node);
+          rebalanceBranches(node.parentSourceId);
+        };
+      });
+
+      el.querySelectorAll("[data-br-bool]").forEach((btn) => {
+        btn.onclick = (e) => {
+          e.stopPropagation();
+          sfx.click();
+          node.cfg[btn.dataset.brBool] = btn.dataset.val === "true";
+          renderNode(node);
+        };
+      });
+
+      el.querySelectorAll("[data-br-toggle]").forEach((btn) => {
+        btn.onclick = (e) => {
+          e.stopPropagation();
+          sfx.click();
+          const k = btn.dataset.brToggle;
+          node.cfg[k] = !node.cfg[k];
+          renderNode(node);
+          if (k === "streamsOpen") rebalanceBranches(node.parentSourceId);
+        };
+      });
+
+      el.querySelectorAll("[data-br-fmt]").forEach((tr) => {
+        tr.onclick = (e) => {
+          e.stopPropagation();
+          sfx.click();
+          const fid = tr.dataset.brFmt;
+          node.cfg.lockedFormatId = node.cfg.lockedFormatId === fid ? null : fid;
+          renderNode(node);
+        };
+      });
+
+      el.querySelectorAll("[data-br-input]").forEach((inp) => {
+        inp.onpointerdown = (e) => e.stopPropagation();
+        inp.oninput = () => { node.cfg[inp.dataset.brInput] = inp.value; };
+        inp.onkeydown = (e) => { if (e.key === "Enter" && node.branchKind === "agent") { e.preventDefault(); executeBranch(node); } };
+      });
+
+      el.querySelectorAll("[data-br-range]").forEach((rng) => {
+        rng.onpointerdown = (e) => e.stopPropagation();
+        rng.oninput = () => {
+          node.cfg[rng.dataset.brRange] = parseInt(rng.value, 10);
+          renderNode(node);
+        };
+      });
+
+      el.querySelectorAll("[data-br-preset]").forEach((btn) => {
+        btn.onclick = (e) => {
+          e.stopPropagation();
+          sfx.click();
+          node.cfg.prompt = btn.dataset.brPreset;
+          renderNode(node);
+        };
+      });
+
+      el.querySelector("[data-br-run]")?.addEventListener("click", (e) => {
+        e.stopPropagation();
+        executeBranch(node);
+      });
+
+      el.querySelector("[data-br-summarize]")?.addEventListener("click", (e) => {
+        e.stopPropagation();
+        promoteDemoTreeToReal();
+        launchAgentFromParent(node, `summarize the key points from ${node.url}`);
+      });
+    }
+
+    // Standard buttons
     el.querySelector("[data-node-del]")?.addEventListener("click", (e) => { e.stopPropagation(); removeNode(node.id); });
     el.querySelector("[data-node-collapse]")?.addEventListener("click", (e) => {
-      e.stopPropagation();
-      sfx.click();
-      node.collapsed = !node.collapsed;
-      renderNode(node);
-      if (!node.demo) persistWorkspace();
+      e.stopPropagation(); sfx.click(); node.collapsed = !node.collapsed; renderNode(node); if (!node.demo) persistWorkspace();
     });
-
-    const promoteDemoSource = (srcNode) => {
-      if (!srcNode.demo) return srcNode;
-      const pos = { x: srcNode.x, y: srcNode.y };
-      const cachedProbe = srcNode.probe;
-      clearDemoGraph();
-      const real = ensureSourceNode(srcNode.url, pos, false);
-      if (cachedProbe) { real.probe = cachedProbe; real.title = cachedProbe.title; renderNode(real); }
-      return real;
-    };
-
-    el.querySelector("[data-src-extract]")?.addEventListener("click", () => launchDirectExtraction(promoteDemoSource(node)));
-    el.querySelector("[data-src-clip]")?.addEventListener("click", () => {
-      const real = promoteDemoSource(node);
-      launchAgentFromSource(real, `clip 0:30 to 0:45 in 1080p h264 mp4 ${real.url}`);
-    });
-    el.querySelector("[data-src-mp3]")?.addEventListener("click", () => {
-      const real = promoteDemoSource(node);
-      launchAgentFromSource(real, `extract audio as 320k mp3 and normalize volume ${real.url}`);
-    });
-    el.querySelector("[data-src-sum]")?.addEventListener("click", () => {
-      const real = promoteDemoSource(node);
-      launchAgentFromSource(real, `summarize the key points from ${real.url}`);
-    });
-    el.querySelector("[data-src-streams]")?.addEventListener("click", () => { sfx.click(); node.streamsOpen = !node.streamsOpen; renderNode(node); });
-    el.querySelectorAll("[data-src-fmt]").forEach((tr) => {
-      tr.onclick = () => {
-        sfx.click();
-        const fid = tr.dataset.srcFmt;
-        node.lockedFormatId = node.lockedFormatId === fid ? null : fid;
-        renderNode(node);
-      };
-    });
-
     el.querySelector("[data-sha]")?.addEventListener("click", async (e) => {
-      await navigator.clipboard.writeText(e.currentTarget.dataset.sha);
-      sfx.click();
-      toast("SHA-256 copied", "ok");
+      await navigator.clipboard.writeText(e.currentTarget.dataset.sha); sfx.click(); toast("SHA-256 copied", "ok");
     });
     el.querySelector("[data-cancel-job]")?.addEventListener("click", async (e) => {
       const id = e.currentTarget.dataset.cancelJob;
@@ -1230,6 +1684,51 @@
     }
   }
 
+  /* ---------- Execute a Configured Branch Node (Real Extraction Starts HERE!) ---------- */
+  async function executeBranch(branchNode) {
+    promoteDemoTreeToReal();
+    branchNode.hasOutputs = true;
+
+    if (branchNode.branchKind === "agent") {
+      const text = (branchNode.cfg.prompt || "").trim();
+      if (!text) return toast("Type an Agent instruction first", "err");
+      const fullPrompt = text.includes("http") ? text : `${text} ${branchNode.url}`;
+      return launchAgentFromParent(branchNode, fullPrompt);
+    }
+
+    const payload = buildPayloadFromBranch(branchNode);
+    state.lastApiPayload = payload;
+    osc.set(true, `EXTRACTING ${branchNode.branchKind.toUpperCase()}…`);
+    sfx.capture();
+
+    try {
+      const res = await fetch("/v1/jobs", {
+        method: "POST",
+        headers: apiHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify(payload),
+      });
+      const job = await res.json();
+      if (res.status === 402) {
+        openUpgradeModal(`${job.detail?.message} ${job.detail?.upgrade_hint || ""}`.trim());
+        osc.set(false, "UPGRADE REQUIRED");
+        return;
+      }
+      if (!res.ok) {
+        toast(job.detail?.message || "Extraction rejected", "err");
+        osc.set(false, "CANVAS READY");
+        return;
+      }
+      refreshTier();
+      const resNode = upsertResultNodeForJob(job, branchNode, null, branchNode.branchKind);
+      gravity.shockAt(resNode.x + 175, resNode.y + 80);
+      glideToWorld((branchNode.x + resNode.x) / 2 + 175, resNode.y + 100, Math.min(camera.zoom, 0.92));
+      watchJob(job.job_id, resNode);
+    } catch (err) {
+      toast(`Network error: ${err.message}`, "err");
+      osc.set(false, "CANVAS READY");
+    }
+  }
+
   /* ---------- Patch Context Menu ---------- */
   function openPatchMenu(fromNodeId, sx, sy, wx, wy) {
     state.pendingPatch = { fromNodeId, wx, wy };
@@ -1240,49 +1739,74 @@
   }
   function closePatchMenu() { $("patch-menu").classList.add("hidden"); state.pendingPatch = null; }
 
-  function resolveSourceUrlForNode(nodeId) {
+  function resolveSourceNodeFor(nodeId) {
     const n = state.nodes.get(nodeId);
     if (!n) return null;
-    if (n.url) return n.url;
-    if (n.job?.url) return n.job.url;
+    if (n.type === "source") return n;
+    if (n.parentSourceId && state.nodes.has(n.parentSourceId)) return state.nodes.get(n.parentSourceId);
     const parentEdge = state.edges.find((e) => e.to === nodeId);
-    return parentEdge ? resolveSourceUrlForNode(parentEdge.from) : null;
+    return parentEdge ? resolveSourceNodeFor(parentEdge.from) : null;
   }
 
-  /* ---------- Spawning Real Source, Note, Agent & Result Nodes ---------- */
-  function ensureSourceNode(url, dropCoords = null, autoProbe = true) {
+  /* ---------- Spawning Source & Probing Possibility Tree ---------- */
+  function spawnSourceWithPossibilities(url, dropCoords = null, autoProbe = true) {
     if (state.hasDemoGraph) clearDemoGraph();
     if (state.sourceByUrl.has(url)) {
       const existing = state.nodes.get(state.sourceByUrl.get(url));
-      if (existing) return existing;
+      if (existing) {
+        glideToWorld(existing.x + 340, existing.y + 110, 0.9);
+        return existing;
+      }
     }
     const id = `src_${hashUrl(url)}`;
-    const saved = state.savedPositions[id];
-    const pos = dropCoords || saved || pickNewRootPosition();
-    const node = { id, type: "source", url, x: pos.x, y: pos.y, collapsed: !!saved?.collapsed, probing: autoProbe, probe: null, streamsOpen: false, lockedFormatId: null };
+    const pos = dropCoords || pickNewRootPosition();
+    const node = { id, type: "source", url, x: pos.x, y: pos.y, probing: autoProbe, probe: null };
     state.nodes.set(id, node);
     state.sourceByUrl.set(url, id);
     renderNode(node);
     gravity.shockAt(node.x + 170, node.y + 90);
-    if (autoProbe) probeSourceNode(node);
+    glideToWorld(node.x + 340, node.y + 100, 0.92);
+    if (autoProbe) probeAndFanOut(node);
     return node;
   }
 
-  async function probeSourceNode(node) {
-    osc.set(true, "PROBING SIGNAL…");
+  async function probeAndFanOut(node) {
+    osc.set(true, "PROBING AVAILABLE PATHS…");
     try {
       const res = await fetch("/v1/probe", {
         method: "POST",
         headers: apiHeaders({ "Content-Type": "application/json" }),
-        body: JSON.stringify({ url: node.url, preferred_engine: $("preferred-engine").value || null, allow_browser_fallback: state.browserFallback }),
+        body: JSON.stringify({ url: node.url }),
       });
       const data = await res.json();
-      if (res.status === 402) { openUpgradeModal(data.detail?.message); node.probing = false; renderNode(node); return; }
-      if (res.ok) { node.probe = data; node.title = data.title; }
+      if (res.status === 402) {
+        openUpgradeModal(data.detail?.message);
+        node.probing = false;
+        renderNode(node);
+        return;
+      }
+      if (res.ok) {
+        node.probe = data;
+        node.title = data.title;
+      }
     } catch (_) {}
     node.probing = false;
     renderNode(node);
-    osc.set(false, "SIGNAL LOCKED");
+    // Automatically fan out the real discovered possibilities (Video, Audio, Subtitles, Cover, Agent)!
+    const primaryDefault = node.probe?.content_type === "image" || node.probe?.content_type === "gallery"
+      ? "image"
+      : node.probe?.content_type === "audio"
+        ? "audio"
+        : node.probe?.content_type === "document" || node.probe?.content_type === "file"
+          ? "direct"
+          : "video";
+    spawnPossibilityBranches(node, primaryDefault);
+    setTimeout(() => {
+      rebalanceBranches(node.id);
+      sfx.unfold();
+      glideToWorld(node.x + 390, node.y + 100, Math.min(0.92, Math.max(0.75, window.innerWidth / 1400)));
+    }, 50);
+    osc.set(false, "PATHS READY — PICK ONE TO EXTRACT");
   }
 
   function spawnNoteNode(wx, wy, text = "", linkFromId = null, customId = null) {
@@ -1297,49 +1821,7 @@
     return node;
   }
 
-  /* ---------- Build Download Payload ---------- */
-  function buildPayload(url, lockedFormatId = null) {
-    const fps = $("fps-limit").value;
-    const rangeEnd = $("gallery-range-end").value.trim();
-    const langs = $("subtitle-languages").value.split(",").map((x) => x.trim()).filter(Boolean);
-    const p = {
-      url,
-      mode: state.mode,
-      video_quality: state.videoQuality,
-      video_container: $("video-container").value,
-      video_codec: $("video-codec").value,
-      fps_limit: fps && fps !== "any" ? parseInt(fps, 10) : null,
-      remux_faststart: true,
-      embed_metadata: true,
-      embed_thumbnail: false,
-      audio_format: state.mode === "audio" ? state.audioFormat : null,
-      audio_bitrate: state.mode === "audio" ? state.audioBitrate : "auto",
-      normalize_audio: state.loudnorm,
-      image_format: state.imageFormat,
-      image_quality: parseInt($("image-quality").value, 10),
-      image_max_width: state.imageMaxWidth !== "original" ? parseInt(state.imageMaxWidth, 10) : null,
-      gallery_archive_format: "zip",
-      gallery_range_start: Math.max(1, parseInt($("gallery-range-start").value || "1", 10)),
-      gallery_range_end: rangeEnd ? parseInt(rangeEnd, 10) : null,
-      extract_subtitles: state.subsEnabled,
-      embed_subtitles: state.subsEnabled && state.embedSubs,
-      generate_transcript: state.subsEnabled && state.generateTranscript,
-      subtitle_mode: "prefer_manual",
-      subtitle_format: "vtt",
-      subtitle_languages: langs.length ? langs : ["en"],
-      clip_start_seconds: state.clipEnabled ? parseTime($("clip-start").value) : null,
-      clip_end_seconds: state.clipEnabled ? parseTime($("clip-end").value) : null,
-      preferred_engine: $("preferred-engine").value || null,
-      allow_browser_fallback: state.browserFallback,
-      custom_filename_prefix: $("filename-prefix").value.trim(),
-      playlist_items: $("playlist-items").value.trim() || null,
-      max_items: 50,
-    };
-    if (lockedFormatId) p.format_id = lockedFormatId;
-    return p;
-  }
-
-  /* ---------- Direct Extraction & Streaming Agent Nodes ---------- */
+  /* ---------- Jobs, Streaming Progress & AI Agent ---------- */
   function triggerBrowserSave(artifactUrl, filename) {
     const a = document.createElement("a");
     a.href = artifactUrl;
@@ -1381,29 +1863,6 @@
     return node;
   }
 
-  async function launchDirectExtraction(sourceNode, forcedPos = null) {
-    osc.set(true, "EXTRACTING…");
-    sfx.capture();
-    try {
-      const res = await fetch("/v1/jobs", {
-        method: "POST",
-        headers: apiHeaders({ "Content-Type": "application/json" }),
-        body: JSON.stringify(buildPayload(sourceNode.url, sourceNode.lockedFormatId || null)),
-      });
-      const job = await res.json();
-      if (res.status === 402) { openUpgradeModal(`${job.detail?.message} ${job.detail?.upgrade_hint || ""}`.trim()); osc.set(false, "UPGRADE REQUIRED"); return; }
-      if (!res.ok) { toast(job.detail?.message || "Extraction rejected", "err"); osc.set(false, "CANVAS READY"); return; }
-      refreshTier();
-      const resNode = upsertResultNodeForJob(job, sourceNode, forcedPos, "extract");
-      gravity.shockAt(resNode.x + 170, resNode.y + 80);
-      glideToWorld((sourceNode.x + resNode.x) / 2 + 170, resNode.y + 100, Math.min(camera.zoom, 0.95));
-      watchJob(job.job_id, resNode);
-    } catch (err) {
-      toast(`Network error: ${err.message}`, "err");
-      osc.set(false, "CANVAS READY");
-    }
-  }
-
   function watchJob(jobId, resNode) {
     if (state.sse.has(jobId)) return;
     const es = new EventSource(`/v1/jobs/${jobId}/events`);
@@ -1417,6 +1876,7 @@
         state.sse.delete(jobId);
         osc.set(false, "EXTRACTION COMPLETE");
         const full = await (await fetch(`/v1/jobs/${jobId}`)).json();
+        recordHistoryJob(full);
         resNode.job = full;
         for (const e of state.edges) if (e.to === resNode.id) e.active = false;
         renderNode(resNode);
@@ -1435,21 +1895,22 @@
     es.onerror = () => { es.close(); state.sse.delete(jobId); };
   }
 
-  async function launchAgentFromSource(sourceNode, promptText, forcedPos = null) {
-    const siblings = state.edges.filter((e) => e.from === sourceNode.id).length;
-    const pos = forcedPos || pickChildPosition(sourceNode, siblings);
-    const cleanPrompt = promptText.replace(sourceNode.url, "").trim() || promptText;
-    const shortTag = /clip|trim/i.test(cleanPrompt) ? "AI · CLIP" : /mp3|audio/i.test(cleanPrompt) ? "AI · AUDIO" : /summar|brief/i.test(cleanPrompt) ? "AI · BRIEF" : /webp|jpg|png/i.test(cleanPrompt) ? "AI · IMAGE" : "AI AGENT";
+  async function launchAgentFromParent(parentNode, promptText, forcedPos = null) {
+    const url = parentNode.url || extractUrl(promptText);
+    const siblings = state.edges.filter((e) => e.from === parentNode.id).length;
+    const pos = forcedPos || pickChildPosition(parentNode, siblings);
+    const cleanPrompt = promptText.replace(url || "", "").trim() || promptText;
+    const shortTag = /clip|trim/i.test(cleanPrompt) ? "AI · CLIP" : /mp3|audio/i.test(cleanPrompt) ? "AI · AUDIO" : /summar|brief/i.test(cleanPrompt) ? "AI · BRIEF" : "AI AGENT";
 
     const agentNode = {
-      id: uid("agent"), type: "agent", x: pos.x, y: pos.y, url: sourceNode.url,
+      id: uid("agent"), type: "agent", x: pos.x, y: pos.y, url,
       prompt: cleanPrompt, provider: "", steps: [], answer: "", done: false, failed: false,
     };
     state.nodes.set(agentNode.id, agentNode);
     renderNode(agentNode);
-    const edgeIn = addEdge(sourceNode.id, agentNode.id, "agent", true, shortTag);
+    const edgeIn = addEdge(parentNode.id, agentNode.id, "agent", true, shortTag);
     gravity.shockAt(agentNode.x + 180, agentNode.y + 80);
-    glideToWorld((sourceNode.x + agentNode.x) / 2 + 180, agentNode.y + 110, Math.min(camera.zoom, 0.92));
+    glideToWorld((parentNode.x + agentNode.x) / 2 + 180, agentNode.y + 110, Math.min(camera.zoom, 0.9));
     sfx.capture();
     osc.set(true, "AGENT REASONING…");
 
@@ -1457,7 +1918,7 @@
       const res = await fetch("/v1/agent/run", {
         method: "POST",
         headers: apiHeaders({ "Content-Type": "application/json" }),
-        body: JSON.stringify({ prompt: promptText, url: sourceNode.url }),
+        body: JSON.stringify({ prompt: promptText, url }),
       });
       if (res.status === 402) {
         const err = await res.json();
@@ -1546,13 +2007,13 @@
     }
   }
 
-  /* ---------- Dock Submission ---------- */
+  /* ---------- Dock Submission (Clean "Spawn" vs "Run Agent") ---------- */
   function syncDockModeVisuals() {
     const raw = $("url-input").value.trim();
     const agent = isNaturalLanguageCommand(raw);
     $("reactor-shell").classList.toggle("agent-mode", agent);
-    $("intent-label").textContent = agent ? "NEON AI AGENT" : "DIRECT EXTRACT";
-    $("fire-label").textContent = agent ? "Run Agent" : "Spawn & Extract";
+    $("intent-label").textContent = agent ? "NEON AI AGENT" : "SPAWN POSSIBILITIES";
+    $("fire-label").textContent = agent ? "Run Agent" : "Spawn";
     $("clear-url-btn").classList.toggle("hidden", !raw);
     const url = extractUrl(raw);
     if (url) { $("platform-tag").textContent = shortHost(url).toUpperCase(); $("platform-tag").classList.remove("hidden"); }
@@ -1565,43 +2026,37 @@
     const url = extractUrl(raw);
     if (!url) return toast("Include a valid http(s) URL", "err");
 
-    const sourceNode = ensureSourceNode(url, null, true);
     $("url-input").value = "";
     syncDockModeVisuals();
-    if (isNaturalLanguageCommand(raw)) await launchAgentFromSource(sourceNode, raw);
-    else await launchDirectExtraction(sourceNode);
+    sfx.capture();
+
+    if (isNaturalLanguageCommand(raw)) {
+      const src = spawnSourceWithPossibilities(url, null, false);
+      await launchAgentFromParent(src, raw);
+    } else {
+      // Lightweight Spawn: Probes metadata & fans out Video / Audio / Subtitles / Thumbnail / AI Agent paths!
+      spawnSourceWithPossibilities(url, null, true);
+    }
   }
 
-  async function fireBatchCommand() {
-    const urls = $("batch-input").value.split(/\r?\n/).map((u) => u.trim()).filter(Boolean);
-    if (!urls.length) return toast("Paste at least one link", "err");
-    const base = buildPayload(urls[0]);
-    delete base.url;
-    const res = await fetch("/v1/jobs/batch", {
-      method: "POST",
-      headers: apiHeaders({ "Content-Type": "application/json" }),
-      body: JSON.stringify({ urls, ...base }),
-    });
-    const list = await res.json();
-    if (res.status === 402) return openUpgradeModal(`${list.detail?.message} ${list.detail?.upgrade_hint || ""}`.trim());
-    if (!res.ok) return toast(list.detail?.message || "Batch rejected", "err");
-    refreshTier();
-    sfx.capture();
-    for (const j of list) {
-      const src = ensureSourceNode(j.url, null, false);
-      const rn = upsertResultNodeForJob(j, src, null, "extract");
-      watchJob(j.job_id, rn);
-    }
+  function spawnBatchTrees() {
+    const urls = $("batch-input").value.split(/\r?\n/).map((u) => extractUrl(u)).filter(Boolean);
+    if (!urls.length) return toast("Paste at least one valid URL", "err");
+    if (state.hasDemoGraph) clearDemoGraph();
     $("dock-popover").classList.add("hidden");
-    state.popoverOpen = false;
-    fitAllNodes();
-    toast(`Spawned ${list.length} threaded extractions`, "ok");
+    $("dock-batch-btn").classList.remove("active");
+    state.batchOpen = false;
+    sfx.capture();
+    urls.slice(0, 6).forEach((u, idx) => {
+      spawnSourceWithPossibilities(u, { x: -460, y: idx * 420 - 150 }, true);
+    });
+    toast(`Spawning ${Math.min(6, urls.length)} possibility trees…`, "ok");
   }
 
   /* ---------- Searchable History & Pin-to-Canvas Drawer ---------- */
   function pinJobToCanvas(job) {
     if (state.hasDemoGraph) clearDemoGraph();
-    const src = ensureSourceNode(job.url, null, false);
+    const src = spawnSourceWithPossibilities(job.url, null, false);
     if (job.result?.title && !src.title) {
       src.title = job.result.title;
       if (job.result.thumbnail) {
@@ -1627,14 +2082,12 @@
     const q = ($("history-search")?.value || "").trim().toLowerCase();
     const filter = state.historyFilter;
 
-    // Combine active canvas notes/agents + all persisted SQLite jobs
     const rows = [];
     for (const n of state.nodes.values()) {
-      if (n.demo || n.type === "source" || n.type === "result") continue;
+      if (n.demo || n.type === "source" || n.type === "result" || n.type === "branch") continue;
       rows.push({ kind: n.type, node: n });
     }
     for (const j of state.historyJobs) {
-      // Hide legacy broken watch.html artifacts unless explicitly searching
       const fn = (j.result?.download?.filename || "").toLowerCase();
       if (!q && (fn === "watch.html" || fn === "watch.htm")) continue;
       rows.push({ kind: "job", job: j, node: state.nodes.get(state.resultByJobId.get(j.job_id) || "") });
@@ -1670,10 +2123,7 @@
               <span class="history-item-title">${esc(title)}</span>
               <span class="status-pill mono ${badgeCls}">${esc(j.status)}</span>
             </div>
-            <div class="history-item-meta mono">
-              <span>${esc(sub)}</span>
-              <span>${onCanvas ? "Glide →" : "+ Pin to Desk"}</span>
-            </div>
+            <div class="history-item-meta mono"><span>${esc(sub)}</span><span>${onCanvas ? "Glide →" : "+ Pin to Desk"}</span></div>
             ${dl?.artifact_url ? `<div class="history-item-actions"><a class="btn-link" href="${esc(dl.artifact_url)}" download="${esc(dl.filename || "download")}" onclick="event.stopPropagation()">Save File</a></div>` : ""}
           </div>
         `;
@@ -1683,20 +2133,14 @@
       const sub = n.type === "agent" ? (n.provider || "local-planner") : "Studio Note";
       return `
         <div class="history-item" data-focus-node="${esc(n.id)}">
-          <div class="history-item-top">
-            <span class="history-item-title">${esc(title)}</span>
-            <span class="status-pill mono ${n.done ? "ok" : ""}">${esc(n.type)}</span>
-          </div>
+          <div class="history-item-top"><span class="history-item-title">${esc(title)}</span><span class="status-pill mono ${n.done ? "ok" : ""}">${esc(n.type)}</span></div>
           <div class="history-item-meta mono"><span>${esc(sub)}</span><span>Glide →</span></div>
         </div>
       `;
     }).join("");
 
     host.querySelectorAll("[data-pin-job]").forEach((row) => {
-      row.onclick = () => {
-        const j = state.historyJobs.find((x) => x.job_id === row.dataset.pinJob);
-        if (j) pinJobToCanvas(j);
-      };
+      row.onclick = () => { const j = state.historyJobs.find((x) => x.job_id === row.dataset.pinJob); if (j) pinJobToCanvas(j); };
     });
     host.querySelectorAll("[data-focus-node]").forEach((row) => {
       row.onclick = () => {
@@ -1717,7 +2161,6 @@
     const list = await res.json();
     const installed = list.filter((e) => e.installation_status === "installed").length;
     $("engines-pill-text").textContent = `${installed}/${list.length}`;
-    $("preferred-engine").innerHTML = `<option value="">Auto Router</option>` + list.filter((e) => e.id !== "ffmpeg").map((e) => `<option value="${esc(e.id)}">${esc(e.id)} (${esc(e.installation_status)})</option>`).join("");
     $("engines-modal-tbody").innerHTML = list.map((e) => {
       const ok = e.installation_status === "installed";
       return `<tr><td><strong>${esc(e.id)}</strong></td><td><span class="status-pill mono ${ok ? "ok" : "warn"}">${esc(ok ? "ready" : e.installation_status)}</span></td><td class="mono num">${esc(e.version)}</td><td class="mono num">Tier ${e.tier}</td><td class="muted">${esc(e.license)}</td></tr>`;
@@ -1725,7 +2168,7 @@
     if (refresh) toast(`Engines refreshed (${installed}/${list.length} ready)`, "ok");
   }
 
-  /* ---------- Viewport & Minimap Navigation ---------- */
+  /* ---------- Viewport, Minimap & Event Wiring ---------- */
   function bindCanvasNavigation() {
     const vp = $("viewport");
     applyCamera();
@@ -1765,28 +2208,23 @@
       spawnNoteNode(wPos.x - 135, wPos.y - 60, "");
     });
 
-    // Interactive Minimap click & drag navigation!
     const mm = $("minimap-shell");
     if (mm) {
       const jumpMinimap = (ev) => {
         if (!minimapMeta) return;
         const r = mm.getBoundingClientRect();
-        const mx = (ev.clientX - r.left) * (168 / r.width);
-        const my = (ev.clientY - r.top) * (104 / r.height);
-        const wx = (mx - minimapMeta.ox) / minimapMeta.scale;
-        const wy = (my - minimapMeta.oy) / minimapMeta.scale;
+        const mx = (ev.clientX - r.left) * (168 / r.width), my = (ev.clientY - r.top) * (104 / r.height);
+        const wx = (mx - minimapMeta.ox) / minimapMeta.scale, wy = (my - minimapMeta.oy) / minimapMeta.scale;
         const vpr = vp.getBoundingClientRect();
         camera.x = vpr.width / 2 - wx * camera.zoom;
         camera.y = vpr.height / 2 - wy * camera.zoom;
         applyCamera();
       };
       mm.onpointerdown = (e) => {
-        e.stopPropagation();
-        jumpMinimap(e);
+        e.stopPropagation(); jumpMinimap(e);
         const onMove = (mv) => jumpMinimap(mv);
         const onUp = () => { window.removeEventListener("pointermove", onMove); window.removeEventListener("pointerup", onUp); };
-        window.addEventListener("pointermove", onMove);
-        window.addEventListener("pointerup", onUp);
+        window.addEventListener("pointermove", onMove); window.addEventListener("pointerup", onUp);
       };
     }
 
@@ -1795,15 +2233,6 @@
     $("zoom-reset-btn").onclick = () => { sfx.click(); camera.zoom = 1; applyCamera(); };
     $("fit-all-btn").onclick = () => { sfx.click(); fitAllNodes(); };
     $("add-note-btn").onclick = () => { const c = getViewportCenterWorld(); spawnNoteNode(c.x - 135, c.y - 60, ""); };
-  }
-
-  function setMode(mode) {
-    state.mode = mode;
-    sfx.click();
-    document.querySelectorAll("#mode-group .seg").forEach((b) => b.classList.toggle("active", b.dataset.mode === mode));
-    $("context-strip-video").classList.toggle("hidden", !(mode === "auto" || mode === "video"));
-    $("context-strip-audio").classList.toggle("hidden", mode !== "audio");
-    $("context-strip-image").classList.toggle("hidden", mode !== "image");
   }
 
   function bindAllEvents() {
@@ -1821,10 +2250,8 @@
       if (url) {
         e.preventDefault();
         sfx.capture();
-        const c = getViewportCenterWorld();
-        const node = ensureSourceNode(url, { x: Math.round(c.x - 174), y: Math.round(c.y - 105) }, true);
-        glideToWorld(node.x + 174, node.y + 105, 1);
-        toast("Captured onto the desk — drag its orange jack to chain!", "ok");
+        spawnSourceWithPossibilities(url, null, true);
+        toast("Probing link & spawning available paths…", "ok");
       }
     });
 
@@ -1838,7 +2265,7 @@
       if (url) {
         sfx.capture();
         const wPos = screenToWorld(e.clientX, e.clientY);
-        ensureSourceNode(url, { x: Math.round(wPos.x - 174), y: Math.round(wPos.y - 80) }, true);
+        spawnSourceWithPossibilities(url, { x: Math.round(wPos.x - 170), y: Math.round(wPos.y - 100) }, true);
       }
     });
 
@@ -1850,13 +2277,11 @@
         $("api-modal").classList.add("hidden");
         $("history-drawer").classList.add("hidden");
         $("dock-popover").classList.add("hidden");
-        state.popoverOpen = false;
+        state.batchOpen = false;
       }
       if ((e.key === "/" || ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k")) &&
           document.activeElement?.tagName !== "INPUT" && document.activeElement?.tagName !== "TEXTAREA") {
-        e.preventDefault();
-        sfx.click();
-        input.focus();
+        e.preventDefault(); sfx.click(); input.focus();
       }
     });
 
@@ -1869,27 +2294,27 @@
         const fromNode = state.nodes.get(pending.fromNodeId);
         if (!fromNode) return;
         if (act === "note") { spawnNoteNode(pending.wx, pending.wy - 50, "", fromNode.id); return; }
-        const url = resolveSourceUrlForNode(fromNode.id);
-        if (!url) return toast("Link a media URL node first", "err");
-        const srcNode = fromNode.type === "source" ? fromNode : ensureSourceNode(url, null, false);
-        const dropPos = { x: Math.round(pending.wx), y: Math.round(pending.wy - 80) };
-        if (act === "extract") launchDirectExtraction(srcNode, dropPos);
-        else if (act === "agent_clip") launchAgentFromSource(srcNode, `clip 0:00 to 0:15 in 720p mp4 ${url}`, dropPos);
-        else if (act === "agent_mp3") launchAgentFromSource(srcNode, `extract audio as 320k mp3 and normalize volume ${url}`, dropPos);
-        else if (act === "agent_summary") launchAgentFromSource(srcNode, `summarize the key points from ${url}`, dropPos);
-        else if (act === "agent_webp") launchAgentFromSource(srcNode, `convert image to webp 1280px ${url}`, dropPos);
+        const srcNode = resolveSourceNodeFor(fromNode.id);
+        if (!srcNode) return toast("Drag from a Source or Path node to spawn a media path", "err");
+        promoteDemoTreeToReal();
+        const kind = act.replace("branch_", "");
+        spawnBranchNodeManually(srcNode, kind, { x: pending.wx, y: pending.wy });
       };
     });
 
     $("clear-sandbox-btn").onclick = () => { sfx.click(); clearDemoGraph(); };
     $("show-demo-btn").onclick = () => { sfx.click(); $("history-drawer").classList.add("hidden"); spawnDefaultShowcase(); };
 
-    $("dock-settings-btn").onclick = () => {
+    $("dock-batch-btn").onclick = () => {
       sfx.click();
-      state.popoverOpen = !state.popoverOpen;
-      $("dock-popover").classList.toggle("hidden", !state.popoverOpen);
-      $("dock-settings-btn").classList.toggle("active", state.popoverOpen);
+      state.batchOpen = !state.batchOpen;
+      $("dock-popover").classList.toggle("hidden", !state.batchOpen);
+      $("dock-batch-btn").classList.toggle("active", state.batchOpen);
     };
+    $("exit-batch-btn").onclick = () => $("dock-batch-btn").click();
+    $("batch-input").oninput = () => { const n = $("batch-input").value.split(/\r?\n/).filter((x) => x.trim()).length; $("batch-count").textContent = `${n} link${n === 1 ? "" : "s"}`; };
+    $("spawn-batch-btn").onclick = spawnBatchTrees;
+
     $("intent-mode-toggle").onclick = () => { sfx.click(); state.forceAgent = !state.forceAgent; syncDockModeVisuals(); };
     $("paste-btn").onclick = async () => {
       try { const text = await navigator.clipboard.readText(); if (text) { input.value = text.trim(); syncDockModeVisuals(); input.focus(); } }
@@ -1897,53 +2322,6 @@
     };
     $("clear-url-btn").onclick = () => { input.value = ""; syncDockModeVisuals(); input.focus(); };
     $("download-btn").onclick = fireDockCommand;
-    $("download-batch-btn").onclick = fireBatchCommand;
-
-    document.querySelectorAll("#mode-group .seg").forEach((b) => { b.onclick = () => setMode(b.dataset.mode); });
-    document.querySelectorAll("#quality-pills [data-vq]").forEach((b) => {
-      b.onclick = () => {
-        const vq = b.dataset.vq;
-        if ((vq === "2160" || vq === "1440") && !isPro()) return openUpgradeModal(`${vq === "2160" ? "4K" : "2K"} Ultra-HD requires Neon Pro.`);
-        sfx.click();
-        state.videoQuality = vq;
-        document.querySelectorAll("#quality-pills [data-vq]").forEach((x) => x.classList.toggle("active", x === b));
-      };
-    });
-    $("h264-pill").onclick = () => {
-      sfx.click();
-      state.h264Mp4 = !state.h264Mp4;
-      $("h264-pill").classList.toggle("toggle-on", state.h264Mp4);
-      $("video-codec").value = state.h264Mp4 ? "h264" : "auto";
-      $("video-container").value = state.h264Mp4 ? "mp4" : "auto";
-    };
-    document.querySelectorAll("#audio-fmt-pills [data-af]").forEach((b) => {
-      b.onclick = () => {
-        const af = b.dataset.af;
-        if ((af === "flac" || af === "wav") && !isPro()) return openUpgradeModal(`Lossless ${af.toUpperCase()} requires Neon Pro.`);
-        sfx.click();
-        state.audioFormat = af;
-        document.querySelectorAll("#audio-fmt-pills [data-af]").forEach((x) => x.classList.toggle("active", x === b));
-      };
-    });
-    document.querySelectorAll("#audio-br-pills [data-ab]").forEach((b) => { b.onclick = () => { sfx.click(); state.audioBitrate = b.dataset.ab; document.querySelectorAll("#audio-br-pills [data-ab]").forEach((x) => x.classList.toggle("active", x === b)); }; });
-    $("loudnorm-pill").onclick = () => { sfx.click(); state.loudnorm = !state.loudnorm; $("loudnorm-pill").classList.toggle("toggle-on", state.loudnorm); };
-    document.querySelectorAll("#img-fmt-pills [data-if]").forEach((b) => { b.onclick = () => { sfx.click(); state.imageFormat = b.dataset.if; document.querySelectorAll("#img-fmt-pills [data-if]").forEach((x) => x.classList.toggle("active", x === b)); }; });
-    document.querySelectorAll("#img-width-pills [data-iw]").forEach((b) => { b.onclick = () => { sfx.click(); state.imageMaxWidth = b.dataset.iw; document.querySelectorAll("#img-width-pills [data-iw]").forEach((x) => x.classList.toggle("active", x === b)); }; });
-    $("browser-fallback-pill").onclick = () => {
-      if (!isPro()) return openUpgradeModal("Tier-3 Playwright headless browser extraction is a Pro feature.");
-      sfx.click();
-      state.browserFallback = !state.browserFallback;
-      $("browser-fallback-pill").classList.toggle("toggle-on", state.browserFallback);
-    };
-    $("clip-toggle-btn").onclick = () => { sfx.click(); state.clipEnabled = !state.clipEnabled; $("clip-toggle-btn").classList.toggle("toggle-on", state.clipEnabled); $("clip-box").classList.toggle("hidden", !state.clipEnabled); };
-    $("subs-toggle-btn").onclick = () => { sfx.click(); state.subsEnabled = !state.subsEnabled; $("subs-toggle-btn").classList.toggle("toggle-on", state.subsEnabled); $("subs-box").classList.toggle("hidden", !state.subsEnabled); };
-    $("embed-subs-pill").onclick = () => { sfx.click(); state.embedSubs = !state.embedSubs; $("embed-subs-pill").classList.toggle("toggle-on", state.embedSubs); };
-    $("transcript-pill").onclick = () => { sfx.click(); state.generateTranscript = !state.generateTranscript; $("transcript-pill").classList.toggle("toggle-on", state.generateTranscript); };
-    $("batch-toggle-btn").onclick = () => { sfx.click(); state.batchMode = !state.batchMode; $("batch-toggle-btn").classList.toggle("toggle-on", state.batchMode); $("batch-bar").classList.toggle("hidden", !state.batchMode); };
-    $("exit-batch-btn").onclick = () => $("batch-toggle-btn").click();
-    $("batch-input").oninput = () => { const n = $("batch-input").value.split(/\r?\n/).filter((x) => x.trim()).length; $("batch-count").textContent = `${n} link${n === 1 ? "" : "s"}`; };
-    $("finetune-toggle-btn").onclick = () => { sfx.click(); state.finetuneOpen = !state.finetuneOpen; $("finetune-toggle-btn").classList.toggle("toggle-on", state.finetuneOpen); $("finetune-drawer").classList.toggle("hidden", !state.finetuneOpen); };
-    $("image-quality").oninput = (e) => { $("img-q-label").textContent = `${e.target.value}%`; };
 
     $("history-toggle-btn").onclick = () => { sfx.click(); $("history-drawer").classList.toggle("hidden"); renderHistoryList(); };
     $("close-history-btn").onclick = () => $("history-drawer").classList.add("hidden");
@@ -1952,8 +2330,15 @@
       b.onclick = () => { sfx.click(); state.historyFilter = b.dataset.hfilter; document.querySelectorAll("#history-filters [data-hfilter]").forEach((x) => x.classList.toggle("active", x === b)); renderHistoryList(); };
     });
     $("tidy-graph-btn").onclick = tidyGraphLayout;
-    $("reset-layout-btn").onclick = () => { localStorage.removeItem(LAYOUT_STORAGE_KEY); state.savedPositions = {}; tidyGraphLayout(); toast("Spatial layout reset & tidied", "ok"); };
+    $("reset-layout-btn").onclick = () => {
+      localStorage.removeItem(LAYOUT_STORAGE_KEY);
+      state.savedPositions = {};
+      for (const id of Array.from(state.nodes.keys())) removeNode(id);
+      $("sandbox-banner").classList.add("hidden");
+      toast("Desk cleared", "ok");
+    };
 
+    // Pro / BYOK Upgrade Modal
     $("tier-pill").onclick = () => openUpgradeModal("");
     $("close-upgrade-modal").onclick = () => $("upgrade-modal").classList.add("hidden");
     $("tab-pro-key").onclick = () => { sfx.click(); $("tab-pro-key").classList.add("active"); $("tab-byok-key").classList.remove("active"); $("panel-pro-key").classList.remove("hidden"); $("panel-byok-key").classList.add("hidden"); };
@@ -1994,37 +2379,34 @@
 
     $("api-modal-btn").onclick = () => {
       sfx.click();
-      const raw = input.value.trim();
-      const sample = extractUrl(raw) || DEMO_VIDEO_URL;
-      const useAgent = isNaturalLanguageCommand(raw);
-      const endpoint = useAgent ? "/v1/agent/run" : "/v1/jobs";
-      const body = useAgent ? { prompt: raw, url: sample } : buildPayload(sample);
+      const body = state.lastApiPayload || { url: SHOWCASE_VIDEO.url, mode: "video", video_quality: "1080", video_only: false, video_container: "mp4", video_codec: "h264" };
       const proHeader = state.proKey ? ` \\\n  -H "X-Neon-Pro-Key: ${state.proKey}"` : "";
-      $("api-curl-pre").textContent = `curl -X POST "${window.location.origin}${endpoint}" \\\n  -H "Content-Type: application/json"${proHeader} \\\n  -d '${JSON.stringify(body, null, 2)}'`;
+      $("api-curl-pre").textContent = `curl -X POST "${window.location.origin}/v1/jobs" \\\n  -H "Content-Type: application/json"${proHeader} \\\n  -d '${JSON.stringify(body, null, 2)}'`;
       $("api-modal").classList.remove("hidden");
     };
     $("close-api-modal").onclick = () => $("api-modal").classList.add("hidden");
     $("copy-curl-btn").onclick = async () => { await navigator.clipboard.writeText($("api-curl-pre").textContent); sfx.click(); toast("cURL copied", "ok"); };
-    $("copy-json-btn").onclick = async () => { const sample = extractUrl(input.value.trim()) || DEMO_VIDEO_URL; await navigator.clipboard.writeText(JSON.stringify(buildPayload(sample), null, 2)); sfx.click(); toast("JSON copied", "ok"); };
+    $("copy-json-btn").onclick = async () => {
+      const body = state.lastApiPayload || { url: SHOWCASE_VIDEO.url, mode: "video", video_quality: "1080" };
+      await navigator.clipboard.writeText(JSON.stringify(body, null, 2)); sfx.click(); toast("JSON copied", "ok");
+    };
 
     const applyTheme = (t) => { document.documentElement.setAttribute("data-theme", t); localStorage.setItem("neon_sync_theme", t); $("theme-text").textContent = t === "dark" ? "Light" : "Dark"; };
     applyTheme(localStorage.getItem("neon_sync_theme") || "dark");
     $("theme-btn").onclick = () => { sfx.click(); applyTheme((document.documentElement.getAttribute("data-theme") || "dark") === "dark" ? "light" : "dark"); };
   }
 
-  /* ---------- Hydrate History Drawer & Launch Crisp Default Showcase ---------- */
+  /* ---------- Hydrate History Drawer & Launch Live Possibility Tree ---------- */
   async function hydrateFromBackend() {
     let saved = {};
     try { saved = JSON.parse(localStorage.getItem(LAYOUT_STORAGE_KEY) || "{}"); } catch (_) {}
 
-    // Load all past jobs cleanly into History Drawer (never clutter fresh canvas at 45% zoom!)
     try {
       const jobs = await (await fetch("/v1/jobs?limit=40")).json();
       state.historyJobs = jobs;
       for (const j of jobs) state.autoSavedJobs.add(j.job_id);
     } catch (_) {}
 
-    // Restore explicitly saved workspace notes & pinned nodes if any exist in v3 layout
     const pinnedJobIds = Object.keys(saved.positions || {}).filter((k) => k.startsWith("job_")).map((k) => k.slice(4));
     for (const jid of pinnedJobIds) {
       const j = state.historyJobs.find((x) => x.job_id === jid);
@@ -2038,7 +2420,6 @@
     }
 
     if (state.nodes.size === 0) {
-      // Crisp, immediately understandable real-world creator workflow at ~90% zoom!
       spawnDefaultShowcase();
     } else {
       setTimeout(() => { renderThreads(); fitAllNodes(); }, 60);

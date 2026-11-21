@@ -228,6 +228,7 @@ def build_ytdlp_format_selector(
     video_codec: VideoCodec = "auto",
     video_container: VideoContainer = "auto",
     fps_limit: int | None = None,
+    video_only: bool = False,
 ) -> str:
     """Translate high-level quality/codec/container/FPS settings into a yt-dlp `-f` selector."""
     if format_id:
@@ -235,7 +236,7 @@ def build_ytdlp_format_selector(
     if mode == "audio":
         return "bestaudio/best"
     if video_quality == "worst":
-        return "worstvideo+worstaudio/worst"
+        return "worstvideo/worst" if video_only else "worstvideo+worstaudio/worst"
 
     filters: list[str] = []
     if video_quality != "best" and video_quality.isdigit():
@@ -253,6 +254,18 @@ def build_ytdlp_format_selector(
         filters.append(codec_patterns[video_codec])
 
     v_filter = "".join(f"[{f}]" for f in filters)
+
+    if video_only:
+        height_only = f"[height<={video_quality}]" if video_quality.isdigit() else ""
+        if v_filter:
+            parts = [f"bestvideo{v_filter}"]
+            if height_only and height_only != v_filter:
+                parts.append(f"bestvideo{height_only}")
+            parts.append("bestvideo")
+            return "/".join(parts)
+        if video_container == "mp4":
+            return "bestvideo[ext=mp4]/bestvideo"
+        return "bestvideo"
 
     # Prefer matching audio container when MP4 requested for lossless remuxing
     a_pref = "bestaudio[ext=m4a]/bestaudio" if video_container == "mp4" else "bestaudio"
@@ -280,6 +293,7 @@ class AdvancedProcessingOptions(BaseModel):
     video_container: VideoContainer = "auto"
     video_codec: VideoCodec = "auto"
     fps_limit: int | None = Field(default=None, ge=1, le=240)
+    video_only: bool = False
     remux_faststart: bool = True
 
     # Audio
@@ -300,6 +314,7 @@ class AdvancedProcessingOptions(BaseModel):
     embed_thumbnail: bool = False
     embed_metadata: bool = True
     extract_subtitles: bool = False
+    subtitles_only: bool = False
     embed_subtitles: bool = False
     subtitle_languages: list[str] = Field(default_factory=lambda: ["en"])
     subtitle_mode: SubtitleMode = "prefer_manual"

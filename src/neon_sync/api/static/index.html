@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Neon Sync — Infinite Spatial Media Reactor</title>
+  <title>Neon Sync — Spatial Media Possibility Engine</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -21,8 +21,8 @@
       <div class="reticle-corner bl"></div>
       <div class="reticle-corner br"></div>
       <span class="mono reticle-tag">SPATIAL SIGNAL CAPTURE</span>
-      <h2>Drop link anywhere on the canvas</h2>
-      <p>Spawns a live Media Cartridge with instant probe &amp; patch jacks</p>
+      <h2>Drop link to spawn its possibility tree</h2>
+      <p>Fast lightweight probe — choose Video, Audio, Subtitles, Thumbnail, or AI Agent</p>
     </div>
   </div>
 
@@ -54,11 +54,11 @@
     </div>
 
     <div class="bezel-controls">
-      <button class="hw-btn" id="history-toggle-btn" title="Open searchable history & jump to any node">
+      <button class="hw-btn" id="history-toggle-btn" title="Open searchable history & pin past jobs">
         <span>History</span>
         <span class="count-chip mono num" id="history-count-chip">0</span>
       </button>
-      <button class="hw-btn" id="tidy-graph-btn" title="Auto-arrange all threaded clusters neatly">
+      <button class="hw-btn" id="tidy-graph-btn" title="Auto-arrange all nodes cleanly">
         <span>Tidy</span>
       </button>
       <button class="hw-btn active" id="autosave-pill" title="Auto-save extracted files straight to Downloads">
@@ -96,13 +96,6 @@
               <feMergeNode in="SourceGraphic" />
             </feMerge>
           </filter>
-          <filter id="glow-ok" x="-40%" y="-40%" width="180%" height="180%">
-            <feGaussianBlur stdDeviation="3.2" result="blur" />
-            <feMerge>
-              <feMergeNode in="blur" />
-              <feMergeNode in="SourceGraphic" />
-            </feMerge>
-          </filter>
         </defs>
         <g id="threads-group"></g>
         <g id="draft-wire-group" class="hidden">
@@ -116,22 +109,22 @@
       <div id="nodes-layer" class="nodes-layer"></div>
     </div>
 
-    <!-- Subtle Top-Center Banner When Viewing Interactive Starter Workflow -->
+    <!-- Subtle Top-Center Banner For Default Starter Tree -->
     <div id="sandbox-banner" class="sandbox-banner hidden">
       <span class="pulse-dot"></span>
-      <span class="mono">LIVE WORKFLOW TEMPLATE · CLICK ANY <strong>▶ RUN LIVE</strong>, DRAG THREADS, OR PASTE YOUR LINK (<kbd>⌘V</kbd>)</span>
-      <button class="link-btn mono" id="clear-sandbox-btn">Blank Canvas</button>
+      <span class="mono">LIVE EXAMPLE TREE · CLICK ANY BRANCH TO UNFOLD OPTIONS, OR PASTE YOUR OWN LINK (<kbd>⌘V</kbd>)</span>
+      <button class="link-btn mono" id="clear-sandbox-btn">Blank Desk</button>
     </div>
   </main>
 
-  <!-- Context Patch-Action Menu (Appears when dropping a dragged cable on empty canvas) -->
+  <!-- Context Patch-Action Menu (Drag Cable to Empty Canvas) -->
   <div id="patch-menu" class="patch-menu hidden">
-    <div class="patch-menu-head mono">CHAIN FROM THREAD</div>
-    <button class="patch-item" data-patch-action="extract"><span>⚡ Extract with Dock Settings</span><kbd class="mono">DL</kbd></button>
-    <button class="patch-item" data-patch-action="agent_clip"><span>✂️ Agent: Clip 0:00–0:15 (720p)</span><kbd class="mono">AI</kbd></button>
-    <button class="patch-item" data-patch-action="agent_mp3"><span>🎧 Agent: 320k MP3 + Loudnorm</span><kbd class="mono">AI</kbd></button>
-    <button class="patch-item" data-patch-action="agent_summary"><span>🧠 Agent: Summarize Media</span><kbd class="mono">AI</kbd></button>
-    <button class="patch-item" data-patch-action="agent_webp"><span>🖼 Agent: WebP 1280px</span><kbd class="mono">AI</kbd></button>
+    <div class="patch-menu-head mono">SPAWN NEW PATH</div>
+    <button class="patch-item" data-patch-action="branch_video"><span>🎬 Video Path Configurator</span><kbd class="mono">VID</kbd></button>
+    <button class="patch-item" data-patch-action="branch_audio"><span>🎧 Audio Master Configurator</span><kbd class="mono">AUD</kbd></button>
+    <button class="patch-item" data-patch-action="branch_subtitles"><span>💬 Subtitles &amp; AI Brief</span><kbd class="mono">SUB</kbd></button>
+    <button class="patch-item" data-patch-action="branch_image"><span>🖼 Thumbnail / Image Path</span><kbd class="mono">IMG</kbd></button>
+    <button class="patch-item" data-patch-action="branch_agent"><span>✦ Custom AI Agent Node</span><kbd class="mono">AI</kbd></button>
     <div class="patch-sep"></div>
     <button class="patch-item" data-patch-action="note"><span>📝 Attach Linked Studio Note</span><kbd class="mono">NOTE</kbd></button>
   </div>
@@ -141,7 +134,7 @@
     <div class="drawer-head">
       <div>
         <div class="mono drawer-kicker">SPATIAL HISTORY</div>
-        <h3 class="drawer-title">All Nodes &amp; Threads</h3>
+        <h3 class="drawer-title">Past Extractions &amp; Notes</h3>
       </div>
       <button class="ghost-btn btn-xs" id="close-history-btn">Close</button>
     </div>
@@ -159,202 +152,56 @@
     <div id="history-list" class="history-list"></div>
 
     <div class="drawer-foot mono">
-      <span id="history-stats">0 nodes · 0 threads</span>
+      <span id="history-stats">0 on desk · 0 saved jobs</span>
       <div class="row-gap">
-        <button class="link-btn mono" id="show-demo-btn">Demo</button>
-        <button class="link-btn mono" id="reset-layout-btn">Reset Layout</button>
+        <button class="link-btn mono" id="show-demo-btn">Example</button>
+        <button class="link-btn mono" id="reset-layout-btn">Clear Desk</button>
       </div>
     </div>
   </aside>
 
-  <!-- FLOATING BOTTOM REACTOR COMMAND DOCK -->
+  <!-- CLEAN FLOATING BOTTOM SPAWN DOCK -->
   <section class="reactor-dock" id="reactor-shell">
-    <!-- Upward Popover: Settings / Quality / Trim / Subs / Precision -->
+    <!-- Compact Upward Batch Spawner -->
     <div class="dock-popover hidden" id="dock-popover">
       <div class="popover-head">
-        <div class="seg-rail" id="mode-group" role="tablist">
-          <button class="seg active" data-mode="auto">Auto</button>
-          <button class="seg" data-mode="video">Video</button>
-          <button class="seg" data-mode="audio">Audio</button>
-          <button class="seg" data-mode="image">Images</button>
-        </div>
-        <div class="row-gap">
-          <button class="tac-pill" id="clip-toggle-btn">Trim</button>
-          <button class="tac-pill" id="subs-toggle-btn">Subtitles</button>
-          <button class="tac-pill" id="batch-toggle-btn">Batch</button>
-          <button class="tac-pill" id="finetune-toggle-btn">Precision &#9652;</button>
-        </div>
+        <span class="mono strip-label">BATCH SPAWN (1 LINK PER LINE)</span>
+        <button class="ghost-btn btn-xs" id="exit-batch-btn">Close</button>
       </div>
-
-      <!-- Video Quality Strip -->
-      <div class="param-strip" id="context-strip-video">
-        <div class="param-group" id="quality-pills">
-          <span class="strip-label mono">RES</span>
-          <button class="tac-pill active" data-vq="best">Best</button>
-          <button class="tac-pill pro-gated" data-vq="2160">4K <span class="pro-tag mono">PRO</span></button>
-          <button class="tac-pill pro-gated" data-vq="1440">2K <span class="pro-tag mono">PRO</span></button>
-          <button class="tac-pill" data-vq="1080">1080p</button>
-          <button class="tac-pill" data-vq="720">720p</button>
-          <button class="tac-pill" data-vq="480">480p</button>
-          <button class="tac-pill" data-vq="360">360p</button>
-        </div>
-        <button class="tac-pill toggle-on" id="h264-pill">H.264 MP4</button>
-      </div>
-
-      <!-- Audio Strip -->
-      <div class="param-strip hidden" id="context-strip-audio">
-        <div class="param-group" id="audio-fmt-pills">
-          <span class="strip-label mono">FMT</span>
-          <button class="tac-pill active" data-af="mp3">MP3</button>
-          <button class="tac-pill" data-af="m4a">M4A</button>
-          <button class="tac-pill pro-gated" data-af="flac">FLAC <span class="pro-tag mono">PRO</span></button>
-          <button class="tac-pill" data-af="opus">Opus</button>
-          <button class="tac-pill pro-gated" data-af="wav">WAV <span class="pro-tag mono">PRO</span></button>
-        </div>
-        <div class="param-group" id="audio-br-pills">
-          <span class="strip-label mono">RATE</span>
-          <button class="tac-pill active" data-ab="320k">320k</button>
-          <button class="tac-pill" data-ab="192k">192k</button>
-          <button class="tac-pill" data-ab="128k">128k</button>
-          <button class="tac-pill" id="loudnorm-pill">Loudnorm</button>
-        </div>
-      </div>
-
-      <!-- Image Strip -->
-      <div class="param-strip hidden" id="context-strip-image">
-        <div class="param-group" id="img-fmt-pills">
-          <span class="strip-label mono">CONV</span>
-          <button class="tac-pill active" data-if="original">Original</button>
-          <button class="tac-pill" data-if="webp">WebP</button>
-          <button class="tac-pill" data-if="jpg">JPEG</button>
-          <button class="tac-pill" data-if="png">PNG</button>
-          <button class="tac-pill" data-if="avif">AVIF</button>
-        </div>
-        <div class="param-group" id="img-width-pills">
-          <span class="strip-label mono">MAX W</span>
-          <button class="tac-pill active" data-iw="original">Original</button>
-          <button class="tac-pill" data-iw="3840">4K</button>
-          <button class="tac-pill" data-iw="1920">1920px</button>
-          <button class="tac-pill" data-iw="1280">1280px</button>
-        </div>
-      </div>
-
-      <!-- Trim Tray -->
-      <div class="sub-tray hidden" id="clip-box">
-        <span class="strip-label mono">TRIM</span>
-        <input type="text" class="mini-input mono" id="clip-start" placeholder="0:00" />
-        <span class="muted">→</span>
-        <input type="text" class="mini-input mono" id="clip-end" placeholder="End" />
-        <span class="mono num muted" id="clip-duration-hint"></span>
-      </div>
-
-      <!-- Subtitles Tray -->
-      <div class="sub-tray hidden" id="subs-box">
-        <span class="strip-label mono">CAPTIONS</span>
-        <input type="text" class="mini-input mono" id="subtitle-languages" value="en" placeholder="en,es" style="width:80px;" />
-        <button class="tac-pill toggle-on" id="embed-subs-pill">Embed</button>
-        <button class="tac-pill toggle-on" id="transcript-pill">Generate .txt Transcript</button>
-      </div>
-
-      <!-- Precision Drawer -->
-      <div class="precision-drawer hidden" id="finetune-drawer">
-        <div class="field">
-          <label class="mono">CONTAINER</label>
-          <select id="video-container">
-            <option value="auto">Auto</option>
-            <option value="mp4" selected>MP4</option>
-            <option value="mkv">MKV</option>
-            <option value="webm">WebM</option>
-            <option value="mov">MOV</option>
-          </select>
-        </div>
-        <div class="field">
-          <label class="mono">VIDEO CODEC</label>
-          <select id="video-codec">
-            <option value="auto">Auto</option>
-            <option value="h264" selected>H.264</option>
-            <option value="hevc">HEVC / H.265</option>
-            <option value="vp9">VP9</option>
-            <option value="av1">AV1</option>
-          </select>
-        </div>
-        <div class="field">
-          <label class="mono">FPS CAP</label>
-          <select id="fps-limit">
-            <option value="any">Any</option>
-            <option value="60">60 fps</option>
-            <option value="30">30 fps</option>
-          </select>
-        </div>
-        <div class="field">
-          <label class="mono"><span>IMG Q</span><span class="num" id="img-q-label">90%</span></label>
-          <input type="range" id="image-quality" min="20" max="100" value="90" class="range-track" />
-        </div>
-        <div class="field">
-          <label class="mono">GALLERY RANGE</label>
-          <div class="row-gap">
-            <input type="number" id="gallery-range-start" min="1" max="500" value="1" />
-            <input type="number" id="gallery-range-end" min="1" max="500" placeholder="To" />
-          </div>
-        </div>
-        <div class="field">
-          <label class="mono">PLAYLIST ITEMS</label>
-          <input type="text" id="playlist-items" placeholder="1-5" />
-        </div>
-        <div class="field">
-          <label class="mono">PREFIX</label>
-          <input type="text" id="filename-prefix" maxlength="64" placeholder="Optional" />
-        </div>
-        <div class="field">
-          <label class="mono">ENGINE</label>
-          <select id="preferred-engine"><option value="">Auto Router</option></select>
-        </div>
-        <div class="field field-span">
-          <button class="tac-pill pro-gated" id="browser-fallback-pill">
-            <span>Tier-3 Headless Browser Fallback</span>
-            <span class="pro-tag mono">PRO</span>
-          </button>
-        </div>
-      </div>
-
-      <!-- Batch Drawer -->
-      <div id="batch-bar" class="batch-wrap hidden">
-        <textarea class="batch-box mono" id="batch-input" placeholder="Paste multiple URLs (one per line) — spawns a threaded cluster for each…"></textarea>
+      <div class="batch-wrap">
+        <textarea class="batch-box mono" id="batch-input" placeholder="Paste multiple URLs (one per line) to spawn their Source trees side-by-side…"></textarea>
         <div class="batch-foot">
           <span class="mono num muted" id="batch-count">0 links</span>
-          <div class="row-gap">
-            <button class="ghost-btn btn-xs" id="exit-batch-btn">Cancel</button>
-            <button class="reactor-fire btn-sm" id="download-batch-btn">Spawn &amp; Extract All</button>
-          </div>
+          <button class="reactor-fire btn-sm" id="spawn-batch-btn">Spawn All Trees</button>
         </div>
       </div>
     </div>
 
-    <!-- Main Dock Telemetry Strip -->
+    <!-- Telemetry Strip -->
     <div class="dock-telemetry">
       <div class="row-gap">
-        <button class="intent-switch" id="intent-mode-toggle" title="Toggle Direct Extract vs AI Agent command">
+        <button class="intent-switch" id="intent-mode-toggle" title="Toggle Link Spawn vs Direct AI Agent command">
           <span class="intent-dot"></span>
-          <span class="mono" id="intent-label">DIRECT EXTRACT</span>
+          <span class="mono" id="intent-label">SPAWN POSSIBILITIES</span>
         </button>
         <span class="platform-chip mono hidden" id="platform-tag">LINK</span>
       </div>
       <div class="oscilloscope" id="oscilloscope" aria-hidden="true"></div>
-      <span class="mono dock-status" id="reactor-status-text">CANVAS READY · ⌘V ANYWHERE</span>
+      <span class="mono dock-status" id="reactor-status-text">ZERO HEAVY LOAD ON SPAWN · ⌘V ANYWHERE</span>
     </div>
 
-    <!-- Main Dock Command Input -->
+    <!-- Clean Single Input + Spawn Button -->
     <div class="reactor-input-row" id="single-bar">
-      <button class="icon-toggle-btn" id="dock-settings-btn" title="Quality, Format, Trim, Subtitles & Batch settings">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/>
+      <button class="icon-toggle-btn" id="dock-batch-btn" title="Batch spawn multiple links">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>
         </svg>
       </button>
       <input
         type="text"
         class="reactor-input"
         id="url-input"
-        placeholder="Paste any URL to spawn a node — or command: “clip 0:05 to 0:15 in 720p mp4 https://…”"
+        placeholder="Paste any link to spawn its paths — or command: “clip 0:30 to 0:45 https://…”"
         autocomplete="off"
         spellcheck="false"
         autofocus
@@ -362,7 +209,7 @@
       <button class="ghost-btn btn-xs hidden" id="clear-url-btn">Clear</button>
       <button class="ghost-btn btn-xs" id="paste-btn" title="Paste link (⌘V anywhere)">Paste</button>
       <button class="reactor-fire magnetic" id="download-btn">
-        <span id="fire-label">Spawn &amp; Extract</span>
+        <span id="fire-label">Spawn</span>
       </button>
     </div>
   </section>
@@ -406,10 +253,10 @@
               <span class="tier-price">$0 <small>/ zero signup</small></span>
             </div>
             <ul class="tier-list">
-              <li>Up to <strong>1080p</strong> video &amp; 320k MP3/M4A/Opus</li>
-              <li><strong>5 downloads / hour</strong> &amp; 3x Batch queue</li>
+              <li>Up to <strong>1080p</strong> video (with audio or muted) &amp; 320k MP3</li>
+              <li><strong>5 downloads / hour</strong> &amp; unlimited free probing</li>
               <li><strong>3 AI Agent runs / day</strong> (local planner)</li>
-              <li>Full infinite canvas, live threading &amp; notes</li>
+              <li>Full infinite canvas, possibility trees &amp; notes</li>
             </ul>
           </div>
           <div class="tier-col tier-col-pro">
