@@ -16,6 +16,7 @@ from .engine import (
     SupportedDomains,
 )
 from .job import (
+    BatchDownloadRequest,
     DownloadRequest,
     JobRecord,
     JobStatus,
@@ -42,10 +43,19 @@ from .media import (
     TranscriptInfo,
     WarningInfo,
 )
+from .options import (
+    AdvancedProcessingOptions,
+    FormatCatalog,
+    PresetDefinition,
+    build_ytdlp_format_selector,
+    get_format_catalog,
+)
 
 __all__ = [
+    "AdvancedProcessingOptions",
     "AuthRequirements",
     "AuthorInfo",
+    "BatchDownloadRequest",
     "ChapterInfo",
     "ContentType",
     "CostProfile",
@@ -58,6 +68,7 @@ __all__ = [
     "EngineProvenance",
     "ErrorCode",
     "ErrorInfo",
+    "FormatCatalog",
     "FormatInfo",
     "HealthReport",
     "HealthState",
@@ -70,6 +81,7 @@ __all__ = [
     "MediaItem",
     "MediaMetadata",
     "NormalizedMediaOutput",
+    "PresetDefinition",
     "ProbeOptions",
     "ProbeRequest",
     "ProgressEvent",
@@ -80,4 +92,6 @@ __all__ = [
     "ThumbnailInfo",
     "TranscriptInfo",
     "WarningInfo",
+    "build_ytdlp_format_selector",
+    "get_format_catalog",
 ]

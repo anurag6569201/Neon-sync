@@ -120,15 +120,20 @@ class FfmpegAdapter(PostProcessorAdapter):
         output_path: Path,
         *,
         audio_format: str = "mp3",
+        audio_bitrate: str = "auto",
+        normalize_audio: bool = False,
         max_output_bytes: int,
     ) -> list[str]:
+        br = audio_bitrate if audio_bitrate != "auto" else None
         codec_args = {
-            "mp3": ["-vn", "-c:a", "libmp3lame", "-q:a", "2"],
-            "m4a": ["-vn", "-c:a", "aac", "-b:a", "192k"],
-            "opus": ["-vn", "-c:a", "libopus", "-b:a", "160k"],
+            "mp3": ["-vn", "-c:a", "libmp3lame", *(["-b:a", br] if br else ["-q:a", "2"])],
+            "m4a": ["-vn", "-c:a", "aac", "-b:a", br or "192k"],
+            "opus": ["-vn", "-c:a", "libopus", "-b:a", br or "160k"],
             "flac": ["-vn", "-c:a", "flac"],
             "wav": ["-vn", "-c:a", "pcm_s16le"],
         }.get(audio_format, ["-vn", "-c:a", "copy"])
+
+        filter_args = ["-af", "loudnorm"] if normalize_audio else []
 
         return [
             self._ffmpeg(),
@@ -140,11 +145,52 @@ class FfmpegAdapter(PostProcessorAdapter):
             "file,pipe",
             "-i",
             str(input_path),
+            *filter_args,
             *codec_args,
             "-fs",
             str(max_output_bytes),
             str(output_path),
         ]
+
+    def build_image_process_argv(
+        self,
+        input_path: Path,
+        output_path: Path,
+        *,
+        image_format: str = "webp",
+        quality: int = 90,
+        max_width: int | None = None,
+    ) -> list[str]:
+        """Build zero-egress FFmpeg image format conversion & aspect-preserving resize argv."""
+        argv = [
+            self._ffmpeg(),
+            "-y",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-protocol_whitelist",
+            "file,pipe",
+            "-i",
+            str(input_path),
+        ]
+        if max_width is not None and max_width > 0:
+            argv.extend(["-vf", f"scale='min({max_width},iw)':-2"])
+
+        q = max(1, min(100, quality))
+        if image_format == "webp":
+            argv.extend(["-c:v", "libwebp", "-quality", str(q)])
+        elif image_format == "jpg":
+            # Map 1..100 quality -> ffmpeg mjpeg qscale 31..2
+            qscale = max(2, min(31, round(31 - (q / 100.0) * 29)))
+            argv.extend(["-q:v", str(qscale)])
+        elif image_format == "avif":
+            crf = max(0, min(63, round(63 - (q / 100.0) * 50)))
+            argv.extend(["-c:v", "libsvtav1", "-crf", str(crf), "-still-picture", "1"])
+        elif image_format == "png":
+            argv.extend(["-c:v", "png"])
+
+        argv.extend(["-frames:v", "1", str(output_path)])
+        return argv
 
     def build_clip_argv(
         self,
@@ -251,6 +297,8 @@ class FfmpegAdapter(PostProcessorAdapter):
         output_path: Path,
         *,
         audio_format: str = "mp3",
+        audio_bitrate: str = "auto",
+        normalize_audio: bool = False,
         max_output_bytes: int,
         cancel_token: CancellationToken | None = None,
     ) -> Path:
@@ -258,6 +306,8 @@ class FfmpegAdapter(PostProcessorAdapter):
             input_path,
             output_path,
             audio_format=audio_format,
+            audio_bitrate=audio_bitrate,
+            normalize_audio=normalize_audio,
             max_output_bytes=max_output_bytes,
         )
         res = await run_safe_subprocess(
@@ -270,6 +320,103 @@ class FfmpegAdapter(PostProcessorAdapter):
             raise AdapterError(
                 ErrorCode.ERR_INTERNAL,
                 f"FFmpeg audio extraction failed: {res.stderr[-300:]}",
+                engine_id=self.id,
+            )
+        return output_path
+
+    async def process_image(
+        self,
+        input_path: Path,
+        output_path: Path,
+        *,
+        image_format: str = "webp",
+        quality: int = 90,
+        max_width: int | None = None,
+        cancel_token: CancellationToken | None = None,
+    ) -> Path:
+        """Convert & resize image using Pillow when available (supports WebP/JPG/PNG reliably),
+        falling back to zero-egress FFmpeg."""
+        try:
+            from PIL import Image, ImageOps
+        except ImportError:
+            Image = None  # type: ignore[assignment]
+            ImageOps = None  # type: ignore[assignment]
+
+        if Image is not None and image_format in {"jpg", "jpeg", "png", "webp"}:
+            import asyncio
+
+            def _convert() -> Path:
+                with Image.open(input_path) as img:
+                    img = ImageOps.exif_transpose(img)
+                    if max_width is not None and max_width > 0 and img.width > max_width:
+                        ratio = max_width / float(img.width)
+                        new_h = max(2, round(img.height * ratio))
+                        img = img.resize((max_width, new_h), Image.Resampling.LANCZOS)
+
+                    fmt = image_format.lower()
+                    if fmt in {"jpg", "jpeg"}:
+                        if img.mode not in {"RGB", "L"}:
+                            img = img.convert("RGB")
+                        img.save(output_path, format="JPEG", quality=max(1, min(100, quality)), optimize=True)
+                    elif fmt == "webp":
+                        img.save(output_path, format="WEBP", quality=max(1, min(100, quality)), method=4)
+                    else:
+                        img.save(output_path, format="PNG", optimize=True)
+                return output_path
+
+            try:
+                return await asyncio.to_thread(_convert)
+            except Exception as exc:
+                raise AdapterError(
+                    ErrorCode.ERR_VALIDATION_FAILED,
+                    f"Image processing failed: {exc}",
+                    engine_id=self.id,
+                ) from exc
+
+        argv = self.build_image_process_argv(
+            input_path,
+            output_path,
+            image_format=image_format,
+            quality=quality,
+            max_width=max_width,
+        )
+        res = await run_safe_subprocess(
+            argv,
+            timeout=60.0,
+            proxy_url=None,
+            cancel_token=cancel_token,
+        )
+        if res.returncode != 0 or not output_path.exists():
+            raise AdapterError(
+                ErrorCode.ERR_INTERNAL,
+                f"FFmpeg image processing failed: {res.stderr[-300:]}",
+                engine_id=self.id,
+            )
+        return output_path
+
+    async def remux_faststart(
+        self,
+        input_path: Path,
+        output_path: Path,
+        *,
+        max_output_bytes: int,
+        cancel_token: CancellationToken | None = None,
+    ) -> Path:
+        argv = self.build_remux_argv(
+            input_path,
+            output_path,
+            max_output_bytes=max_output_bytes,
+        )
+        res = await run_safe_subprocess(
+            argv,
+            timeout=float(self._settings.ffmpeg_timeout_seconds),
+            proxy_url=None,
+            cancel_token=cancel_token,
+        )
+        if res.returncode != 0 or not output_path.exists():
+            raise AdapterError(
+                ErrorCode.ERR_INTERNAL,
+                f"FFmpeg faststart remux failed: {res.stderr[-300:]}",
                 engine_id=self.id,
             )
         return output_path

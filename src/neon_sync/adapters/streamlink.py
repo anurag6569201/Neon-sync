@@ -338,6 +338,8 @@ class StreamlinkAdapter(ExtractorAdapter):
         plan.output_dir.mkdir(parents=True, exist_ok=True)
         quality = plan.format_id or "best"
         max_dur = self._settings.max_livestream_duration_seconds
+        if plan.livestream_max_duration is not None:
+            max_dur = min(max_dur, plan.livestream_max_duration)
         if plan.clip_end_seconds and plan.clip_start_seconds is not None:
             requested = int(max(1, plan.clip_end_seconds - plan.clip_start_seconds))
             max_dur = min(max_dur, requested)

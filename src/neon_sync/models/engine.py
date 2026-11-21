@@ -9,6 +9,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from .options import AdvancedProcessingOptions
+
 
 class EngineCapability(StrEnum):
     EXTRACT_METADATA = "extract_metadata"
@@ -120,16 +122,11 @@ class ProbeOptions(BaseModel):
     allow_browser_fallback: bool = False
 
 
-class DownloadPlan(BaseModel):
+class DownloadPlan(AdvancedProcessingOptions):
     job_id: str
     output_dir: Path
     format_id: str | None = None
     mode: Literal["auto", "video", "audio", "image", "direct"] = "auto"
-    audio_format: Literal["best", "mp3", "m4a", "opus", "flac", "wav"] | None = None
-    extract_thumbnail: bool = False
-    extract_subtitles: bool = False
-    clip_start_seconds: float | None = Field(default=None, ge=0)
-    clip_end_seconds: float | None = Field(default=None, ge=0)
     max_bytes: int = Field(default=2 * 1024 * 1024 * 1024, ge=1)
     max_items: int = Field(default=50, ge=1, le=500)
     timeout_seconds: int = Field(default=1800, ge=10, le=7200)

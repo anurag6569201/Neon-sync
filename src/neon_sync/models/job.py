@@ -9,6 +9,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from .media import NormalizedMediaOutput
+from .options import AdvancedProcessingOptions
 
 
 class JobStatus(StrEnum):
@@ -31,19 +32,22 @@ class ProbeRequest(BaseModel):
     bypass_cache: bool = False
 
 
-class DownloadRequest(BaseModel):
+class DownloadRequest(AdvancedProcessingOptions):
     url: str = Field(min_length=4, max_length=4096)
     mode: Literal["auto", "video", "audio", "image", "direct"] = "auto"
     format_id: str | None = None
-    audio_format: Literal["best", "mp3", "m4a", "opus", "flac", "wav"] | None = None
     preferred_engine: str | None = None
     allow_browser_fallback: bool = False
-    extract_thumbnail: bool = False
-    extract_subtitles: bool = False
-    clip_start_seconds: float | None = Field(default=None, ge=0)
-    clip_end_seconds: float | None = Field(default=None, ge=0)
     max_items: int = Field(default=50, ge=1, le=200)
     idempotency_key: str | None = Field(default=None, max_length=128)
+
+
+class BatchDownloadRequest(AdvancedProcessingOptions):
+    urls: list[str] = Field(min_length=1, max_length=10)
+    mode: Literal["auto", "video", "audio", "image", "direct"] = "auto"
+    preferred_engine: str | None = None
+    allow_browser_fallback: bool = False
+    max_items: int = Field(default=50, ge=1, le=200)
 
 
 class ProgressEvent(BaseModel):

@@ -22,6 +22,7 @@ from neon_sync.models import (
     ProbeOptions,
     ProbeRequest,
     ProgressEvent,
+    TranscriptInfo,
     WarningInfo,
 )
 from neon_sync.registry import EngineRegistry
@@ -30,11 +31,13 @@ from neon_sync.security import (
     DiskQuotaError,
     UrlValidationError,
     check_free_disk_floor,
+    sanitize_filename,
     validate_and_canonicalize_url,
 )
 
 from .router import UrlRouter
 from .storage import ArtifactStorage
+from .transcripts import normalize_subtitle_to_transcript
 
 
 class ExtractionOrchestrator:
@@ -206,11 +209,34 @@ class ExtractionOrchestrator:
                 output_dir=scratch_job_dir,
                 format_id=request.format_id,
                 mode=request.mode,
+                video_quality=request.video_quality,
+                video_container=request.video_container,
+                video_codec=request.video_codec,
+                fps_limit=request.fps_limit,
+                remux_faststart=request.remux_faststart,
                 audio_format=request.audio_format,
+                audio_bitrate=request.audio_bitrate,
+                normalize_audio=request.normalize_audio,
+                image_format=request.image_format,
+                image_quality=request.image_quality,
+                image_max_width=request.image_max_width,
+                gallery_archive_format=request.gallery_archive_format,
+                gallery_range_start=request.gallery_range_start,
+                gallery_range_end=request.gallery_range_end,
                 extract_thumbnail=request.extract_thumbnail,
+                embed_thumbnail=request.embed_thumbnail,
+                embed_metadata=request.embed_metadata,
                 extract_subtitles=request.extract_subtitles,
+                embed_subtitles=request.embed_subtitles,
+                subtitle_languages=request.subtitle_languages,
+                subtitle_mode=request.subtitle_mode,
+                subtitle_format=request.subtitle_format,
+                generate_transcript=request.generate_transcript,
                 clip_start_seconds=request.clip_start_seconds,
                 clip_end_seconds=request.clip_end_seconds,
+                playlist_items=request.playlist_items,
+                livestream_max_duration=request.livestream_max_duration,
+                custom_filename_prefix=request.custom_filename_prefix,
                 max_bytes=self._settings.max_job_bytes,
                 max_items=request.max_items,
                 timeout_seconds=self._settings.download_timeout_seconds,
@@ -223,7 +249,7 @@ class ExtractionOrchestrator:
                 cancel_token=cancel_token,
             )
 
-            # Stage 9: Optional zero-egress FFmpeg validation & post-processing
+            # Stage 9: Zero-egress FFmpeg validation & advanced post-processing
             final_path = artifact.local_path
             final_filename = artifact.filename
             final_mime = artifact.mime_type or "application/octet-stream"
@@ -240,7 +266,32 @@ class ExtractionOrchestrator:
                         message="Validating and post-processing media with FFmpeg",
                     ),
                 )
-                if request.clip_start_seconds is not None and result.content_type in {
+                is_image_output = final_mime.startswith("image/") or result.content_type == ContentType.IMAGE
+                if is_image_output and (
+                    request.image_format != "original" or request.image_max_width is not None
+                ):
+                    target_fmt = (
+                        request.image_format
+                        if request.image_format != "original"
+                        else (final_path.suffix.lstrip(".").lower() or "jpg")
+                    )
+                    if target_fmt == "jpeg":
+                        target_fmt = "jpg"
+                    img_out = scratch_job_dir / f"{Path(final_filename).stem}.{target_fmt}"
+                    if img_out.resolve() == final_path.resolve():
+                        img_out = scratch_job_dir / f"{Path(final_filename).stem}_processed.{target_fmt}"
+                    final_path = await ffmpeg.process_image(
+                        final_path,
+                        img_out,
+                        image_format=target_fmt,
+                        quality=request.image_quality,
+                        max_width=request.image_max_width,
+                        cancel_token=cancel_token,
+                    )
+                    final_filename = f"{Path(final_filename).stem}.{target_fmt}"
+                    final_mime = "image/jpeg" if target_fmt == "jpg" else f"image/{target_fmt}"
+                    result.engine.post_processor = f"ffmpeg-{ffmpeg.manifest().version}"
+                elif request.clip_start_seconds is not None and result.content_type in {
                     ContentType.VIDEO,
                     ContentType.AUDIO,
                 }:
@@ -254,23 +305,54 @@ class ExtractionOrchestrator:
                         cancel_token=cancel_token,
                     )
                     result.engine.post_processor = f"ffmpeg-{ffmpeg.manifest().version}"
-                elif (
-                    request.mode == "audio"
-                    and request.audio_format
-                    and request.audio_format != "best"
-                    and final_path.suffix.lstrip(".").lower() != request.audio_format
+                elif request.mode == "audio" and (
+                    request.normalize_audio
+                    or (
+                        request.audio_format
+                        and request.audio_format != "best"
+                        and final_path.suffix.lstrip(".").lower() != request.audio_format
+                    )
                 ):
-                    audio_path = scratch_job_dir / f"{Path(final_filename).stem}.{request.audio_format}"
+                    target_af = (
+                        request.audio_format
+                        if (request.audio_format and request.audio_format != "best")
+                        else (final_path.suffix.lstrip(".").lower() or "mp3")
+                    )
+                    audio_path = scratch_job_dir / f"{Path(final_filename).stem}_norm.{target_af}"
                     final_path = await ffmpeg.extract_audio(
                         final_path,
                         audio_path,
-                        audio_format=request.audio_format,
+                        audio_format=target_af,
+                        audio_bitrate=request.audio_bitrate,
+                        normalize_audio=request.normalize_audio,
                         max_output_bytes=self._settings.max_job_bytes,
                         cancel_token=cancel_token,
                     )
-                    final_filename = audio_path.name
-                    final_mime = f"audio/{request.audio_format}"
+                    final_filename = f"{Path(final_filename).stem}.{target_af}"
+                    final_mime = f"audio/{target_af}"
                     result.engine.post_processor = f"ffmpeg-{ffmpeg.manifest().version}"
+                elif (
+                    request.remux_faststart
+                    and result.content_type == ContentType.VIDEO
+                    and final_path.suffix.lower() in {".mp4", ".mov"}
+                ):
+                    fast_path = scratch_job_dir / f"{Path(final_filename).stem}_fast{final_path.suffix}"
+                    try:
+                        final_path = await ffmpeg.remux_faststart(
+                            final_path,
+                            fast_path,
+                            max_output_bytes=self._settings.max_job_bytes,
+                            cancel_token=cancel_token,
+                        )
+                        result.engine.post_processor = f"ffmpeg-{ffmpeg.manifest().version}"
+                    except AdapterError as exc:
+                        result.warnings.append(
+                            WarningInfo(
+                                code="WARN_FASTSTART_SKIPPED",
+                                message=exc.message,
+                                engine="ffmpeg",
+                            )
+                        )
 
                 if result.content_type in {ContentType.VIDEO, ContentType.AUDIO}:
                     try:
@@ -286,6 +368,37 @@ class ExtractionOrchestrator:
                                 engine="ffmpeg",
                             )
                         )
+
+            # Optional clean transcript generation from downloaded subtitle files
+            if request.generate_transcript and artifact.extra_files:
+                sub_file = next(
+                    (p for p in artifact.extra_files if p.suffix.lower() in {".vtt", ".srt"}),
+                    None,
+                )
+                if sub_file is not None:
+                    raw_sub = sub_file.read_text(encoding="utf-8", errors="replace")
+                    clean_txt = normalize_subtitle_to_transcript(raw_sub)
+                    if clean_txt:
+                        txt_path = scratch_job_dir / f"{Path(final_filename).stem}_transcript.txt"
+                        txt_path.write_text(clean_txt, encoding="utf-8")
+                        stored_txt = self._storage.store(
+                            job_id=job_id,
+                            source_path=txt_path,
+                            filename=txt_path.name,
+                            mime_type="text/plain; charset=utf-8",
+                        )
+                        result.transcript = TranscriptInfo(
+                            available=True,
+                            language=(request.subtitle_languages or ["en"])[0],
+                            source="manual_captions" if request.subtitle_mode == "manual_only" else "auto_captions",
+                            artifact_url=stored_txt.download_url,
+                        )
+
+            # Optional sanitized custom filename prefix
+            if request.custom_filename_prefix.strip():
+                prefix = sanitize_filename(request.custom_filename_prefix.strip(), fallback="")
+                if prefix:
+                    final_filename = f"{prefix}_{final_filename}"
 
             # Stage 10-11: Content-addressed storage & normalized output
             await self._emit(

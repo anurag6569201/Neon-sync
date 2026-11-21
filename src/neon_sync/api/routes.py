@@ -11,13 +11,16 @@ from fastapi.responses import FileResponse, StreamingResponse
 from neon_sync import __version__
 from neon_sync.adapters import AdapterError
 from neon_sync.models import (
+    BatchDownloadRequest,
     DownloadRequest,
     EngineManifest,
     ErrorCode,
+    FormatCatalog,
     InstallationStatus,
     JobRecord,
     NormalizedMediaOutput,
     ProbeRequest,
+    get_format_catalog,
 )
 from neon_sync.pipeline import RateLimitExceededError
 from neon_sync.security import UrlValidationError, build_content_disposition
@@ -70,6 +73,12 @@ async def health(request: Request) -> dict:
         "engines_installed": installed,
         "engines_missing": missing,
     }
+
+
+@router.get("/formats", response_model=FormatCatalog, tags=["system"])
+async def list_format_catalog() -> FormatCatalog:
+    """Return the declarative catalog of supported qualities, codecs, formats & presets."""
+    return get_format_catalog()
 
 
 @router.get("/engines", response_model=list[EngineManifest], tags=["engines"])
@@ -146,6 +155,57 @@ async def create_job(body: DownloadRequest, request: Request) -> JobRecord:
         ) from exc
 
     return await c.job_manager.submit(body)
+
+
+@router.post(
+    "/jobs/batch",
+    response_model=list[JobRecord],
+    status_code=status.HTTP_202_ACCEPTED,
+    tags=["jobs"],
+)
+async def create_batch_jobs(body: BatchDownloadRequest, request: Request) -> list[JobRecord]:
+    """Validate and enqueue up to 10 URLs sharing the same advanced extraction settings."""
+    c = _container(request)
+    from neon_sync.security import validate_and_canonicalize_url
+
+    client_key = _client_key(request)
+    # Validate all URLs before consuming rate budget or enqueuing partial batches
+    cleaned_urls: list[str] = []
+    for raw_url in body.urls:
+        u = raw_url.strip()
+        if not u:
+            continue
+        try:
+            validate_and_canonicalize_url(
+                u,
+                allow_private=c.settings.allow_private_addresses,
+                max_length=c.settings.max_url_length,
+            )
+        except UrlValidationError as exc:
+            raise HTTPException(
+                status_code=_error_status_code(exc.code),
+                detail={"code": exc.code.value, "message": f"{u}: {exc.message}"},
+            ) from exc
+        cleaned_urls.append(u)
+
+    if not cleaned_urls:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": ErrorCode.ERR_INVALID_URL.value, "message": "At least one URL is required."},
+        )
+
+    shared = body.model_dump(exclude={"urls"})
+    records: list[JobRecord] = []
+    for url in cleaned_urls:
+        try:
+            c.download_limiter.check_and_consume(client_key)
+        except RateLimitExceededError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail={"code": ErrorCode.ERR_RATE_LIMITED.value, "message": str(exc)},
+            ) from exc
+        records.append(await c.job_manager.submit(DownloadRequest(url=url, **shared)))
+    return records
 
 
 @router.get("/jobs", response_model=list[JobRecord], tags=["jobs"])

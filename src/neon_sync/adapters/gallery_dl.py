@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import mimetypes
+import tarfile
 import time
 import zipfile
 from pathlib import Path
@@ -281,13 +282,19 @@ class GalleryDlAdapter(ExtractorAdapter):
         return argv
 
     def build_download_argv(self, url: str, plan: DownloadPlan) -> list[str]:
-        cap = min(plan.max_items, self._settings.max_gallery_items)
+        start = max(1, plan.gallery_range_start)
+        max_span = min(plan.max_items, self._settings.max_gallery_items)
+        end = (
+            min(plan.gallery_range_end, start + max_span - 1)
+            if plan.gallery_range_end is not None and plan.gallery_range_end >= start
+            else start + max_span - 1
+        )
         argv = [
             self._exe(),
             "--ignore-config",
             "--no-mtime",
             "--range",
-            f"1-{cap}",
+            f"{start}-{end}",
             "-d",
             str(plan.output_dir),
         ]
@@ -413,9 +420,36 @@ class GalleryDlAdapter(ExtractorAdapter):
                 size_bytes=single.stat().st_size,
             )
 
-        # Package multi-file gallery with ZIP_STORED (images are already compressed)
+        # Package multi-file gallery with manifest.json inside ZIP_STORED or TAR
+        manifest_bytes = json.dumps(
+            {
+                "source_url": ctx.url,
+                "domain": ctx.domain,
+                "item_count": len(downloaded_files),
+                "files": [f"{i:04d}_{sanitize_filename(p.name)}" for i, p in enumerate(sorted(downloaded_files), start=1)],
+            },
+            indent=2,
+        ).encode("utf-8")
+
+        if plan.gallery_archive_format == "tar":
+            tar_path = plan.output_dir / f"{sanitize_filename(ctx.domain)}_gallery.tar"
+            manifest_tmp = plan.output_dir / "manifest.json"
+            manifest_tmp.write_bytes(manifest_bytes)
+            with tarfile.open(tar_path, mode="w") as tf:
+                tf.add(manifest_tmp, arcname="manifest.json")
+                for idx, item in enumerate(sorted(downloaded_files), start=1):
+                    tf.add(item, arcname=f"{idx:04d}_{sanitize_filename(item.name)}")
+            return DownloadArtifact(
+                local_path=tar_path,
+                filename=tar_path.name,
+                mime_type="application/x-tar",
+                size_bytes=tar_path.stat().st_size,
+                extra_files=downloaded_files,
+            )
+
         zip_path = plan.output_dir / f"{sanitize_filename(ctx.domain)}_gallery.zip"
         with zipfile.ZipFile(zip_path, mode="w", compression=zipfile.ZIP_STORED) as zf:
+            zf.writestr("manifest.json", manifest_bytes)
             for idx, item in enumerate(sorted(downloaded_files), start=1):
                 arcname = f"{idx:04d}_{sanitize_filename(item.name)}"
                 zf.write(item, arcname=arcname)

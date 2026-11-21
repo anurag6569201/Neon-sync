@@ -46,6 +46,7 @@ from neon_sync.models import (
     SupportedDomains,
     ThumbnailInfo,
     TranscriptInfo,
+    build_ytdlp_format_selector,
 )
 from neon_sync.security import (
     CancellationToken,
@@ -500,16 +501,44 @@ class YtDlpAdapter(ExtractorAdapter):
             "-o",
             str(plan.output_dir / "%(id)s.%(ext)s"),
         ]
-        if plan.format_id:
-            argv.extend(["-f", plan.format_id])
-        elif plan.mode == "audio":
-            argv.extend(["-f", "bestaudio/best"])
+
+        selector = build_ytdlp_format_selector(
+            mode=plan.mode,
+            format_id=plan.format_id,
+            video_quality=plan.video_quality,
+            video_codec=plan.video_codec,
+            video_container=plan.video_container,
+            fps_limit=plan.fps_limit,
+        )
+        argv.extend(["-f", selector])
+
+        if plan.mode == "audio":
             if plan.audio_format and plan.audio_format != "best":
                 argv.extend(["-x", "--audio-format", plan.audio_format])
-        if plan.extract_subtitles:
-            argv.extend(["--write-subs", "--sub-langs", "en.*"])
-        if plan.extract_thumbnail:
+                if plan.audio_bitrate != "auto":
+                    argv.extend(["--audio-quality", plan.audio_bitrate.upper()])
+        elif plan.video_container != "auto":
+            argv.extend(["--merge-output-format", plan.video_container])
+
+        if plan.playlist_items:
+            argv.extend(["--playlist-items", plan.playlist_items])
+
+        if plan.extract_subtitles or plan.embed_subtitles or plan.generate_transcript:
+            langs = ",".join(plan.subtitle_languages or ["en"])
+            argv.append("--write-subs")
+            if plan.subtitle_mode in {"prefer_manual", "include_auto"}:
+                argv.append("--write-auto-subs")
+            argv.extend(["--sub-langs", langs, "--sub-format", f"{plan.subtitle_format}/best"])
+            if plan.embed_subtitles and plan.mode != "audio":
+                argv.append("--embed-subs")
+
+        if plan.embed_metadata:
+            argv.append("--embed-metadata")
+        if plan.embed_thumbnail:
+            argv.append("--embed-thumbnail")
+        elif plan.extract_thumbnail:
             argv.append("--write-thumbnail")
+
         if self._settings.egress_proxy_url:
             argv.extend(["--proxy", self._settings.egress_proxy_url])
         argv.extend(["--", url])
