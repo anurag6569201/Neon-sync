@@ -22,7 +22,7 @@
       <div class="reticle-corner br"></div>
       <span class="mono reticle-tag">SPATIAL SIGNAL CAPTURE</span>
       <h2>Drop link anywhere on the canvas</h2>
-      <p>Spawns a live Media Node with instant probe &amp; patch jacks</p>
+      <p>Spawns a live Media Cartridge with instant probe &amp; patch jacks</p>
     </div>
   </div>
 
@@ -90,7 +90,14 @@
       <svg id="threads-svg" class="threads-svg" overflow="visible">
         <defs>
           <filter id="glow-accent" x="-40%" y="-40%" width="180%" height="180%">
-            <feGaussianBlur stdDeviation="3" result="blur" />
+            <feGaussianBlur stdDeviation="3.2" result="blur" />
+            <feMerge>
+              <feMergeNode in="blur" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
+          <filter id="glow-ok" x="-40%" y="-40%" width="180%" height="180%">
+            <feGaussianBlur stdDeviation="3.2" result="blur" />
             <feMerge>
               <feMergeNode in="blur" />
               <feMergeNode in="SourceGraphic" />
@@ -98,38 +105,28 @@
           </filter>
         </defs>
         <g id="threads-group"></g>
-        <path id="draft-wire" class="thread-draft hidden" d="" />
+        <g id="draft-wire-group" class="hidden">
+          <path id="draft-wire-glow" class="thread-draft-glow" d="" />
+          <path id="draft-wire" class="thread-draft" d="" />
+          <circle id="draft-wire-tip" class="thread-draft-tip" cx="0" cy="0" r="5" />
+        </g>
       </svg>
 
       <!-- Draggable Spatial Nodes Layer -->
       <div id="nodes-layer" class="nodes-layer"></div>
     </div>
 
-    <!-- Subtle Empty-Canvas Spatial Hint (Auto-hides once nodes exist) -->
-    <div id="empty-hero" class="empty-hero">
-      <div class="hero-kicker mono">
-        <span class="pulse-dot"></span>
-        <span>INFINITE MEDIA WORKBENCH · ZERO SIGNUP · DRAG THREADS TO CHAIN ACTIONS</span>
-      </div>
-      <h1 class="hero-title">
-        Drop any link onto the desk.<br />
-        <span class="hero-accent">Wire it to anything.</span>
-      </h1>
-      <p class="hero-sub">
-        Paste a URL (<kbd>⌘V</kbd> anywhere) to spawn a live Media Cartridge — then drag its orange patch jack onto empty space to clip, transcode, normalize, or unleash Neon AI Agent.
-      </p>
-      <div class="starter-pills">
-        <button class="recipe-chip" id="spawn-note-starter">📝 Double-click canvas to add a Note</button>
-        <button class="recipe-chip" data-demo-cmd="clip 0:00 to 0:15 in 720p mp4">✂️ Try: “clip 0:00 to 0:15 …”</button>
-        <button class="recipe-chip" data-demo-cmd="extract audio as 320k mp3 and normalize volume">🎧 Try: “320k MP3 + Loudnorm …”</button>
-        <button class="recipe-chip" data-demo-cmd="summarize the key points from">🧠 Try: “Summarize media …”</button>
-      </div>
+    <!-- Subtle Top-Center Banner When Viewing Interactive First-Run Sandbox -->
+    <div id="sandbox-banner" class="sandbox-banner hidden">
+      <span class="pulse-dot"></span>
+      <span class="mono">INTERACTIVE WORKBENCH PREVIEW · DRAG NODES, REWIRE THREADS, OR PASTE ANY LINK (<kbd>⌘V</kbd>)</span>
+      <button class="link-btn mono" id="clear-sandbox-btn">Clear Demo</button>
     </div>
   </main>
 
   <!-- Context Patch-Action Menu (Appears when dropping a dragged cable on empty canvas) -->
   <div id="patch-menu" class="patch-menu hidden">
-    <div class="patch-menu-head mono">CHAIN ACTION FROM NODE</div>
+    <div class="patch-menu-head mono">CHAIN FROM THREAD</div>
     <button class="patch-item" data-patch-action="extract"><span>⚡ Extract with Dock Settings</span><kbd class="mono">DL</kbd></button>
     <button class="patch-item" data-patch-action="agent_clip"><span>✂️ Agent: Clip 0:00–0:15 (720p)</span><kbd class="mono">AI</kbd></button>
     <button class="patch-item" data-patch-action="agent_mp3"><span>🎧 Agent: 320k MP3 + Loudnorm</span><kbd class="mono">AI</kbd></button>
@@ -144,13 +141,13 @@
     <div class="drawer-head">
       <div>
         <div class="mono drawer-kicker">SPATIAL HISTORY</div>
-        <h3 class="drawer-title">All Nodes &amp; Extractions</h3>
+        <h3 class="drawer-title">All Nodes &amp; Threads</h3>
       </div>
       <button class="ghost-btn btn-xs" id="close-history-btn">Close</button>
     </div>
 
     <div class="drawer-search-row">
-      <input type="text" id="history-search" class="modal-input mono" placeholder="Filter by title, URL, engine…" />
+      <input type="text" id="history-search" class="modal-input mono" placeholder="Search title, URL, engine, notes…" />
       <div class="drawer-filters" id="history-filters">
         <button class="tac-pill active" data-hfilter="all">All</button>
         <button class="tac-pill" data-hfilter="completed">Ready</button>
@@ -163,7 +160,10 @@
 
     <div class="drawer-foot mono">
       <span id="history-stats">0 nodes · 0 threads</span>
-      <button class="link-btn mono" id="reset-layout-btn">Reset Layout</button>
+      <div class="row-gap">
+        <button class="link-btn mono" id="show-demo-btn">Demo</button>
+        <button class="link-btn mono" id="reset-layout-btn">Reset Layout</button>
+      </div>
     </div>
   </aside>
 
@@ -370,15 +370,21 @@
   <!-- Bottom-Left Live Coordinate HUD -->
   <div class="hud-coords mono" id="coord-readout">X:+0000 Y:+0000 · 100%</div>
 
-  <!-- Bottom-Right Spatial Camera Controls -->
-  <div class="cam-controls">
-    <button class="cam-btn mono" id="add-note-btn" title="Drop a studio note on the canvas">+ Note</button>
-    <span class="cam-sep"></span>
-    <button class="cam-btn mono" id="zoom-out-btn" title="Zoom out">−</button>
-    <button class="cam-btn mono num" id="zoom-reset-btn" title="Reset zoom to 100%">100%</button>
-    <button class="cam-btn mono" id="zoom-in-btn" title="Zoom in">+</button>
-    <span class="cam-sep"></span>
-    <button class="cam-btn mono" id="fit-all-btn" title="Fit entire media graph in view">Fit</button>
+  <!-- Bottom-Right Live Spatial Minimap + Camera Controls -->
+  <div class="nav-cluster">
+    <div class="minimap-shell" id="minimap-shell" title="Click or drag inside minimap to navigate">
+      <canvas id="minimap-canvas" width="168" height="104"></canvas>
+      <span class="minimap-tag mono">MAP</span>
+    </div>
+    <div class="cam-controls">
+      <button class="cam-btn mono" id="add-note-btn" title="Drop a studio note on the canvas">+ Note</button>
+      <span class="cam-sep"></span>
+      <button class="cam-btn mono" id="zoom-out-btn" title="Zoom out">−</button>
+      <button class="cam-btn mono num" id="zoom-reset-btn" title="Reset zoom to 100%">100%</button>
+      <button class="cam-btn mono" id="zoom-in-btn" title="Zoom in">+</button>
+      <span class="cam-sep"></span>
+      <button class="cam-btn mono" id="fit-all-btn" title="Fit entire media graph in view">Fit</button>
+    </div>
   </div>
 
   <!-- Modal: SaaS Guest vs Pro / BYOK Unlock Sheet -->
