@@ -86,6 +86,7 @@ async def test_web_ui_served_at_root_with_sqlite_backing(tmp_path: Path):
         resp = await client.get("/")
         assert resp.status_code == 200
         assert "Neon Sync" in resp.text
+        assert "gravity-field" in resp.text
         assert "/static/app.css" in resp.text
         assert "/static/app.js" in resp.text
 
@@ -97,3 +98,5 @@ async def test_web_ui_served_at_root_with_sqlite_backing(tmp_path: Path):
         assert js.status_code == 200
         assert "/v1/probe" in js.text
         assert "/v1/jobs" in js.text
+        assert "/v1/agent/run" in js.text
+        assert "/v1/tier" in js.text

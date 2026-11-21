@@ -3,183 +3,248 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Neon Sync — Universal Media Downloader</title>
+  <title>Neon Sync — AI Media Extraction Reactor</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/static/app.css" />
 </head>
 <body>
-  <div id="drop-overlay" class="drop-overlay hidden">Drop any link to inspect &amp; download</div>
+  <!-- 60fps Gravitational Dot-Matrix Physics Canvas -->
+  <canvas id="gravity-field" aria-hidden="true"></canvas>
 
-  <!-- Minimal Consumer Header -->
-  <header class="navbar">
+  <!-- Drag & Drop Precision Targeting Reticle -->
+  <div id="drop-overlay" class="drop-overlay hidden">
+    <div class="reticle-box">
+      <div class="reticle-corner tl"></div>
+      <div class="reticle-corner tr"></div>
+      <div class="reticle-corner bl"></div>
+      <div class="reticle-corner br"></div>
+      <span class="mono reticle-tag">SIGNAL CAPTURE READY</span>
+      <h2>Drop link into the Reactor</h2>
+      <p>Instant metadata probe, AI workflows, or 1-click extraction</p>
+    </div>
+  </div>
+
+  <!-- Instrument Top Bezel -->
+  <header class="bezel">
     <a href="/" class="brand">
-      <span class="brand-icon" aria-hidden="true">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
-        </svg>
-      </span>
-      <span>Neon Sync</span>
+      <span class="brand-led" aria-hidden="true"></span>
+      <span class="brand-name">NEON SYNC</span>
+      <span class="brand-ver mono">AGENT</span>
     </a>
 
-    <div class="nav-controls">
-      <button class="nav-pill active" id="autosave-pill" title="Automatically save finished files to your device's Downloads folder">
-        <span class="dot-live" id="autosave-dot"></span>
+    <!-- Live SaaS Fuel Gauge (Guest Trial vs Pro Unlocked) -->
+    <button class="fuel-gauge" id="tier-pill" title="View Guest trial credits or unlock Pro / BYOK">
+      <span class="tier-badge mono" id="tier-badge">GUEST</span>
+      <span class="fuel-group" id="fuel-ai-wrap">
+        <span class="fuel-label mono">AI</span>
+        <span class="led-strip" id="fuel-ai-leds"></span>
+        <span class="fuel-count mono num" id="fuel-ai-count">3/3</span>
+      </span>
+      <span class="fuel-sep" aria-hidden="true"></span>
+      <span class="fuel-group" id="fuel-dl-wrap">
+        <span class="fuel-label mono">DL</span>
+        <span class="led-strip" id="fuel-dl-leds"></span>
+        <span class="fuel-count mono num" id="fuel-dl-count">5/5</span>
+      </span>
+      <span class="unlock-cta mono" id="tier-cta">Unlock Pro ↗</span>
+    </button>
+
+    <div class="bezel-controls">
+      <button class="hw-btn active" id="autosave-pill" title="Auto-save extracted files straight to your Downloads folder">
+        <span class="led-dot" id="autosave-dot"></span>
         <span>Auto-save</span>
       </button>
-
-      <button class="nav-pill" id="engines-modal-btn" title="View installed extraction engines">
-        <span class="dot-live"></span>
-        <span class="num" id="engines-pill-text">Engines</span>
+      <button class="hw-btn active" id="sfx-btn" title="Toggle synthesized tactile sound feedback">
+        <span class="led-dot" id="sfx-dot"></span>
+        <span id="sfx-text">SFX</span>
       </button>
-
-      <button class="nav-pill" id="api-modal-btn" title="Copy API cURL or JSON request">
-        <span>API</span>
+      <button class="hw-btn" id="engines-modal-btn" title="Inspect live extraction engine registry">
+        <span class="led-dot live"></span>
+        <span class="mono num" id="engines-pill-text">Engines</span>
       </button>
-
-      <button class="nav-pill" id="theme-btn" title="Switch Light / Dark theme">
+      <button class="hw-btn" id="api-modal-btn" title="Copy live cURL or JSON payload">
+        <span class="mono">API</span>
+      </button>
+      <button class="hw-btn" id="theme-btn" title="Switch Obsidian / Ceramic theme">
         <span id="theme-text">Light</span>
       </button>
     </div>
   </header>
 
-  <!-- Centered Single-Canvas Product Experience -->
-  <main class="container">
-    <div class="hero-head">
-      <h1 class="hero-title">Paste any link. Get the file.</h1>
-      <p class="hero-sub">Video, audio, image galleries, live streams, HLS/DASH, or documents — zero signup, ad-free.</p>
-    </div>
+  <!-- Main Centered Reactor Bench -->
+  <main class="bench">
+    <section class="hero">
+      <div class="hero-kicker mono">
+        <span class="pulse-dot"></span>
+        <span>ZERO-SIGNUP TRIAL · PASTE A LINK OR COMMAND THE AGENT</span>
+      </div>
+      <h1 class="hero-title">
+        Drop any link.<br />
+        <span class="hero-accent">Command the file.</span>
+      </h1>
+      <p class="hero-sub">
+        Paste a URL for instant extraction — or speak in plain English to clip, transcode, normalize, and summarize across 1,000+ platforms.
+      </p>
+    </section>
 
-    <section class="omnibox-card">
-      <!-- Single URL Input Bar -->
-      <div class="url-bar" id="single-bar">
-        <span class="platform-tag hidden" id="platform-tag">Link</span>
+    <!-- The Living Media Reactor Capsule -->
+    <section class="reactor-shell" id="reactor-shell">
+      <!-- Top Signal Telemetry Strip & Oscilloscope -->
+      <div class="reactor-telemetry">
+        <div class="telemetry-left">
+          <button class="intent-switch" id="intent-mode-toggle" title="Switch between Smart Auto, Direct Extract, or AI Agent command">
+            <span class="intent-dot" id="intent-dot"></span>
+            <span class="mono" id="intent-label">DIRECT EXTRACT</span>
+          </button>
+          <span class="platform-chip mono hidden" id="platform-tag">LINK</span>
+        </div>
+
+        <div class="oscilloscope" id="oscilloscope" aria-hidden="true"></div>
+
+        <div class="telemetry-right mono">
+          <span id="reactor-status-text">STANDBY · ⌘V ANYWHERE</span>
+        </div>
+      </div>
+
+      <!-- Single Unified Reactor Input (URL OR Natural-Language Agent Command) -->
+      <div class="reactor-input-row" id="single-bar">
         <input
-          type="url"
-          class="url-input"
+          type="text"
+          class="reactor-input"
           id="url-input"
-          placeholder="Paste a link from YouTube, Instagram, X, Reddit, TikTok, Imgur, Twitch, or any URL..."
+          placeholder="Paste a link — or try: “clip 0:05 to 0:15 in 720p mp4 https://youtube.com/...”"
           autocomplete="off"
           spellcheck="false"
           autofocus
         />
-        <button class="btn btn-subtle hidden" id="clear-url-btn" title="Clear link">Clear</button>
-        <button class="btn btn-subtle" id="paste-btn" title="Paste link from clipboard (⌘V anywhere)">Paste</button>
-        <button class="btn btn-primary" id="download-btn">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
-          </svg>
-          <span>Download</span>
+        <button class="ghost-btn hidden" id="clear-url-btn" title="Clear input">Clear</button>
+        <button class="ghost-btn" id="paste-btn" title="Paste from clipboard (⌘V anywhere)">Paste</button>
+        <button class="reactor-fire magnetic" id="download-btn">
+          <span class="fire-icon" id="fire-icon">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+          </span>
+          <span id="fire-label">Extract</span>
         </button>
       </div>
 
-      <!-- Batch Mode Multi-URL Box -->
-      <div id="batch-bar" class="hidden">
-        <textarea class="batch-box" id="batch-input" placeholder="Paste up to 10 links (one per line)..."></textarea>
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;">
-          <span class="mono num" style="color:var(--text-muted);" id="batch-count">0 links</span>
-          <div style="display:flex;gap:8px;">
-            <button class="btn btn-subtle" id="exit-batch-btn">Single Link</button>
-            <button class="btn btn-primary" id="download-batch-btn">Download All</button>
+      <!-- Batch Mode Multi-URL Drawer -->
+      <div id="batch-bar" class="batch-wrap hidden">
+        <textarea class="batch-box mono" id="batch-input" placeholder="Paste multiple URLs (one per line) — Guest: up to 3 · Pro: up to 10..."></textarea>
+        <div class="batch-foot">
+          <span class="mono num muted" id="batch-count">0 links</span>
+          <div class="row-gap">
+            <button class="ghost-btn" id="exit-batch-btn">Single Mode</button>
+            <button class="reactor-fire magnetic" id="download-batch-btn">Extract Batch</button>
           </div>
         </div>
       </div>
 
-      <!-- Primary Mode & Quick Toggles -->
-      <div class="quick-bar">
-        <div class="seg-group" id="mode-group" role="tablist">
+      <!-- Quick Agent Prompt Recipes -->
+      <div class="recipe-strip" id="recipe-strip">
+        <span class="strip-label mono">AGENT</span>
+        <button class="recipe-chip" data-recipe="clip 0:00 to 0:15 in 720p mp4">✂️ Clip 0:00–0:15</button>
+        <button class="recipe-chip" data-recipe="extract audio as 320k mp3 and normalize volume">🎧 320k MP3 + Loudnorm</button>
+        <button class="recipe-chip" data-recipe="summarize the key points from">🧠 Summarize Media</button>
+        <button class="recipe-chip" data-recipe="convert image to webp 1280px">🖼 WebP 1280px</button>
+        <button class="recipe-chip" data-recipe="probe available formats for">🔎 Probe Streams</button>
+      </div>
+
+      <!-- Mode Selector & Hardware Toggles -->
+      <div class="control-deck">
+        <div class="seg-rail" id="mode-group" role="tablist">
           <button class="seg active" data-mode="auto">Auto</button>
           <button class="seg" data-mode="video">Video</button>
           <button class="seg" data-mode="audio">Audio</button>
           <button class="seg" data-mode="image">Images</button>
         </div>
 
-        <div style="display:flex;gap:6px;align-items:center;">
-          <button class="q-pill" id="clip-toggle-btn" title="Trim video/audio start and end time">Trim Clip</button>
-          <button class="q-pill" id="subs-toggle-btn" title="Include subtitles &amp; clean transcript">Subtitles</button>
-          <button class="q-pill" id="batch-toggle-btn" title="Paste multiple links at once">Batch</button>
-          <button class="q-pill" id="finetune-toggle-btn">Fine-tune &#9662;</button>
+        <div class="deck-toggles">
+          <button class="tac-pill" id="clip-toggle-btn">Trim Clip</button>
+          <button class="tac-pill" id="subs-toggle-btn">Subtitles</button>
+          <button class="tac-pill" id="batch-toggle-btn">Batch</button>
+          <button class="tac-pill" id="finetune-toggle-btn">Precision &#9662;</button>
         </div>
       </div>
 
-      <!-- Contextual Quality Strip (Morphs automatically for Video vs Audio vs Images) -->
-      <div class="context-strip" id="context-strip-video">
-        <div class="pill-group" id="quality-pills">
-          <span class="group-label">Quality</span>
-          <button class="q-pill active" data-vq="best">Best</button>
-          <button class="q-pill" data-vq="2160">4K</button>
-          <button class="q-pill" data-vq="1440">2K</button>
-          <button class="q-pill" data-vq="1080">1080p</button>
-          <button class="q-pill" data-vq="720">720p</button>
-          <button class="q-pill" data-vq="480">480p</button>
-          <button class="q-pill" data-vq="360">360p</button>
+      <!-- Contextual Parameter Strips (Video / Audio / Image) -->
+      <div class="param-strip" id="context-strip-video">
+        <div class="param-group" id="quality-pills">
+          <span class="strip-label mono">RES</span>
+          <button class="tac-pill active" data-vq="best">Best</button>
+          <button class="tac-pill pro-gated" data-vq="2160">4K <span class="pro-tag mono">PRO</span></button>
+          <button class="tac-pill pro-gated" data-vq="1440">2K <span class="pro-tag mono">PRO</span></button>
+          <button class="tac-pill" data-vq="1080">1080p</button>
+          <button class="tac-pill" data-vq="720">720p</button>
+          <button class="tac-pill" data-vq="480">480p</button>
+          <button class="tac-pill" data-vq="360">360p</button>
         </div>
-
-        <div class="pill-group">
-          <button class="q-pill toggle-on" id="h264-pill" title="Prefer universally compatible H.264 + MP4">H.264 MP4</button>
-        </div>
-      </div>
-
-      <div class="context-strip hidden" id="context-strip-audio">
-        <div class="pill-group" id="audio-fmt-pills">
-          <span class="group-label">Format</span>
-          <button class="q-pill active" data-af="mp3">MP3</button>
-          <button class="q-pill" data-af="m4a">M4A</button>
-          <button class="q-pill" data-af="flac">FLAC (Lossless)</button>
-          <button class="q-pill" data-af="opus">Opus</button>
-          <button class="q-pill" data-af="wav">WAV</button>
-        </div>
-        <div class="pill-group" id="audio-br-pills">
-          <span class="group-label">Bitrate</span>
-          <button class="q-pill active" data-ab="320k">320k</button>
-          <button class="q-pill" data-ab="192k">192k</button>
-          <button class="q-pill" data-ab="128k">128k</button>
-          <button class="q-pill" id="loudnorm-pill" title="EBU R128 loudness normalization">Normalize Volume</button>
+        <div class="param-group">
+          <button class="tac-pill toggle-on" id="h264-pill">H.264 MP4</button>
         </div>
       </div>
 
-      <div class="context-strip hidden" id="context-strip-image">
-        <div class="pill-group" id="img-fmt-pills">
-          <span class="group-label">Convert</span>
-          <button class="q-pill active" data-if="original">Original</button>
-          <button class="q-pill" data-if="webp">WebP</button>
-          <button class="q-pill" data-if="jpg">JPEG</button>
-          <button class="q-pill" data-if="png">PNG</button>
-          <button class="q-pill" data-if="avif">AVIF</button>
+      <div class="param-strip hidden" id="context-strip-audio">
+        <div class="param-group" id="audio-fmt-pills">
+          <span class="strip-label mono">FMT</span>
+          <button class="tac-pill active" data-af="mp3">MP3</button>
+          <button class="tac-pill" data-af="m4a">M4A</button>
+          <button class="tac-pill pro-gated" data-af="flac">FLAC <span class="pro-tag mono">PRO</span></button>
+          <button class="tac-pill" data-af="opus">Opus</button>
+          <button class="tac-pill pro-gated" data-af="wav">WAV <span class="pro-tag mono">PRO</span></button>
         </div>
-        <div class="pill-group" id="img-width-pills">
-          <span class="group-label">Size</span>
-          <button class="q-pill active" data-iw="original">Original</button>
-          <button class="q-pill" data-iw="3840">4K</button>
-          <button class="q-pill" data-iw="1920">1920px</button>
-          <button class="q-pill" data-iw="1280">1280px</button>
-        </div>
-      </div>
-
-      <!-- Interactive Clip Trimmer (Shown when Trim Clip is toggled) -->
-      <div class="clip-box hidden" id="clip-box">
-        <div class="clip-inputs">
-          <span class="group-label">Trim Range</span>
-          <input type="text" id="clip-start" placeholder="0:00" />
-          <span style="color:var(--text-muted);">to</span>
-          <input type="text" id="clip-end" placeholder="End" />
-          <input type="range" id="clip-slider-end" min="1" max="300" value="300" class="hidden" style="flex:1;accent-color:var(--text);" />
-          <span class="mono num" style="color:var(--text-muted);" id="clip-duration-hint"></span>
+        <div class="param-group" id="audio-br-pills">
+          <span class="strip-label mono">RATE</span>
+          <button class="tac-pill active" data-ab="320k">320k</button>
+          <button class="tac-pill" data-ab="192k">192k</button>
+          <button class="tac-pill" data-ab="128k">128k</button>
+          <button class="tac-pill" id="loudnorm-pill">Loudnorm</button>
         </div>
       </div>
 
-      <!-- Subtitles Quick Box (Shown when Subtitles is toggled) -->
-      <div class="clip-box hidden" id="subs-box">
-        <div class="clip-inputs">
-          <span class="group-label">Captions</span>
-          <input type="text" id="subtitle-languages" value="en" placeholder="en,es" style="width:90px;" />
-          <button class="q-pill toggle-on" id="embed-subs-pill">Embed in Video</button>
-          <button class="q-pill toggle-on" id="transcript-pill">Also create clean .txt Transcript</button>
+      <div class="param-strip hidden" id="context-strip-image">
+        <div class="param-group" id="img-fmt-pills">
+          <span class="strip-label mono">CONV</span>
+          <button class="tac-pill active" data-if="original">Original</button>
+          <button class="tac-pill" data-if="webp">WebP</button>
+          <button class="tac-pill" data-if="jpg">JPEG</button>
+          <button class="tac-pill" data-if="png">PNG</button>
+          <button class="tac-pill" data-if="avif">AVIF</button>
+        </div>
+        <div class="param-group" id="img-width-pills">
+          <span class="strip-label mono">MAX W</span>
+          <button class="tac-pill active" data-iw="original">Original</button>
+          <button class="tac-pill" data-iw="3840">4K</button>
+          <button class="tac-pill" data-iw="1920">1920px</button>
+          <button class="tac-pill" data-iw="1280">1280px</button>
         </div>
       </div>
 
-      <!-- Fine-Tune Accordion (For Codec, Container, FPS, Gallery Range, Engine Override) -->
-      <div class="finetune-drawer hidden" id="finetune-drawer">
+      <!-- Interactive Clip Trimmer -->
+      <div class="sub-tray hidden" id="clip-box">
+        <span class="strip-label mono">TRIM</span>
+        <input type="text" class="mini-input mono" id="clip-start" placeholder="0:00" />
+        <span class="muted">→</span>
+        <input type="text" class="mini-input mono" id="clip-end" placeholder="End" />
+        <input type="range" id="clip-slider-end" min="1" max="300" value="300" class="range-track hidden" />
+        <span class="mono num muted" id="clip-duration-hint"></span>
+      </div>
+
+      <!-- Subtitles & Transcript Tray -->
+      <div class="sub-tray hidden" id="subs-box">
+        <span class="strip-label mono">CAPTIONS</span>
+        <input type="text" class="mini-input mono" id="subtitle-languages" value="en" placeholder="en,es" style="width:84px;" />
+        <button class="tac-pill toggle-on" id="embed-subs-pill">Embed in Video</button>
+        <button class="tac-pill toggle-on" id="transcript-pill">Generate .txt Transcript</button>
+      </div>
+
+      <!-- Precision Engineering Drawer -->
+      <div class="precision-drawer hidden" id="finetune-drawer">
         <div class="field">
-          <label>Container</label>
+          <label class="mono">CONTAINER</label>
           <select id="video-container">
             <option value="auto">Auto</option>
             <option value="mp4" selected>MP4</option>
@@ -189,17 +254,17 @@
           </select>
         </div>
         <div class="field">
-          <label>Video Codec</label>
+          <label class="mono">VIDEO CODEC</label>
           <select id="video-codec">
             <option value="auto">Auto</option>
-            <option value="h264" selected>H.264 (Most Compatible)</option>
+            <option value="h264" selected>H.264 (Universal)</option>
             <option value="hevc">HEVC / H.265</option>
             <option value="vp9">VP9</option>
             <option value="av1">AV1</option>
           </select>
         </div>
         <div class="field">
-          <label>Max Frame Rate</label>
+          <label class="mono">FRAME RATE CAP</label>
           <select id="fps-limit">
             <option value="any">Any FPS</option>
             <option value="60">60 fps</option>
@@ -207,50 +272,78 @@
           </select>
         </div>
         <div class="field">
-          <label><span>Image Quality</span><span class="mono num" id="img-q-label">90%</span></label>
-          <input type="range" id="image-quality" min="20" max="100" value="90" style="accent-color:var(--text);margin-top:6px;" />
+          <label class="mono"><span>IMG QUALITY</span><span class="num" id="img-q-label">90%</span></label>
+          <input type="range" id="image-quality" min="20" max="100" value="90" class="range-track" />
         </div>
         <div class="field">
-          <label>Gallery Items Range</label>
-          <div style="display:flex;gap:6px;">
-            <input type="number" id="gallery-range-start" min="1" max="500" value="1" style="width:50%;" placeholder="From" />
-            <input type="number" id="gallery-range-end" min="1" max="500" style="width:50%;" placeholder="To" />
+          <label class="mono">GALLERY RANGE</label>
+          <div class="row-gap">
+            <input type="number" id="gallery-range-start" min="1" max="500" value="1" placeholder="From" />
+            <input type="number" id="gallery-range-end" min="1" max="500" placeholder="To" />
           </div>
         </div>
         <div class="field">
-          <label>Playlist Items</label>
+          <label class="mono">PLAYLIST ITEMS</label>
           <input type="text" id="playlist-items" placeholder="e.g. 1-5 or 1,3,7" />
         </div>
         <div class="field">
-          <label>Filename Prefix</label>
+          <label class="mono">FILENAME PREFIX</label>
           <input type="text" id="filename-prefix" maxlength="64" placeholder="Optional prefix" />
         </div>
         <div class="field">
-          <label>Engine Override</label>
+          <label class="mono">ENGINE OVERRIDE</label>
           <select id="preferred-engine"><option value="">Auto (Smart Router)</option></select>
+        </div>
+        <div class="field field-span">
+          <button class="tac-pill pro-gated" id="browser-fallback-pill" title="Use Tier-3 Playwright headless Chromium for JS-rendered pages">
+            <span>Tier-3 Headless Browser Fallback</span>
+            <span class="pro-tag mono">PRO</span>
+          </button>
         </div>
       </div>
     </section>
 
-    <!-- Live Auto-Probe Media Stage (Appears automatically when a URL is pasted) -->
-    <section class="preview-stage hidden" id="preview-stage">
-      <div id="preview-loading" class="hidden" style="display:flex;align-items:center;gap:10px;color:var(--text-secondary);font-size:13px;">
-        <span class="dot-live"></span>
-        <span>Inspecting link metadata &amp; available streams…</span>
+    <!-- Live Streaming Neon Sync Agent Execution Trace -->
+    <section class="agent-stage hidden" id="agent-stage">
+      <div class="stage-head">
+        <div class="row-gap">
+          <span class="led-dot live" id="agent-live-dot"></span>
+          <span class="mono stage-title">NEON SYNC AGENT · LIVE TRACE</span>
+          <span class="mono muted" id="agent-provider-tag"></span>
+        </div>
+        <button class="ghost-btn btn-xs" id="close-agent-stage">Dismiss</button>
+      </div>
+      <div class="trace-feed" id="agent-trace-feed"></div>
+      <div class="agent-answer hidden" id="agent-answer-box"></div>
+    </section>
+
+    <!-- Physical 3D-Tilt Probed Media Cartridge -->
+    <section class="cartridge tilt-card hidden" id="preview-stage">
+      <div class="cartridge-glare" aria-hidden="true"></div>
+      <div id="preview-loading" class="probe-loader hidden">
+        <span class="led-dot live"></span>
+        <span class="mono">LOCKING ONTO SOURCE METADATA &amp; AVAILABLE STREAMS…</span>
       </div>
 
       <div id="preview-content" class="hidden">
+        <div class="cartridge-top mono">
+          <span class="cartridge-slot">MEDIA CARTRIDGE · SIGNAL LOCKED</span>
+          <span id="preview-engine-badge"></span>
+        </div>
         <div class="preview-row">
           <div class="preview-thumb hidden" id="preview-thumb-wrap">
             <img id="preview-thumb-img" src="" alt="Preview" />
-            <span class="dur-badge num" id="preview-dur"></span>
+            <span class="dur-badge mono num" id="preview-dur"></span>
           </div>
           <div class="preview-info">
             <h3 class="preview-title" id="preview-title"></h3>
-            <div class="preview-meta" id="preview-meta"></div>
-            <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-              <button class="btn btn-subtle btn-sm hidden" id="toggle-streams-btn">Choose exact stream</button>
-              <span class="badge hidden" id="locked-stream-badge"></span>
+            <div class="preview-meta mono" id="preview-meta"></div>
+            <div class="cartridge-actions">
+              <button class="tac-pill" id="quick-agent-clip">✂️ Agent: Clip 15s</button>
+              <button class="tac-pill" id="quick-agent-mp3">🎧 Agent: 320k MP3</button>
+              <button class="tac-pill" id="quick-agent-sum">🧠 Agent: Summarize</button>
+              <button class="ghost-btn btn-xs hidden" id="toggle-streams-btn">Streams</button>
+              <span class="lock-badge mono hidden" id="locked-stream-badge"></span>
             </div>
           </div>
         </div>
@@ -259,12 +352,12 @@
           <table>
             <thead>
               <tr>
-                <th>Stream ID</th>
+                <th>ID</th>
                 <th>Resolution</th>
                 <th>FPS</th>
                 <th>Video</th>
                 <th>Audio</th>
-                <th>Container</th>
+                <th>Ext</th>
                 <th>Size</th>
               </tr>
             </thead>
@@ -274,24 +367,101 @@
       </div>
     </section>
 
-    <!-- Active & Recent Downloads Feed -->
-    <section class="feed-section" id="feed-section">
-      <div class="section-bar">
-        <span class="section-label">Downloads</span>
-        <span class="mono num" style="color:var(--text-muted);" id="jobs-summary"></span>
+    <!-- Ejected Downloads Deck -->
+    <section class="deck-section" id="feed-section">
+      <div class="deck-head">
+        <span class="mono deck-label">EJECTED MEDIA</span>
+        <span class="mono num muted" id="jobs-summary"></span>
       </div>
-      <div id="downloads-list"></div>
+      <div id="downloads-list" class="cartridge-stack"></div>
     </section>
   </main>
+
+  <!-- Bottom Instrument Status Coordinate Strip -->
+  <footer class="coord-bar mono" aria-hidden="true">
+    <span id="coord-readout">X:0000 Y:0000 · FIELD:ACTIVE</span>
+    <span>PRESS <kbd>/</kbd> TO FOCUS · <kbd>⌘V</kbd> ANYWHERE TO CAPTURE</span>
+  </footer>
+
+  <!-- Modal: SaaS Guest vs Pro / BYOK Unlock Sheet -->
+  <div class="modal-backdrop hidden" id="upgrade-modal">
+    <div class="modal modal-pro">
+      <div class="modal-head">
+        <div class="row-gap">
+          <span class="pro-spark mono">PRO</span>
+          <span>Neon Sync Plans &amp; Instant Unlock</span>
+        </div>
+        <button class="ghost-btn btn-xs" id="close-upgrade-modal">Close</button>
+      </div>
+      <div class="modal-body">
+        <div class="upgrade-banner hidden" id="upgrade-reason-box"></div>
+
+        <div class="tier-grid">
+          <div class="tier-col">
+            <div class="tier-head">
+              <span class="mono tier-name">GUEST TRIAL</span>
+              <span class="tier-price">$0 <small>/ zero signup</small></span>
+            </div>
+            <ul class="tier-list">
+              <li>Up to <strong>1080p</strong> video &amp; 320k MP3/M4A/Opus</li>
+              <li><strong>5 downloads / hour</strong> &amp; 3x Batch queue</li>
+              <li><strong>3 AI Agent runs / day</strong> (local planner)</li>
+              <li>Instant auto-probe &amp; inline media preview</li>
+            </ul>
+          </div>
+
+          <div class="tier-col tier-col-pro">
+            <div class="tier-head">
+              <span class="mono tier-name accent">NEON PRO · AGENT</span>
+              <span class="tier-price">$12 <small>/ mo or BYOK</small></span>
+            </div>
+            <ul class="tier-list">
+              <li><strong>4K / 2K Ultra-HD</strong> &amp; Lossless <strong>FLAC / WAV</strong></li>
+              <li><strong>500 downloads / hour</strong> &amp; 10x Batch queue</li>
+              <li><strong>500 AI Agent runs / day</strong> + Gemini 2.5 synthesis</li>
+              <li><strong>Tier-3 Headless Browser</strong> fallback for JS pages</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="unlock-panel">
+          <div class="unlock-tabs">
+            <button class="tac-pill active" id="tab-pro-key">Pro Access Key</button>
+            <button class="tac-pill" id="tab-byok-key">BYOK Gemini API Key</button>
+          </div>
+
+          <div id="panel-pro-key" class="unlock-form">
+            <div class="row-gap">
+              <input type="password" class="modal-input mono" id="pro-key-input" placeholder="Enter Neon Pro Key (local dev: neon-pro-local)" />
+              <button class="reactor-fire" id="save-pro-key-btn">Activate Pro</button>
+            </div>
+            <div class="unlock-hint mono">
+              <span>Testing locally?</span>
+              <button class="link-btn mono" id="fill-dev-pro-btn">Use local dev key (neon-pro-local)</button>
+              <button class="link-btn mono hidden" id="clear-keys-btn">Revert to Guest</button>
+            </div>
+          </div>
+
+          <div id="panel-byok-key" class="unlock-form hidden">
+            <div class="row-gap">
+              <input type="password" class="modal-input mono" id="byok-key-input" placeholder="AIza... (stored in sessionStorage only)" />
+              <button class="reactor-fire" id="save-byok-key-btn">Connect Gemini</button>
+            </div>
+            <p class="unlock-hint mono">Sent directly via <code>X-Gemini-Api-Key</code> header for live Gemini 2.5 planning &amp; summaries. Never saved to disk.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <!-- Modal: Engine Registry Health -->
   <div class="modal-backdrop hidden" id="engines-modal">
     <div class="modal">
       <div class="modal-head">
-        <span>Extraction Engines</span>
-        <div style="display:flex;gap:8px;">
-          <button class="btn btn-subtle btn-sm" id="refresh-engines-btn">Refresh Health</button>
-          <button class="btn btn-subtle btn-sm" id="close-engines-modal">Close</button>
+        <span>Extraction Engine Registry</span>
+        <div class="row-gap">
+          <button class="ghost-btn btn-xs" id="refresh-engines-btn">Refresh</button>
+          <button class="ghost-btn btn-xs" id="close-engines-modal">Close</button>
         </div>
       </div>
       <div class="modal-body">
@@ -311,19 +481,19 @@
     </div>
   </div>
 
-  <!-- Modal: Developer API & Live Payload -->
+  <!-- Modal: Live Developer API Payload -->
   <div class="modal-backdrop hidden" id="api-modal">
     <div class="modal">
       <div class="modal-head">
-        <span>API Request (Synced with Current Settings)</span>
-        <div style="display:flex;gap:8px;">
-          <button class="btn btn-subtle btn-sm" id="copy-curl-btn">Copy cURL</button>
-          <button class="btn btn-subtle btn-sm" id="copy-json-btn">Copy JSON</button>
-          <button class="btn btn-subtle btn-sm" id="close-api-modal">Close</button>
+        <span>Live API Request (Synced)</span>
+        <div class="row-gap">
+          <button class="ghost-btn btn-xs" id="copy-curl-btn">Copy cURL</button>
+          <button class="ghost-btn btn-xs" id="copy-json-btn">Copy JSON</button>
+          <button class="ghost-btn btn-xs" id="close-api-modal">Close</button>
         </div>
       </div>
       <div class="modal-body">
-        <pre class="code-pre" id="api-curl-pre"></pre>
+        <pre class="code-pre mono" id="api-curl-pre"></pre>
       </div>
     </div>
   </div>
