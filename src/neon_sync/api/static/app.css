@@ -196,13 +196,81 @@ html, body {
 .node:hover { border-color: color-mix(in srgb, var(--accent) 50%, var(--border-strong)); }
 .node.selected { border-color: var(--accent); box-shadow: var(--shadow-node), 0 0 0 3px var(--accent-soft); }
 
-/* Possibility Path Branch Nodes (Compact Pill Card vs Unfolded Studio Configurator!) */
-.node.node-branch { width: 292px; cursor: pointer; }
-.node.node-branch.branch-expanded { width: 392px; cursor: default; border-color: color-mix(in srgb, var(--accent) 55%, var(--border-strong)); }
-.node.node-branch.branch-audio.branch-expanded { border-color: color-mix(in srgb, var(--violet) 60%, var(--border-strong)); }
-.node.node-branch.branch-subtitles.branch-expanded { border-color: color-mix(in srgb, var(--info) 60%, var(--border-strong)); }
-.node.node-branch.branch-image.branch-expanded { border-color: color-mix(in srgb, var(--warn) 65%, var(--border-strong)); }
-.node.node-branch.branch-agent.branch-expanded { border-color: color-mix(in srgb, var(--ok) 60%, var(--border-strong)); }
+/* Atomic Cascading Possibility Tree Nodes (Zero Form Clutter!) */
+.node.node-choice {
+  width: 248px;
+  border-radius: 14px;
+  cursor: pointer;
+  transition: transform 0.16s cubic-bezier(0.22, 1, 0.36, 1), border-color 0.16s, box-shadow 0.16s;
+  animation: bloomIn 0.24s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.node.node-choice.choice-interactive { width: 296px; cursor: default; }
+.node.node-choice:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--accent) 65%, var(--border-strong));
+}
+.node.node-choice.path-lit {
+  border-color: var(--accent);
+  box-shadow: var(--shadow-node), 0 0 0 2.5px var(--accent-soft);
+}
+.node.node-choice.theme-audio.path-lit, .node.node-choice.theme-audio:hover { border-color: var(--violet); box-shadow: var(--shadow-node), 0 0 0 2.5px var(--violet-soft); }
+.node.node-choice.theme-subtitles.path-lit, .node.node-choice.theme-subtitles:hover { border-color: var(--info); box-shadow: var(--shadow-node), 0 0 0 2.5px var(--info-soft); }
+.node.node-choice.theme-image.path-lit, .node.node-choice.theme-image:hover { border-color: var(--warn); box-shadow: var(--shadow-node), 0 0 0 2.5px rgba(245, 183, 0, 0.16); }
+.node.node-choice.theme-agent.path-lit, .node.node-choice.theme-agent:hover { border-color: var(--ok); box-shadow: var(--shadow-node), 0 0 0 2.5px var(--ok-soft); }
+
+.node.node-choice.is-leaf {
+  background: linear-gradient(135deg, color-mix(in srgb, var(--surface) 92%, var(--accent-soft)), var(--surface));
+}
+.node.node-choice.theme-audio.is-leaf { background: linear-gradient(135deg, color-mix(in srgb, var(--surface) 92%, var(--violet-soft)), var(--surface)); }
+.node.node-choice.theme-subtitles.is-leaf { background: linear-gradient(135deg, color-mix(in srgb, var(--surface) 92%, var(--info-soft)), var(--surface)); }
+.node.node-choice.theme-agent.is-leaf { background: linear-gradient(135deg, color-mix(in srgb, var(--surface) 90%, var(--ok-soft)), var(--surface)); }
+
+@keyframes bloomIn {
+  from { opacity: 0; transform: translateX(-14px) scale(0.94); }
+  to { opacity: 1; transform: translateX(0) scale(1); }
+}
+
+.choice-card {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 11px 13px;
+}
+.choice-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.choice-icon {
+  width: 30px; height: 30px; border-radius: 8px; flex-shrink: 0;
+  display: grid; place-items: center; font-size: 14px;
+  background: var(--accent-soft); border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
+}
+.theme-audio .choice-icon { background: var(--violet-soft); border-color: color-mix(in srgb, var(--violet) 32%, transparent); }
+.theme-subtitles .choice-icon { background: var(--info-soft); border-color: color-mix(in srgb, var(--info) 32%, transparent); }
+.theme-image .choice-icon { background: rgba(245, 183, 0, 0.14); border-color: rgba(245, 183, 0, 0.34); }
+.theme-agent .choice-icon { background: var(--ok-soft); border-color: color-mix(in srgb, var(--ok) 32%, transparent); }
+
+.choice-title { font-size: 13px; font-weight: 600; line-height: 1.2; display: flex; align-items: center; gap: 5px; }
+.choice-sub { font-size: 10px; color: var(--text-secondary); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.detected-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); display: inline-block; flex-shrink: 0; }
+.choice-arrow {
+  flex-shrink: 0; font-size: 10px; font-weight: 700; padding: 3px 7px; border-radius: 999px;
+  background: var(--surface-inset); border: 1px solid var(--border-strong); color: var(--text-secondary);
+}
+.node-choice.path-lit .choice-arrow { background: var(--accent); border-color: var(--accent); color: #fff; }
+.theme-audio.path-lit .choice-arrow { background: var(--violet); border-color: var(--violet); color: #fff; }
+.theme-subtitles.path-lit .choice-arrow { background: var(--info); border-color: var(--info); color: #fff; }
+.theme-image.path-lit .choice-arrow { background: var(--warn); border-color: var(--warn); color: #111; }
+.theme-agent.path-lit .choice-arrow { background: var(--ok); border-color: var(--ok); color: #051b11; }
+.node-choice.is-leaf .choice-arrow { background: var(--accent); border-color: var(--accent); color: #fff; }
+.theme-audio.is-leaf .choice-arrow { background: var(--violet); border-color: var(--violet); color: #fff; }
+.theme-subtitles.is-leaf .choice-arrow { background: var(--info); border-color: var(--info); color: #fff; }
+.theme-agent.is-leaf .choice-arrow { background: var(--ok); border-color: var(--ok); color: #051b11; }
+
+.choice-inline-body { padding: 0 12px 12px; display: flex; flex-direction: column; gap: 7px; }
+.theme-audio .port-out { border-color: var(--violet); }
+.theme-audio .port-out::after { background: var(--violet); }
+.theme-subtitles .port-out { border-color: var(--info); }
+.theme-subtitles .port-out::after { background: var(--info); }
+.theme-image .port-out { border-color: var(--warn); }
+.theme-image .port-out::after { background: var(--warn); }
+.theme-agent .port-out { border-color: var(--ok); }
+.theme-agent .port-out::after { background: var(--ok); }
 
 .node.node-agent { width: 374px; border-color: color-mix(in srgb, var(--ok) 48%, var(--border-strong)); }
 .node.node-result { width: 368px; }
