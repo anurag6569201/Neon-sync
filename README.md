@@ -1,7 +1,7 @@
 # Neon Sync — Universal Media Extraction Engine
 
 > **Architecture:** Modular Universal Engine Registry & Adapter Orchestrator (Option E + C)
-> **Status:** Phase 1 MVP Implemented & Tested (API Control Plane, Security Layer, Engine Registry, 5 Core Adapters, Pipeline, Docker Multi-Plane Setup)
+> **Status:** Phase 1 & Phase 2 Implemented & Tested (8 Registered Engines, Safe Egress Proxy, Tier-3 Playwright Fallback, SQLite Persistence, Optional S3/R2 Storage, Web UI & Multi-Plane Docker)
 
 Neon Sync is an API-first, security-hardened **Universal Media Extraction Engine** that accepts a URL, intelligently identifies its content type, selects the best extraction engine via a capability registry, executes downloads in isolated subprocesses routed through a **Safe Egress Proxy**, validates/post-processes media via zero-egress **FFmpeg**, and returns a canonical JSON contract + safe artifact downloads.
 

@@ -5,9 +5,11 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI
+from fastapi.responses import HTMLResponse
 
 from neon_sync import __version__
 from neon_sync.adapters import (
@@ -22,21 +24,28 @@ from neon_sync.adapters import (
 )
 from neon_sync.config import Settings, get_settings
 from neon_sync.pipeline import (
+    ArtifactStorage,
     ExtractionOrchestrator,
+    InMemoryJobStore,
     JobManager,
-    LocalArtifactStorage,
+    JobStore,
     SlidingWindowRateLimiter,
+    SQLiteJobStore,
+    build_storage,
 )
 from neon_sync.registry import EngineRegistry
 
 from .routes import router as v1_router
+
+_STATIC_INDEX = Path(__file__).resolve().parent / "static" / "index.html"
 
 
 @dataclass
 class AppContainer:
     settings: Settings
     registry: EngineRegistry
-    storage: LocalArtifactStorage
+    storage: ArtifactStorage
+    job_store: JobStore
     orchestrator: ExtractionOrchestrator
     job_manager: JobManager
     probe_limiter: SlidingWindowRateLimiter
@@ -64,14 +73,16 @@ def create_app(
 ) -> FastAPI:
     cfg = settings or get_settings()
     reg = registry or build_default_registry(cfg)
-    storage = LocalArtifactStorage(cfg)
+    storage = build_storage(cfg)
+    job_store: JobStore = SQLiteJobStore(cfg.job_db_path) if cfg.job_db_path else InMemoryJobStore()
     orchestrator = ExtractionOrchestrator(cfg, reg, storage)
-    job_manager = JobManager(cfg, orchestrator)
+    job_manager = JobManager(cfg, orchestrator, store=job_store)
 
     container = AppContainer(
         settings=cfg,
         registry=reg,
         storage=storage,
+        job_store=job_store,
         orchestrator=orchestrator,
         job_manager=job_manager,
         probe_limiter=SlidingWindowRateLimiter(cfg.rate_limit_probes_per_minute, 60.0),
@@ -83,6 +94,8 @@ def create_app(
         await container.registry.refresh_health()
         yield
         await container.job_manager.shutdown()
+        if isinstance(job_store, SQLiteJobStore):
+            job_store.close()
 
     app = FastAPI(
         title=cfg.app_name,
@@ -95,6 +108,13 @@ def create_app(
     )
     app.state.container = container
     app.include_router(v1_router, prefix="/v1")
+
+    @app.get("/", response_class=HTMLResponse, include_in_schema=False)
+    async def web_ui() -> HTMLResponse:
+        if _STATIC_INDEX.exists():
+            return HTMLResponse(_STATIC_INDEX.read_text(encoding="utf-8"))
+        return HTMLResponse("<h1>Neon Sync API</h1><p>Open <a href='/docs'>/docs</a></p>")
+
     return app
 
 

@@ -1,4 +1,4 @@
-"""Async Job Queue Manager with bounded concurrency, SSE progress pub/sub, cancellation & rate limiting."""
+"""Async Job Queue Manager with durable JobStore, bounded concurrency, SSE pub/sub & rate limiting."""
 
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ from neon_sync.config import Settings
 from neon_sync.models import DownloadRequest, JobRecord, JobStatus, ProgressEvent
 from neon_sync.security import CancellationToken, SubprocessCancelledError, UrlValidationError
 
+from .job_store import InMemoryJobStore, JobStore
 from .orchestrator import ExtractionOrchestrator
 
 log = logging.getLogger("neon_sync.queue")
@@ -25,7 +26,7 @@ class RateLimitExceededError(RuntimeError):
 
 
 class SlidingWindowRateLimiter:
-    """In-memory per-client sliding-window rate limiter (Redis-swappable)."""
+    """Per-client sliding-window rate limiter (Redis-swappable)."""
 
     def __init__(self, max_requests: int, window_seconds: float) -> None:
         self.max_requests = max_requests
@@ -46,24 +47,29 @@ class SlidingWindowRateLimiter:
 
 
 class JobManager:
-    """Manages asynchronous download jobs, progress broadcasts, idempotency, and cancellation."""
+    """Manages asynchronous download jobs, durable persistence, progress broadcasts & cancellation."""
 
-    def __init__(self, settings: Settings, orchestrator: ExtractionOrchestrator) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        orchestrator: ExtractionOrchestrator,
+        *,
+        store: JobStore | None = None,
+    ) -> None:
         self._settings = settings
         self._orchestrator = orchestrator
+        self._store: JobStore = store or InMemoryJobStore()
         self._semaphore = asyncio.Semaphore(settings.max_concurrent_downloads)
-        self._jobs: dict[str, JobRecord] = {}
+        self._active: dict[str, JobRecord] = {}
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._tokens: dict[str, CancellationToken] = {}
-        self._idempotency: dict[str, str] = {}
         self._subscribers: dict[str, set[asyncio.Queue[ProgressEvent | None]]] = defaultdict(set)
 
     def get_job(self, job_id: str) -> JobRecord | None:
-        return self._jobs.get(job_id)
+        return self._active.get(job_id) or self._store.get(job_id)
 
     def list_jobs(self, limit: int = 50) -> list[JobRecord]:
-        ordered = sorted(self._jobs.values(), key=lambda j: j.created_at, reverse=True)
-        return ordered[:limit]
+        return self._store.list_recent(limit=limit)
 
     async def _broadcast(self, job_id: str, event: ProgressEvent | None) -> None:
         for q in list(self._subscribers.get(job_id, ())):
@@ -73,11 +79,12 @@ class JobManager:
                 pass
 
     async def submit(self, request: DownloadRequest) -> JobRecord:
-        if request.idempotency_key and request.idempotency_key in self._idempotency:
-            existing_id = self._idempotency[request.idempotency_key]
-            existing = self._jobs.get(existing_id)
-            if existing is not None:
-                return existing
+        if request.idempotency_key:
+            existing_id = self._store.get_idempotency(request.idempotency_key)
+            if existing_id:
+                existing = self.get_job(existing_id)
+                if existing is not None:
+                    return existing
 
         job_id = f"job_{uuid.uuid4().hex[:16]}"
         record = JobRecord(
@@ -93,9 +100,10 @@ class JobManager:
                 message="Job queued",
             ),
         )
-        self._jobs[job_id] = record
+        self._active[job_id] = record
+        self._store.save(record)
         if request.idempotency_key:
-            self._idempotency[request.idempotency_key] = job_id
+            self._store.set_idempotency(request.idempotency_key, job_id)
 
         token = CancellationToken()
         self._tokens[job_id] = token
@@ -110,12 +118,13 @@ class JobManager:
         request: DownloadRequest,
         token: CancellationToken,
     ) -> None:
-        record = self._jobs[job_id]
+        record = self._active[job_id]
 
         async def _on_progress(event: ProgressEvent) -> None:
             record.status = event.status
             record.progress = event
             record.updated_at = datetime.now(UTC)
+            self._store.save(record)
             await self._broadcast(job_id, event)
 
         try:
@@ -144,6 +153,7 @@ class JobManager:
                     message="Download complete",
                 )
                 record.progress = done_evt
+                self._store.save(record)
                 await self._broadcast(job_id, done_evt)
         except (SubprocessCancelledError, asyncio.CancelledError):
             now = datetime.now(UTC)
@@ -158,6 +168,7 @@ class JobManager:
                 message=record.error,
             )
             record.progress = evt
+            self._store.save(record)
             await self._broadcast(job_id, evt)
         except (UrlValidationError, AdapterError, Exception) as exc:  # noqa: BLE001
             log.warning("Job %s failed: %s", job_id, exc)
@@ -178,14 +189,16 @@ class JobManager:
                 message=str(exc),
             )
             record.progress = evt
+            self._store.save(record)
             await self._broadcast(job_id, evt)
         finally:
-            await self._broadcast(job_id, None)  # Sentinel to close SSE streams
+            await self._broadcast(job_id, None)
             self._tasks.pop(job_id, None)
             self._tokens.pop(job_id, None)
+            self._active.pop(job_id, None)
 
     async def cancel(self, job_id: str, reason: str = "Cancelled by user") -> JobRecord | None:
-        record = self._jobs.get(job_id)
+        record = self.get_job(job_id)
         if record is None:
             return None
         if record.status in {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED}:
@@ -200,10 +213,10 @@ class JobManager:
                 await asyncio.wait_for(asyncio.shield(task), timeout=2.0)
             except (TimeoutError, asyncio.CancelledError):
                 pass
-        return record
+        return self.get_job(job_id)
 
     async def subscribe(self, job_id: str) -> AsyncIterator[ProgressEvent]:
-        record = self._jobs.get(job_id)
+        record = self.get_job(job_id)
         if record is None:
             return
         if record.progress is not None:

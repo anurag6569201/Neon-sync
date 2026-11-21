@@ -1,0 +1,335 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Neon Sync — Universal Media Extraction Engine</title>
+  <style>
+    :root {
+      --bg: #080b12;
+      --surface: #111726;
+      --surface-2: #182136;
+      --border: #26324d;
+      --text: #e6edf7;
+      --muted: #8ea0bd;
+      --accent: #38bdf8;
+      --accent-2: #818cf8;
+      --ok: #34d399;
+      --warn: #fbbf24;
+      --err: #f87171;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif;
+      background: radial-gradient(circle at top, #121c33 0%, var(--bg) 55%);
+      color: var(--text);
+      min-height: 100vh;
+    }
+    .wrap { max-width: 1040px; margin: 0 auto; padding: 32px 20px 64px; }
+    header { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 28px; }
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .dot {
+      width: 14px; height: 14px; border-radius: 50%;
+      background: linear-gradient(135deg, var(--accent), var(--accent-2));
+      box-shadow: 0 0 18px var(--accent);
+    }
+    h1 { font-size: 20px; margin: 0; letter-spacing: -0.02em; }
+    .sub { color: var(--muted); font-size: 13px; margin: 2px 0 0; }
+    .card {
+      background: rgba(17, 23, 38, 0.9);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 20px;
+      margin-bottom: 18px;
+      backdrop-filter: blur(8px);
+    }
+    .row { display: flex; gap: 10px; flex-wrap: wrap; }
+    input[type="url"], select {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: 10px;
+      padding: 12px 14px;
+      font-size: 14px;
+      outline: none;
+    }
+    input[type="url"] { flex: 1; min-width: 260px; }
+    input[type="url"]:focus, select:focus { border-color: var(--accent); }
+    button {
+      border: none; border-radius: 10px; padding: 11px 16px; font-size: 14px; font-weight: 600;
+      cursor: pointer; transition: transform .08s ease, opacity .15s ease;
+    }
+    button:active { transform: scale(0.98); }
+    .btn-primary { background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #050811; }
+    .btn-secondary { background: var(--surface-2); color: var(--text); border: 1px solid var(--border); }
+    .btn-danger { background: rgba(248, 113, 113, 0.15); color: var(--err); border: 1px solid rgba(248,113,113,0.4); padding: 6px 10px; font-size: 12px; }
+    .options { margin-top: 12px; display: flex; gap: 14px; flex-wrap: wrap; align-items: center; font-size: 13px; color: var(--muted); }
+    label { display: inline-flex; align-items: center; gap: 6px; }
+    .pill {
+      display: inline-block; padding: 3px 9px; border-radius: 999px; font-size: 11px; font-weight: 600;
+      background: var(--surface-2); border: 1px solid var(--border); color: var(--muted);
+    }
+    .pill.ok { color: var(--ok); border-color: rgba(52,211,153,0.35); background: rgba(52,211,153,0.08); }
+    .pill.err { color: var(--err); border-color: rgba(248,113,113,0.35); background: rgba(248,113,113,0.08); }
+    .pill.warn { color: var(--warn); border-color: rgba(251,191,36,0.35); background: rgba(251,191,36,0.08); }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
+    .eng { background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 12px; }
+    .eng h4 { margin: 0 0 6px; font-size: 14px; display: flex; justify-content: space-between; align-items: center; }
+    .eng p { margin: 0; font-size: 12px; color: var(--muted); line-height: 1.45; }
+    .job {
+      background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px;
+      padding: 14px; margin-bottom: 10px;
+    }
+    .bar-bg { height: 6px; background: #0a0f1c; border-radius: 999px; overflow: hidden; margin: 10px 0 8px; }
+    .bar-fill { height: 100%; background: linear-gradient(90deg, var(--accent), var(--ok)); transition: width .2s ease; }
+    .err-box {
+      background: rgba(248, 113, 113, 0.1); border: 1px solid rgba(248, 113, 113, 0.4);
+      color: #fecaca; border-radius: 10px; padding: 12px; margin-top: 12px; font-size: 13px;
+    }
+    .hidden { display: none; }
+    a.dl-link {
+      display: inline-block; text-decoration: none; background: var(--ok); color: #04130d;
+      font-weight: 700; font-size: 12px; padding: 6px 12px; border-radius: 8px;
+    }
+    .preview { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-start; }
+    .preview img { width: 200px; max-height: 130px; object-fit: cover; border-radius: 10px; border: 1px solid var(--border); }
+    .muted { color: var(--muted); font-size: 12px; }
+    h2 { font-size: 15px; margin: 0 0 12px; display: flex; justify-content: space-between; align-items: center; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div class="brand">
+        <div class="dot"></div>
+        <div>
+          <h1>Neon Sync</h1>
+          <p class="sub">Universal Media Extraction Engine &middot; API-First Multi-Engine Orchestrator</p>
+        </div>
+      </div>
+      <div class="row">
+        <a href="/docs" class="pill" style="text-decoration:none;">OpenAPI /docs</a>
+        <button class="btn-secondary" id="refresh-engines" style="padding:7px 12px;font-size:12px;">Refresh Engines</button>
+      </div>
+    </header>
+
+    <section class="card">
+      <div class="row">
+        <input type="url" id="url-input" placeholder="Paste any video, gallery, audio, livestream, HLS/DASH, PDF, or webpage URL..." />
+        <button class="btn-secondary" id="probe-btn">Probe</button>
+        <button class="btn-primary" id="download-btn">Extract &amp; Download</button>
+      </div>
+      <div class="options">
+        <label>Mode:
+          <select id="mode-select">
+            <option value="auto">Auto</option>
+            <option value="video">Video</option>
+            <option value="audio">Audio</option>
+            <option value="image">Image / Gallery</option>
+            <option value="direct">Direct File</option>
+          </select>
+        </label>
+        <label>Audio Format:
+          <select id="audio-select">
+            <option value="">Default</option>
+            <option value="mp3">MP3</option>
+            <option value="m4a">M4A</option>
+            <option value="opus">Opus</option>
+            <option value="flac">FLAC</option>
+          </select>
+        </label>
+        <label><input type="checkbox" id="browser-fallback" /> Allow Tier-3 Browser Fallback</label>
+      </div>
+      <div id="error-box" class="err-box hidden"></div>
+    </section>
+
+    <section id="probe-card" class="card hidden">
+      <h2>
+        <span>Probe Result</span>
+        <span id="probe-badges"></span>
+      </h2>
+      <div id="probe-body" class="preview"></div>
+    </section>
+
+    <section class="card">
+      <h2><span>Extraction Queue</span><span id="job-count" class="pill">0 jobs</span></h2>
+      <div id="jobs-list"><p class="muted">Submit a URL above to track real-time SSE extraction progress.</p></div>
+    </section>
+
+    <section class="card">
+      <h2><span>Universal Engine Registry</span><span id="engine-summary" class="pill">Loading...</span></h2>
+      <div id="engines-grid" class="grid"></div>
+    </section>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const jobs = new Map();
+    const sources = new Map();
+
+    function showError(msg) {
+      const box = $("error-box");
+      if (!msg) { box.classList.add("hidden"); box.textContent = ""; return; }
+      box.textContent = msg;
+      box.classList.remove("hidden");
+    }
+
+    function fmtBytes(n) {
+      if (!n && n !== 0) return "—";
+      const units = ["B", "KB", "MB", "GB"];
+      let v = n, i = 0;
+      while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+      return `${v.toFixed(i ? 1 : 0)} ${units[i]}`;
+    }
+
+    async function loadEngines(refresh = false) {
+      const res = await fetch(refresh ? "/v1/engines/refresh" : "/v1/engines", {
+        method: refresh ? "POST" : "GET",
+      });
+      const list = await res.json();
+      const installed = list.filter((e) => e.installation_status === "installed").length;
+      $("engine-summary").textContent = `${installed} / ${list.length} installed`;
+      $("engines-grid").innerHTML = list.map((e) => {
+        const ok = e.installation_status === "installed";
+        return `
+          <div class="eng">
+            <h4>
+              <span>${e.id}</span>
+              <span class="pill ${ok ? "ok" : "warn"}">${ok ? "ready" : e.installation_status}</span>
+            </h4>
+            <p>Tier ${e.tier} &middot; v${e.version}<br/>${e.license}<br/>Priority: ${e.priority}</p>
+          </div>`;
+      }).join("");
+    }
+
+    function renderProbe(data) {
+      $("probe-card").classList.remove("hidden");
+      $("probe-badges").innerHTML = `
+        <span class="pill ok">${data.content_type}</span>
+        <span class="pill">${data.engine.engine_used} (${data.engine.probe_duration_ms ?? 0}ms)</span>
+      `;
+      const thumb = data.thumbnail?.url ? `<img src="${data.thumbnail.url}" alt="thumb" />` : "";
+      const fmts = (data.available_formats || []).slice(0, 6).map(
+        (f) => `<span class="pill">${f.label || f.format_id} &middot; ${f.container} ${f.size_bytes ? "(" + fmtBytes(f.size_bytes) + ")" : ""}</span>`
+      ).join(" ");
+      $("probe-body").innerHTML = `
+        ${thumb}
+        <div style="flex:1;min-width:240px;">
+          <div style="font-weight:700;font-size:16px;margin-bottom:6px;">${data.title || data.url}</div>
+          <div class="muted" style="margin-bottom:8px;">${data.source.domain}${data.author?.name ? " &middot; " + data.author.name : ""}${data.size_bytes ? " &middot; " + fmtBytes(data.size_bytes) : ""}</div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;">${fmts || '<span class="muted">No formats listed</span>'}</div>
+        </div>
+      `;
+    }
+
+    function renderJobs() {
+      const arr = Array.from(jobs.values()).sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
+      $("job-count").textContent = `${arr.length} job${arr.length === 1 ? "" : "s"}`;
+      if (!arr.length) {
+        $("jobs-list").innerHTML = `<p class="muted">Submit a URL above to track real-time SSE extraction progress.</p>`;
+        return;
+      }
+      $("jobs-list").innerHTML = arr.map((j) => {
+        const pct = j.progress?.percent ?? (j.status === "completed" ? 100 : 0);
+        const cls = j.status === "completed" ? "ok" : (j.status === "failed" || j.status === "cancelled") ? "err" : "warn";
+        const dl = j.result?.download;
+        const action = dl?.artifact_url
+          ? `<a class="dl-link" href="${dl.artifact_url}">Download ${dl.filename || "artifact"} (${fmtBytes(dl.size_bytes)})</a>`
+          : (["queued", "probing", "downloading", "post_processing"].includes(j.status)
+              ? `<button class="btn-danger" onclick="cancelJob('${j.job_id}')">Cancel</button>`
+              : "");
+        return `
+          <div class="job">
+            <div style="display:flex;justify-content:space-between;gap:10px;align-items:center;">
+              <div style="font-weight:600;font-size:13px;word-break:break-all;">${j.url}</div>
+              <span class="pill ${cls}">${j.status}</span>
+            </div>
+            <div class="bar-bg"><div class="bar-fill" style="width:${Math.min(100, Math.max(0, pct))}%"></div></div>
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
+              <span class="muted">${j.error || j.progress?.message || j.status}${dl?.sha256 ? " &middot; sha256:" + dl.sha256.slice(0, 12) : ""}</span>
+              <div>${action}</div>
+            </div>
+          </div>`;
+      }).join("");
+    }
+
+    function watchJob(jobId) {
+      if (sources.has(jobId)) return;
+      const es = new EventSource(`/v1/jobs/${jobId}/events`);
+      sources.set(jobId, es);
+      es.addEventListener("progress", async (ev) => {
+        const p = JSON.parse(ev.data);
+        const cur = jobs.get(jobId) || { job_id: jobId };
+        cur.status = p.status;
+        cur.progress = p;
+        jobs.set(jobId, cur);
+        renderJobs();
+        if (["completed", "failed", "cancelled"].includes(p.status)) {
+          es.close();
+          sources.delete(jobId);
+          const full = await (await fetch(`/v1/jobs/${jobId}`)).json();
+          jobs.set(jobId, full);
+          renderJobs();
+        }
+      });
+      es.onerror = () => { es.close(); sources.delete(jobId); };
+    }
+
+    async function cancelJob(jobId) {
+      const res = await fetch(`/v1/jobs/${jobId}/cancel`, { method: "POST" });
+      if (res.ok) {
+        jobs.set(jobId, await res.json());
+        renderJobs();
+      }
+    }
+    window.cancelJob = cancelJob;
+
+    $("probe-btn").onclick = async () => {
+      showError("");
+      const url = $("url-input").value.trim();
+      if (!url) return showError("Enter a URL first.");
+      const res = await fetch("/v1/probe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url, allow_browser_fallback: $("browser-fallback").checked }),
+      });
+      const data = await res.json();
+      if (!res.ok) return showError(data.detail?.message || JSON.stringify(data.detail));
+      renderProbe(data);
+    };
+
+    $("download-btn").onclick = async () => {
+      showError("");
+      const url = $("url-input").value.trim();
+      if (!url) return showError("Enter a URL first.");
+      const payload = {
+        url,
+        mode: $("mode-select").value,
+        allow_browser_fallback: $("browser-fallback").checked,
+      };
+      const af = $("audio-select").value;
+      if (af) payload.audio_format = af;
+      const res = await fetch("/v1/jobs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!res.ok) return showError(data.detail?.message || JSON.stringify(data.detail));
+      jobs.set(data.job_id, data);
+      renderJobs();
+      watchJob(data.job_id);
+    };
+
+    $("refresh-engines").onclick = () => loadEngines(true);
+
+    (async () => {
+      await loadEngines(false);
+      const existing = await (await fetch("/v1/jobs")).json();
+      for (const j of existing) jobs.set(j.job_id, j);
+      renderJobs();
+    })();
+  </script>
+</body>
+</html>

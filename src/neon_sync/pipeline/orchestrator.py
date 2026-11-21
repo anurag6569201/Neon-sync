@@ -34,7 +34,7 @@ from neon_sync.security import (
 )
 
 from .router import UrlRouter
-from .storage import LocalArtifactStorage
+from .storage import ArtifactStorage
 
 
 class ExtractionOrchestrator:
@@ -44,7 +44,7 @@ class ExtractionOrchestrator:
         self,
         settings: Settings,
         registry: EngineRegistry,
-        storage: LocalArtifactStorage,
+        storage: ArtifactStorage,
     ) -> None:
         self._settings = settings
         self._registry = registry
