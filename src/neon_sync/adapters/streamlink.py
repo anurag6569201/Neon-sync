@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import re
-import shutil
 import time
 import uuid
 from pathlib import Path
@@ -44,6 +43,7 @@ from neon_sync.security import (
     SubprocessCancelledError,
     SubprocessTimeoutError,
     ensure_safe_path,
+    find_binary,
     run_safe_subprocess,
     sanitize_filename,
 )
@@ -197,8 +197,11 @@ class StreamlinkAdapter(ExtractorAdapter):
     def id(self) -> str:
         return "streamlink"
 
+    def _exe(self) -> str:
+        return find_binary(self._settings.streamlink_bin) or self._settings.streamlink_bin
+
     def manifest(self) -> EngineManifest:
-        installed = shutil.which(self._settings.streamlink_bin) is not None
+        installed = find_binary(self._settings.streamlink_bin) is not None
         return EngineManifest(
             id=self.id,
             name="Streamlink Live Stream Engine",
@@ -257,7 +260,7 @@ class StreamlinkAdapter(ExtractorAdapter):
 
     def build_probe_argv(self, url: str) -> list[str]:
         argv = [
-            self._settings.streamlink_bin,
+            self._exe(),
             "--json",
             "--no-config",
             "--http-timeout",
@@ -276,7 +279,7 @@ class StreamlinkAdapter(ExtractorAdapter):
         max_duration_seconds: int,
     ) -> list[str]:
         argv = [
-            self._settings.streamlink_bin,
+            self._exe(),
             "--no-config",
             "--force",
             "--hls-duration",
@@ -393,7 +396,7 @@ class StreamlinkAdapter(ExtractorAdapter):
         )
 
     async def health_check(self) -> HealthReport:
-        exe = shutil.which(self._settings.streamlink_bin)
+        exe = find_binary(self._settings.streamlink_bin)
         if not exe:
             return HealthReport(
                 engine_id=self.id,

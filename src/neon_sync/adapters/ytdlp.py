@@ -12,7 +12,6 @@ from __future__ import annotations
 import json
 import mimetypes
 import re
-import shutil
 import time
 from datetime import UTC, datetime
 
@@ -53,6 +52,7 @@ from neon_sync.security import (
     SubprocessCancelledError,
     SubprocessTimeoutError,
     detect_magic_mime,
+    find_binary,
     run_safe_subprocess,
     sanitize_filename,
 )
@@ -379,7 +379,7 @@ class YtDlpAdapter(ExtractorAdapter):
         return "yt-dlp"
 
     def manifest(self) -> EngineManifest:
-        installed = shutil.which(self._settings.ytdlp_bin) is not None
+        installed = find_binary(self._settings.ytdlp_bin) is not None
         return EngineManifest(
             id=self.id,
             name="yt-dlp",
@@ -458,9 +458,12 @@ class YtDlpAdapter(ExtractorAdapter):
             reason="Non-HTML direct resource prefers direct-http/aria2.",
         )
 
+    def _exe(self) -> str:
+        return find_binary(self._settings.ytdlp_bin) or self._settings.ytdlp_bin
+
     def build_probe_argv(self, url: str, options: ProbeOptions) -> list[str]:
         argv = [
-            self._settings.ytdlp_bin,
+            self._exe(),
             "--ignore-config",
             "--no-exec",
             "--dump-single-json",
@@ -477,7 +480,7 @@ class YtDlpAdapter(ExtractorAdapter):
 
     def build_download_argv(self, url: str, plan: DownloadPlan) -> list[str]:
         argv = [
-            self._settings.ytdlp_bin,
+            self._exe(),
             "--ignore-config",
             "--no-exec",
             "--no-warnings",
@@ -641,7 +644,7 @@ class YtDlpAdapter(ExtractorAdapter):
         )
 
     async def health_check(self) -> HealthReport:
-        exe = shutil.which(self._settings.ytdlp_bin)
+        exe = find_binary(self._settings.ytdlp_bin)
         if not exe:
             return HealthReport(
                 engine_id=self.id,
@@ -653,7 +656,7 @@ class YtDlpAdapter(ExtractorAdapter):
         res = await run_safe_subprocess([exe, "--version"], timeout=5.0)
         version = res.stdout.strip() or "unknown"
         self._version = version
-        deno = shutil.which(self._settings.deno_bin)
+        deno = find_binary(self._settings.deno_bin)
         detail = f"yt-dlp {version}" + (
             " (Deno JS runtime available)" if deno else " (WARNING: Deno not found; YouTube EJS may fail)"
         )

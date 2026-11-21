@@ -10,7 +10,6 @@ Security invariants:
 from __future__ import annotations
 
 import json
-import shutil
 from pathlib import Path
 from typing import Any
 
@@ -25,7 +24,7 @@ from neon_sync.models import (
     InvocationMode,
     SupportedDomains,
 )
-from neon_sync.security import CancellationToken, run_safe_subprocess
+from neon_sync.security import CancellationToken, find_binary, run_safe_subprocess
 
 from .base import AdapterError, PostProcessorAdapter
 
@@ -41,10 +40,16 @@ class FfmpegAdapter(PostProcessorAdapter):
     def id(self) -> str:
         return "ffmpeg"
 
+    def _ffmpeg(self) -> str:
+        return find_binary(self._settings.ffmpeg_bin) or self._settings.ffmpeg_bin
+
+    def _ffprobe(self) -> str:
+        return find_binary(self._settings.ffprobe_bin) or self._settings.ffprobe_bin
+
     def manifest(self) -> EngineManifest:
         installed = (
-            shutil.which(self._settings.ffmpeg_bin) is not None
-            and shutil.which(self._settings.ffprobe_bin) is not None
+            find_binary(self._settings.ffmpeg_bin) is not None
+            and find_binary(self._settings.ffprobe_bin) is not None
         )
         return EngineManifest(
             id=self.id,
@@ -70,7 +75,7 @@ class FfmpegAdapter(PostProcessorAdapter):
 
     def build_ffprobe_argv(self, input_path: Path) -> list[str]:
         return [
-            self._settings.ffprobe_bin,
+            self._ffprobe(),
             "-v",
             "quiet",
             "-protocol_whitelist",
@@ -91,7 +96,7 @@ class FfmpegAdapter(PostProcessorAdapter):
         max_output_bytes: int,
     ) -> list[str]:
         return [
-            self._settings.ffmpeg_bin,
+            self._ffmpeg(),
             "-y",
             "-hide_banner",
             "-loglevel",
@@ -126,7 +131,7 @@ class FfmpegAdapter(PostProcessorAdapter):
         }.get(audio_format, ["-vn", "-c:a", "copy"])
 
         return [
-            self._settings.ffmpeg_bin,
+            self._ffmpeg(),
             "-y",
             "-hide_banner",
             "-loglevel",
@@ -151,7 +156,7 @@ class FfmpegAdapter(PostProcessorAdapter):
         max_output_bytes: int,
     ) -> list[str]:
         argv = [
-            self._settings.ffmpeg_bin,
+            self._ffmpeg(),
             "-y",
             "-hide_banner",
             "-loglevel",
@@ -180,7 +185,7 @@ class FfmpegAdapter(PostProcessorAdapter):
 
     def build_thumbnail_argv(self, input_path: Path, output_path: Path) -> list[str]:
         return [
-            self._settings.ffmpeg_bin,
+            self._ffmpeg(),
             "-y",
             "-hide_banner",
             "-loglevel",
@@ -301,8 +306,8 @@ class FfmpegAdapter(PostProcessorAdapter):
         return output_path
 
     async def health_check(self) -> HealthReport:
-        ff = shutil.which(self._settings.ffmpeg_bin)
-        fp = shutil.which(self._settings.ffprobe_bin)
+        ff = find_binary(self._settings.ffmpeg_bin)
+        fp = find_binary(self._settings.ffprobe_bin)
         if not ff or not fp:
             return HealthReport(
                 engine_id=self.id,

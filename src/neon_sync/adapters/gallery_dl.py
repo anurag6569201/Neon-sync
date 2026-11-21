@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import mimetypes
-import shutil
 import time
 import zipfile
 from pathlib import Path
@@ -46,6 +45,7 @@ from neon_sync.security import (
     SubprocessCancelledError,
     SubprocessTimeoutError,
     detect_magic_mime,
+    find_binary,
     run_safe_subprocess,
     sanitize_filename,
 )
@@ -209,8 +209,11 @@ class GalleryDlAdapter(ExtractorAdapter):
     def id(self) -> str:
         return "gallery-dl"
 
+    def _exe(self) -> str:
+        return find_binary(self._settings.gallery_dl_bin) or self._settings.gallery_dl_bin
+
     def manifest(self) -> EngineManifest:
-        installed = shutil.which(self._settings.gallery_dl_bin) is not None
+        installed = find_binary(self._settings.gallery_dl_bin) is not None
         return EngineManifest(
             id=self.id,
             name="gallery-dl",
@@ -266,7 +269,7 @@ class GalleryDlAdapter(ExtractorAdapter):
     def build_probe_argv(self, url: str, options: ProbeOptions) -> list[str]:
         cap = min(options.max_items, self._settings.max_gallery_items)
         argv = [
-            self._settings.gallery_dl_bin,
+            self._exe(),
             "--ignore-config",
             "--dump-json",
             "--range",
@@ -280,7 +283,7 @@ class GalleryDlAdapter(ExtractorAdapter):
     def build_download_argv(self, url: str, plan: DownloadPlan) -> list[str]:
         cap = min(plan.max_items, self._settings.max_gallery_items)
         argv = [
-            self._settings.gallery_dl_bin,
+            self._exe(),
             "--ignore-config",
             "--no-mtime",
             "--range",
@@ -426,7 +429,7 @@ class GalleryDlAdapter(ExtractorAdapter):
         )
 
     async def health_check(self) -> HealthReport:
-        exe = shutil.which(self._settings.gallery_dl_bin)
+        exe = find_binary(self._settings.gallery_dl_bin)
         if not exe:
             return HealthReport(
                 engine_id=self.id,

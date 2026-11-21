@@ -10,7 +10,6 @@ Features:
 from __future__ import annotations
 
 import re
-import shutil
 import time
 import uuid
 from pathlib import Path
@@ -45,6 +44,7 @@ from neon_sync.security import (
     CancellationToken,
     SubprocessCancelledError,
     SubprocessTimeoutError,
+    find_binary,
     run_safe_subprocess,
     sanitize_filename,
 )
@@ -191,8 +191,11 @@ class NM3u8DlReAdapter(ExtractorAdapter):
     def id(self) -> str:
         return "n-m3u8dl-re"
 
+    def _exe(self) -> str:
+        return find_binary(self._settings.nm3u8dl_bin) or self._settings.nm3u8dl_bin
+
     def manifest(self) -> EngineManifest:
-        installed = shutil.which(self._settings.nm3u8dl_bin) is not None
+        installed = find_binary(self._settings.nm3u8dl_bin) is not None
         return EngineManifest(
             id=self.id,
             name="N_m3u8DL-RE Segmented Stream Engine",
@@ -237,7 +240,7 @@ class NM3u8DlReAdapter(ExtractorAdapter):
         is_live: bool = False,
     ) -> list[str]:
         argv = [
-            self._settings.nm3u8dl_bin,
+            self._exe(),
             url,
             "--save-dir",
             str(output_dir),
@@ -327,7 +330,7 @@ class NM3u8DlReAdapter(ExtractorAdapter):
         progress_cb: ProgressCallback | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> DownloadArtifact:
-        if shutil.which(self._settings.nm3u8dl_bin) is None:
+        if find_binary(self._settings.nm3u8dl_bin) is None:
             raise AdapterError(
                 ErrorCode.ERR_INTERNAL, "N_m3u8DL-RE binary is not installed.", engine_id=self.id
             )
@@ -383,7 +386,7 @@ class NM3u8DlReAdapter(ExtractorAdapter):
         )
 
     async def health_check(self) -> HealthReport:
-        exe = shutil.which(self._settings.nm3u8dl_bin)
+        exe = find_binary(self._settings.nm3u8dl_bin)
         if not exe:
             return HealthReport(
                 engine_id=self.id,

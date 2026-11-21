@@ -15,6 +15,7 @@ from .subprocess_guard import (
     SubprocessCancelledError,
     SubprocessResult,
     SubprocessTimeoutError,
+    find_binary,
     run_safe_subprocess,
 )
 from .url_validator import (
@@ -39,6 +40,7 @@ __all__ = [
     "check_free_disk_floor",
     "detect_magic_mime",
     "ensure_safe_path",
+    "find_binary",
     "is_public_ip",
     "run_safe_subprocess",
     "sanitize_filename",

@@ -6,7 +6,6 @@ with RPC, BitTorrent, and Metalink disabled.
 
 from __future__ import annotations
 
-import shutil
 import uuid
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -31,6 +30,7 @@ from neon_sync.security import (
     SubprocessTimeoutError,
     detect_magic_mime,
     ensure_safe_path,
+    find_binary,
     run_safe_subprocess,
     sanitize_filename,
 )
@@ -50,8 +50,11 @@ class Aria2Adapter(ExtractorAdapter):
     def id(self) -> str:
         return "aria2"
 
+    def _exe(self) -> str:
+        return find_binary(self._settings.aria2c_bin) or self._settings.aria2c_bin
+
     def manifest(self) -> EngineManifest:
-        installed = shutil.which(self._settings.aria2c_bin) is not None
+        installed = find_binary(self._settings.aria2c_bin) is not None
         return EngineManifest(
             id=self.id,
             name="aria2 Multi-Connection Downloader",
@@ -116,7 +119,7 @@ class Aria2Adapter(ExtractorAdapter):
     def build_download_argv(self, url: str, output_dir: Path, filename: str) -> list[str]:
         """Build locked-down aria2c argv with RPC, BitTorrent, and Metalink disabled."""
         argv = [
-            self._settings.aria2c_bin,
+            self._exe(),
             "--enable-rpc=false",
             "--follow-torrent=false",
             "--follow-metalink=false",
@@ -149,7 +152,7 @@ class Aria2Adapter(ExtractorAdapter):
         progress_cb: ProgressCallback | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> DownloadArtifact:
-        if shutil.which(self._settings.aria2c_bin) is None:
+        if find_binary(self._settings.aria2c_bin) is None:
             raise AdapterError(
                 ErrorCode.ERR_INTERNAL,
                 "aria2c binary is not installed.",
@@ -216,7 +219,7 @@ class Aria2Adapter(ExtractorAdapter):
         )
 
     async def health_check(self) -> HealthReport:
-        exe = shutil.which(self._settings.aria2c_bin)
+        exe = find_binary(self._settings.aria2c_bin)
         if not exe:
             return HealthReport(
                 engine_id=self.id,

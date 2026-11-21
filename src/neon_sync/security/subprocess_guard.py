@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import os
+import shutil
 import signal
+import sys
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -62,6 +64,22 @@ class SubprocessResult:
     stderr: str
 
 
+def find_binary(name: str) -> str | None:
+    """Locate an executable on PATH, inside the active virtualenv bin/, or Homebrew bin/."""
+    found = shutil.which(name)
+    if found:
+        return found
+    candidates = [
+        Path(sys.executable).resolve().parent / name,
+        Path("/opt/homebrew/bin") / name,
+        Path("/usr/local/bin") / name,
+    ]
+    for cand in candidates:
+        if cand.is_file() and os.access(cand, os.X_OK):
+            return str(cand)
+    return None
+
+
 def build_scrubbed_env(
     *,
     proxy_url: str | None = None,
@@ -69,6 +87,13 @@ def build_scrubbed_env(
 ) -> dict[str, str]:
     """Construct a minimal environment stripping app secrets (DB, AWS, API keys)."""
     env = {k: v for k, v in os.environ.items() if k in _SAFE_ENV_ALLOWLIST}
+    # Ensure virtualenv bin/ and Homebrew bin/ are on PATH so yt-dlp finds deno & ffmpeg
+    venv_bin = str(Path(sys.executable).resolve().parent)
+    path_parts = [p for p in env.get("PATH", "").split(os.pathsep) if p]
+    for extra_dir in (venv_bin, "/opt/homebrew/bin", "/usr/local/bin"):
+        if os.path.isdir(extra_dir) and extra_dir not in path_parts:
+            path_parts.insert(0, extra_dir)
+    env["PATH"] = os.pathsep.join(path_parts)
     if proxy_url:
         env["HTTP_PROXY"] = proxy_url
         env["HTTPS_PROXY"] = proxy_url
