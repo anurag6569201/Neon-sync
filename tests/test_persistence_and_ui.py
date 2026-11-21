@@ -87,6 +87,8 @@ async def test_web_ui_served_at_root_with_sqlite_backing(tmp_path: Path):
         assert resp.status_code == 200
         assert "Neon Sync" in resp.text
         assert "gravity-field" in resp.text
+        assert "threads-svg" in resp.text
+        assert "history-drawer" in resp.text
         assert "/static/app.css" in resp.text
         assert "/static/app.js" in resp.text
 
