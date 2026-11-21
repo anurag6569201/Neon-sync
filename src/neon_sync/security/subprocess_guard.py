@@ -69,8 +69,10 @@ def find_binary(name: str) -> str | None:
     found = shutil.which(name)
     if found:
         return found
+    # Do NOT call .resolve() on sys.executable: in a venv it symlinks to the system Python!
     candidates = [
-        Path(sys.executable).resolve().parent / name,
+        Path(sys.executable).parent / name,
+        Path(sys.prefix) / "bin" / name,
         Path("/opt/homebrew/bin") / name,
         Path("/usr/local/bin") / name,
     ]
@@ -88,9 +90,10 @@ def build_scrubbed_env(
     """Construct a minimal environment stripping app secrets (DB, AWS, API keys)."""
     env = {k: v for k, v in os.environ.items() if k in _SAFE_ENV_ALLOWLIST}
     # Ensure virtualenv bin/ and Homebrew bin/ are on PATH so yt-dlp finds deno & ffmpeg
-    venv_bin = str(Path(sys.executable).resolve().parent)
+    venv_bin = str(Path(sys.executable).parent)
+    prefix_bin = str(Path(sys.prefix) / "bin")
     path_parts = [p for p in env.get("PATH", "").split(os.pathsep) if p]
-    for extra_dir in (venv_bin, "/opt/homebrew/bin", "/usr/local/bin"):
+    for extra_dir in (venv_bin, prefix_bin, "/opt/homebrew/bin", "/usr/local/bin"):
         if os.path.isdir(extra_dir) and extra_dir not in path_parts:
             path_parts.insert(0, extra_dir)
     env["PATH"] = os.pathsep.join(path_parts)
@@ -144,23 +147,37 @@ async def _drain_stream(
     stream: asyncio.StreamReader | None,
     collector: list[str],
     callback: LineCallback | None = None,
-    max_bytes: int = 16 * 1024 * 1024,
+    max_bytes: int = 32 * 1024 * 1024,
 ) -> None:
     if stream is None:
         return
     total = 0
+    if callback is None:
+        # Read arbitrary-sized chunks (e.g. multi-megabyte single-line yt-dlp JSON)
+        while True:
+            chunk = await stream.read(65536)
+            if not chunk:
+                break
+            if total < max_bytes:
+                collector.append(chunk.decode("utf-8", errors="replace"))
+                total += len(chunk)
+        return
+
     while True:
-        line_bytes = await stream.readline()
+        try:
+            line_bytes = await stream.readline()
+        except ValueError:
+            # Extremely long single line: drain chunk safely
+            line_bytes = await stream.read(65536)
         if not line_bytes:
             break
         text = line_bytes.decode("utf-8", errors="replace")
         if total < max_bytes:
             collector.append(text)
             total += len(line_bytes)
-        if callback is not None:
-            res = callback(text.rstrip("\r\n"))
-            if asyncio.iscoroutine(res):
-                await res
+        res = callback(text.rstrip("\r\n"))
+        if asyncio.iscoroutine(res):
+            await res
 
 
 async def run_safe_subprocess(
@@ -188,6 +205,7 @@ async def run_safe_subprocess(
         stdin=asyncio.subprocess.DEVNULL,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
+        limit=16 * 1024 * 1024,
         start_new_session=(os.name == "posix"),
     )
 
