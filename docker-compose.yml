@@ -1,0 +1,77 @@
+# Neon Sync — Multi-Plane Docker Compose Deployment
+# Enforces network segmentation: extraction service has NO direct internet gateway
+# and can reach the public internet strictly through `safe-egress-proxy`.
+
+services:
+  safe-egress-proxy:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.proxy
+    restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - internal_net
+      - egress_net
+    mem_limit: 256m
+    cpus: 1.0
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.worker-extract
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      NEON_SYNC_ENVIRONMENT: "production"
+      NEON_SYNC_API_HOST: "0.0.0.0"
+      NEON_SYNC_API_PORT: "8000"
+      NEON_SYNC_EGRESS_PROXY_URL: "http://safe-egress-proxy:3128"
+      NEON_SYNC_ALLOW_PRIVATE_ADDRESSES: "false"
+      NEON_SYNC_SCRATCH_DIR: "/scratch/jobs"
+      NEON_SYNC_STORAGE_DIR: "/data/artifacts"
+    volumes:
+      - scratch_data:/scratch/jobs
+      - artifact_data:/data/artifacts
+    depends_on:
+      - safe-egress-proxy
+      - redis
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,nodev,size=512m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - internal_net
+    mem_limit: 2g
+    cpus: 2.0
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    networks:
+      - internal_net
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+networks:
+  # Internal-only bridge: NO route to external internet!
+  internal_net:
+    driver: bridge
+    internal: true
+  # Public egress bridge: ONLY attached to safe-egress-proxy
+  egress_net:
+    driver: bridge
+
+volumes:
+  scratch_data:
+  artifact_data:

@@ -1,0 +1,23 @@
+# Slim Control Plane API (no untrusted network extraction binaries)
+FROM python:3.13-slim AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+COPY pyproject.toml README.md ./
+COPY src ./src
+
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir .
+
+RUN groupadd -g 10001 neonsync \
+    && useradd -u 10001 -g 10001 -s /usr/sbin/nologin -M neonsync \
+    && mkdir -p /data/artifacts /scratch/jobs \
+    && chown -R neonsync:neonsync /data /scratch /app
+
+USER 10001:10001
+EXPOSE 8000
+
+CMD ["uvicorn", "neon_sync.api.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]

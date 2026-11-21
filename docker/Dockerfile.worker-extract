@@ -1,0 +1,36 @@
+# Isolated Extraction Worker Image
+# Includes yt-dlp (+ Deno + yt-dlp-ejs + curl_cffi), gallery-dl, and aria2c.
+# Intended to run on an internal-only Docker/K8s network with egress routed strictly via safe-egress-proxy.
+FROM python:3.13-slim AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    DENO_INSTALL=/usr/local \
+    PATH="/usr/local/bin:${PATH}"
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    aria2 \
+    ca-certificates \
+    curl \
+    unzip \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Deno JS runtime (required by yt-dlp EJS challenge solver)
+RUN curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh
+
+# Install GPL/Unlicense CLI extractors as standalone binaries (strict subprocess boundary)
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir "yt-dlp[default,curl-cffi]" gallery-dl
+
+WORKDIR /app
+COPY pyproject.toml README.md ./
+COPY src ./src
+RUN pip install --no-cache-dir ".[webpage]"
+
+RUN groupadd -g 10001 neonsync \
+    && useradd -u 10001 -g 10001 -s /usr/sbin/nologin -M neonsync \
+    && mkdir -p /scratch/jobs /data/artifacts \
+    && chown -R neonsync:neonsync /scratch /data /app
+
+USER 10001:10001
+CMD ["python", "-m", "neon_sync.api.app"]
