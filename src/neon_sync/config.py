@@ -1,0 +1,68 @@
+"""Application configuration and production safety quotas."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    """Environment-driven settings for the Universal Media Extraction Engine."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="NEON_SYNC_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    # Service identity & API
+    app_name: str = "Neon Sync Universal Media Extraction Engine"
+    environment: str = "development"
+    api_host: str = "127.0.0.1"
+    api_port: int = 8000
+    artifact_base_url: str = "http://127.0.0.1:8000"
+
+    # Security & Safe Egress Proxy
+    egress_proxy_url: str | None = None
+    egress_proxy_host: str = "127.0.0.1"
+    egress_proxy_port: int = 3128
+    allow_private_addresses: bool = False  # Strictly False in production!
+    max_url_length: int = 4096
+    max_redirects: int = 6
+
+    # Storage & scratch directories
+    scratch_dir: Path = Field(default=Path("./scratch/jobs"))
+    storage_dir: Path = Field(default=Path("./data/artifacts"))
+    artifact_ttl_seconds: int = 6 * 60 * 60  # 6 hours default
+    min_free_disk_bytes: int = 2 * 1024 * 1024 * 1024  # 2 GiB dev floor (10 GiB+ in prod)
+
+    # Resource quotas & timeouts
+    max_job_bytes: int = 2 * 1024 * 1024 * 1024  # 2 GiB
+    max_playlist_items: int = 50
+    max_gallery_items: int = 100
+    probe_timeout_seconds: int = 25
+    download_timeout_seconds: int = 1800
+    ffmpeg_timeout_seconds: int = 600
+    direct_aria2_threshold_bytes: int = 10 * 1024 * 1024  # >= 10 MiB uses aria2c
+
+    # Concurrency & rate limiting
+    max_concurrent_probes: int = 8
+    max_concurrent_downloads: int = 3
+    rate_limit_probes_per_minute: int = 30
+    rate_limit_downloads_per_hour: int = 20
+    probe_cache_ttl_seconds: int = 300  # 5 minutes
+
+    # Engine binary overrides (auto-discovered via PATH when None)
+    ytdlp_bin: str = "yt-dlp"
+    gallery_dl_bin: str = "gallery-dl"
+    aria2c_bin: str = "aria2c"
+    ffmpeg_bin: str = "ffmpeg"
+    ffprobe_bin: str = "ffprobe"
+    deno_bin: str = "deno"
+
+
+def get_settings() -> Settings:
+    return Settings()

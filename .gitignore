@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Local runtime & scratch data
+.env
+.env.local
+scratch/
+data/
+artifacts/
+*.log
+
+# OS / Editor
+.DS_Store
+.idea/
+.vscode/
