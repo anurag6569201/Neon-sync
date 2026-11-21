@@ -272,9 +272,21 @@ html, body {
 .node.selected { border-color: var(--accent); box-shadow: var(--shadow-node), 0 0 0 3px var(--accent-soft); }
 .node.node-agent { width: 374px; border-color: color-mix(in srgb, var(--ok) 46%, var(--border-strong)); }
 .node.node-result { width: 364px; }
-.node.node-portal { width: 382px; border-color: color-mix(in srgb, var(--accent) 55%, var(--border-strong)); }
-.node.node-note { width: 274px; background: var(--note-bg); border-color: var(--note-border); }
+.node.node-blueprint { width: 356px; border-style: dashed; border-color: color-mix(in srgb, var(--accent) 48%, var(--border-strong)); }
+.node.node-blueprint.bp-agent { border-color: color-mix(in srgb, var(--ok) 55%, var(--border-strong)); }
+.node.node-note { width: 296px; background: var(--note-bg); border-color: var(--note-border); }
 .node.collapsed .node-body-collapsible { display: none; }
+
+.bp-desc { margin: 0 0 10px; font-size: 12px; color: var(--text-secondary); line-height: 1.45; }
+.bp-specs { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 11px; }
+.spec-chip {
+  font-size: 10px; padding: 2px 7px; border-radius: 5px;
+  background: var(--surface-inset); border: 1px solid var(--border); color: var(--text-secondary);
+}
+.bp-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.bp-hint { font-size: 10px; color: var(--text-muted); }
+
+.history-item-actions { display: flex; align-items: center; gap: 6px; margin-top: 7px; }
 
 .node-head {
   display: flex; align-items: center; justify-content: space-between; gap: 8px;

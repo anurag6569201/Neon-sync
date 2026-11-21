@@ -4,8 +4,16 @@
 
   const $ = (id) => document.getElementById(id);
   const URL_RE = /https?:\/\/[^\s<>"')]+/i;
-  const LAYOUT_STORAGE_KEY = "neon_sync_spatial_layout_v2";
-  const DEMO_VIDEO_URL = "https://www.youtube.com/watch?v=jNQXAC9IVRw";
+  const LAYOUT_STORAGE_KEY = "neon_sync_spatial_layout_v3";
+  const SHOWCASE_VIDEO = {
+    url: "https://youtu.be/YW7Uc5_ixtM",
+    title: "Sajan Sajan remix | by Abhishek Mehra",
+    uploader: "TUNES OF ABHI",
+    duration: 263,
+    views: "8.0M views",
+    thumbnail: "https://i.ytimg.com/vi/YW7Uc5_ixtM/maxresdefault.jpg",
+  };
+  const DEMO_VIDEO_URL = SHOWCASE_VIDEO.url;
 
   /* ---------- Application State ---------- */
   const state = {
@@ -35,8 +43,9 @@
     autoSavedJobs: new Set(),
     oscActive: false,
     historyFilter: "all",
+    historyJobs: [],
     selectedNodeId: null,
-    nodes: new Map(), // id -> { id, type: 'portal'|'source'|'agent'|'result'|'note', x, y, demo?: bool, collapsed?: bool, ... }
+    nodes: new Map(), // id -> { id, type: 'source'|'blueprint'|'agent'|'result'|'note', x, y, demo?: bool, collapsed?: bool, ... }
     edges: [],        // { id, from, to, kind, label, active?: bool, demo?: bool }
     sourceByUrl: new Map(),
     resultByJobId: new Map(),
@@ -242,7 +251,13 @@
       const el = document.querySelector(`[data-node-id="${CSS.escape(n.id)}"]`);
       const nw = Math.max(8, (el ? el.offsetWidth : 350) * scale);
       const nh = Math.max(5, (el ? el.offsetHeight : 190) * scale);
-      ctx.fillStyle = n.type === "agent" ? "#16c47f" : n.type === "note" ? "#f5b700" : n.type === "result" ? "#e4e4e7" : "#ff4d00";
+      ctx.fillStyle = (n.type === "agent" || (n.type === "blueprint" && n.kind === "agent"))
+        ? "#16c47f"
+        : n.type === "note"
+          ? "#f5b700"
+          : n.type === "result"
+            ? "#a1a1aa"
+            : "#ff4d00";
       ctx.fillRect(ox + n.x * scale, oy + n.y * scale, nw, nh);
     }
 
@@ -250,8 +265,8 @@
     const vp = $("viewport").getBoundingClientRect();
     const tl = screenToWorld(vp.left, vp.top);
     const br = screenToWorld(vp.right, vp.bottom);
-    ctx.strokeStyle = "rgba(255,77,0,0.9)";
-    ctx.fillStyle = "rgba(255,77,0,0.08)";
+    ctx.strokeStyle = "rgba(255,77,0,0.8)";
+    ctx.fillStyle = "rgba(255,77,0,0.04)";
     ctx.lineWidth = 1.2;
     const vx = ox + tl.x * scale;
     const vy = oy + tl.y * scale;
@@ -567,58 +582,99 @@
     state.hasDemoGraph = true;
     $("sandbox-banner").classList.remove("hidden");
 
-    const portal = {
-      id: "demo_portal",
-      type: "portal",
+    const v = SHOWCASE_VIDEO;
+    const src = {
+      id: "demo_source",
+      type: "source",
       demo: true,
-      x: -440,
-      y: -115,
-      url: DEMO_VIDEO_URL,
+      url: v.url,
+      title: v.title,
+      x: -445,
+      y: -145,
+      probing: false,
+      streamsOpen: false,
+      lockedFormatId: null,
+      probe: {
+        title: v.title,
+        duration_seconds: v.duration,
+        is_live: false,
+        content_type: "video",
+        source: { domain: "youtube.com" },
+        author: { name: `${v.uploader} · ${v.views}` },
+        thumbnail: { url: v.thumbnail },
+        engine: { engine_used: "yt-dlp" },
+        available_formats: [],
+      },
     };
-    const agent = {
-      id: "demo_agent",
-      type: "agent",
+
+    const bpAudio = {
+      id: "demo_bp_audio",
+      type: "blueprint",
       demo: true,
-      x: 65,
-      y: -210,
-      url: DEMO_VIDEO_URL,
-      prompt: "clip 0:00 to 0:10 in 720p mp4 & summarize",
-      provider: "local-planner",
-      done: true,
-      steps: [
-        { tag: "PLAN", cls: "plan", msg: "Planned clip 0s–10s, 720p H.264 MP4 + summary." },
-        { tag: "TOOL·probe_url", cls: "tool", msg: "Locked source metadata via yt-dlp." },
-        { tag: "TOOL·execute_download", cls: "tool", msg: "Trimmed & remuxed via FFmpeg faststart." },
-      ],
-      answer: "Ready to run for real! Click “Try Live YouTube” on the left portal, or drag its orange jack anywhere onto the desk.",
+      kind: "extract",
+      url: v.url,
+      x: 115,
+      y: -255,
+      badge: "AUDIO MASTER · 320K",
+      title: "Mastered 320k MP3 Track",
+      desc: "Extract clean stereo audio with EBU R128 loudness normalization — ready for DJ sets or offline listening.",
+      specs: ["MP3 320kbps", "Loudnorm", "Metadata Embedded"],
+      cta: "▶ Extract MP3 Live",
+      actionType: "agent",
+      prompt: `extract audio as 320k mp3 and normalize volume ${v.url}`,
     };
+
+    const bpClip = {
+      id: "demo_bp_clip",
+      type: "blueprint",
+      demo: true,
+      kind: "agent",
+      url: v.url,
+      x: 115,
+      y: -20,
+      badge: "AI AGENT · REEL HOOK",
+      title: "15s Viral Drop Clip (0:30–0:45)",
+      desc: "Let Neon Agent trim the exact drop in 1080p H.264 MP4 with faststart streaming so it uploads anywhere.",
+      specs: ["0:30 → 0:45", "1080p H.264 MP4", "FFmpeg Faststart"],
+      cta: "▶ Run AI Clip Live",
+      actionType: "agent",
+      prompt: `clip 0:30 to 0:45 in 1080p h264 mp4 ${v.url}`,
+    };
+
     const note = {
       id: "demo_note",
       type: "note",
       demo: true,
-      x: 85,
-      y: 120,
-      text: "💡 Spatial Tip:\n• Drag any orange jack (●) onto empty canvas to chain clips, 320k MP3, or AI summaries.\n• Double-click any cable label to rename it.\n• Double-click empty desk to drop a note.",
+      x: 115,
+      y: 225,
+      text: "🎵 Sajan Sajan Remix — Creative Board\n• Drop Hook: 0:30 – 0:45 (15s Reel cut)\n• Original: Alka Yagnik / Anu Malik (Aarzoo)\n• Drag the orange jack (●) onto empty desk to chain more!",
     };
 
-    state.nodes.set(portal.id, portal);
-    state.nodes.set(agent.id, agent);
+    state.nodes.set(src.id, src);
+    state.nodes.set(bpAudio.id, bpAudio);
+    state.nodes.set(bpClip.id, bpClip);
     state.nodes.set(note.id, note);
-    renderNode(portal);
-    renderNode(agent);
+    renderNode(src);
+    renderNode(bpAudio);
+    renderNode(bpClip);
     renderNode(note);
 
-    addEdge(portal.id, agent.id, "agent", true, "AI · CLIP + BRIEF", true);
-    addEdge(portal.id, note.id, "note", false, "WORKFLOW TIP", true);
-    setTimeout(() => { renderThreads(); fitAllNodes(); }, 45);
+    addEdge(src.id, bpAudio.id, "extract", true, "AUDIO · 320k MP3", true);
+    addEdge(src.id, bpClip.id, "agent", true, "AI · REEL 0:30–0:45", true);
+    addEdge(src.id, note.id, "note", false, "CREDITS & HOOKS", true);
+    setTimeout(() => {
+      renderThreads();
+      glideToWorld(-40, 20, Math.min(0.94, Math.max(0.76, window.innerWidth / 1380)));
+    }, 55);
   }
 
   /* ---------- Spatial Graph Core: Nodes + Labeled Animated Bezier Threads ---------- */
   function syncWorkspaceMeta() {
     const realNodes = Array.from(state.nodes.values()).filter((n) => !n.demo);
     const realEdges = state.edges.filter((e) => !e.demo);
-    $("history-count-chip").textContent = String(realNodes.length);
-    $("history-stats").textContent = `${realNodes.length} nodes · ${realEdges.length} threads`;
+    const totalHist = state.historyJobs.length + realNodes.filter((n) => n.type === "note" || n.type === "agent").length;
+    $("history-count-chip").textContent = String(totalHist);
+    $("history-stats").textContent = `${realNodes.length} on desk · ${state.historyJobs.length} saved jobs · ${realEdges.length} threads`;
     drawMinimap();
   }
 
@@ -820,23 +876,26 @@
 
     let inner = "";
 
-    if (node.type === "portal") {
+    if (node.type === "blueprint") {
+      el.classList.toggle("bp-agent", node.kind === "agent");
+      const specsHtml = (node.specs || []).map((s) => `<span class="spec-chip mono">${esc(s)}</span>`).join("");
       inner = `
-        <div class="port port-out" data-port="out" data-node="${esc(node.id)}"><span class="port-tip mono">Drag orange jack onto desk!</span></div>
+        <div class="port port-in" data-port="in" data-node="${esc(node.id)}"></div>
+        <div class="port port-out" data-port="out" data-node="${esc(node.id)}"><span class="port-tip mono">Drag to extend chain</span></div>
         <div class="node-head" data-drag-handle="1">
-          <span class="node-type-pill mono"><span class="node-type-dot"></span>START PORTAL · ZERO SIGNUP</span>
-          <span class="status-pill mono ok">READY</span>
+          <span class="node-type-pill mono"><span class="node-type-dot"></span>${esc(node.badge || "WORKFLOW STEP")}</span>
+          <div class="node-head-right">
+            <span class="status-pill mono ${node.kind === "agent" ? "ok" : "warn"}">READY</span>
+            <button class="node-icon-btn" data-node-del="${esc(node.id)}">×</button>
+          </div>
         </div>
         <div class="node-body">
-          <h2 class="portal-heading">Drop any link.<br /><span class="accent">Wire it to anything.</span></h2>
-          <p class="portal-sub">Paste a URL below (or hit <kbd>⌘V</kbd> anywhere) to spawn a live Media Cartridge, then drag threads to clip, convert, or command the AI Agent.</p>
-          <div class="portal-input-wrap">
-            <input type="text" class="portal-input" id="portal-url-input" placeholder="https://youtube.com/watch?v=…" />
-            <button class="reactor-fire btn-sm" id="portal-go-btn">Go</button>
-          </div>
-          <div class="portal-demo-bar">
-            <button class="tac-pill" id="portal-live-yt">▶ Try Live YouTube</button>
-            <button class="tac-pill" id="portal-live-agent">🧠 Run Live AI Clip</button>
+          <h3 class="node-title">${esc(node.title)}</h3>
+          <p class="bp-desc">${esc(node.desc || "")}</p>
+          <div class="bp-specs">${specsHtml}</div>
+          <div class="bp-footer">
+            <span class="bp-hint mono">1-click live execution</span>
+            <button class="reactor-fire btn-sm" data-run-blueprint="${esc(node.id)}">${esc(node.cta || "▶ Run Live")}</button>
           </div>
         </div>
       `;
@@ -1087,28 +1146,29 @@
       };
     }
 
-    // Portal Node buttons
-    if (node.type === "portal") {
-      const pIn = el.querySelector("#portal-url-input");
-      const goReal = (urlStr) => {
-        const clean = extractUrl(urlStr);
-        if (!clean) return toast("Paste a valid http(s) URL", "err");
+    // Executable Blueprint Node ("Run Live" turns demo showcase into a real live workflow!)
+    el.querySelector("[data-run-blueprint]")?.addEventListener("click", () => {
+      const targetPos = { x: node.x, y: node.y };
+      const bpUrl = node.url || SHOWCASE_VIDEO.url;
+      const bpPrompt = node.prompt;
+      const bpKind = node.actionType;
+      // Promote the demo source node to a real persisted workspace node while keeping other cards clean
+      if (state.hasDemoGraph) {
+        const demoSrc = state.nodes.get("demo_source");
+        const srcPos = demoSrc ? { x: demoSrc.x, y: demoSrc.y } : { x: -445, y: -145 };
+        const srcProbe = demoSrc?.probe || null;
         clearDemoGraph();
-        const src = ensureSourceNode(clean, { x: -240, y: -110 }, true);
-        glideToWorld(src.x + 170, src.y + 100, 1);
-      };
-      if (pIn) {
-        pIn.onpointerdown = (e) => e.stopPropagation();
-        pIn.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); goReal(pIn.value); } };
+        const realSrc = ensureSourceNode(bpUrl, srcPos, false);
+        if (srcProbe) { realSrc.probe = srcProbe; realSrc.title = srcProbe.title; renderNode(realSrc); }
+        if (bpKind === "agent") launchAgentFromSource(realSrc, bpPrompt, targetPos);
+        else launchDirectExtraction(realSrc, targetPos);
+        return;
       }
-      el.querySelector("#portal-go-btn")?.addEventListener("click", () => goReal(pIn?.value || ""));
-      el.querySelector("#portal-live-yt")?.addEventListener("click", () => goReal(DEMO_VIDEO_URL));
-      el.querySelector("#portal-live-agent")?.addEventListener("click", () => {
-        clearDemoGraph();
-        const src = ensureSourceNode(DEMO_VIDEO_URL, { x: -340, y: -110 }, true);
-        launchAgentFromSource(src, `clip 0:00 to 0:10 in 720p mp4 ${DEMO_VIDEO_URL}`);
-      });
-    }
+      const realSrc = ensureSourceNode(bpUrl, null, false);
+      removeNode(node.id);
+      if (bpKind === "agent") launchAgentFromSource(realSrc, bpPrompt, targetPos);
+      else launchDirectExtraction(realSrc, targetPos);
+    });
 
     // Standard Node buttons
     el.querySelector("[data-node-del]")?.addEventListener("click", (e) => { e.stopPropagation(); removeNode(node.id); });
@@ -1120,10 +1180,29 @@
       if (!node.demo) persistWorkspace();
     });
 
-    el.querySelector("[data-src-extract]")?.addEventListener("click", () => launchDirectExtraction(node));
-    el.querySelector("[data-src-clip]")?.addEventListener("click", () => launchAgentFromSource(node, `clip 0:00 to 0:15 in 720p mp4 ${node.url}`));
-    el.querySelector("[data-src-mp3]")?.addEventListener("click", () => launchAgentFromSource(node, `extract audio as 320k mp3 and normalize volume ${node.url}`));
-    el.querySelector("[data-src-sum]")?.addEventListener("click", () => launchAgentFromSource(node, `summarize the key points from ${node.url}`));
+    const promoteDemoSource = (srcNode) => {
+      if (!srcNode.demo) return srcNode;
+      const pos = { x: srcNode.x, y: srcNode.y };
+      const cachedProbe = srcNode.probe;
+      clearDemoGraph();
+      const real = ensureSourceNode(srcNode.url, pos, false);
+      if (cachedProbe) { real.probe = cachedProbe; real.title = cachedProbe.title; renderNode(real); }
+      return real;
+    };
+
+    el.querySelector("[data-src-extract]")?.addEventListener("click", () => launchDirectExtraction(promoteDemoSource(node)));
+    el.querySelector("[data-src-clip]")?.addEventListener("click", () => {
+      const real = promoteDemoSource(node);
+      launchAgentFromSource(real, `clip 0:30 to 0:45 in 1080p h264 mp4 ${real.url}`);
+    });
+    el.querySelector("[data-src-mp3]")?.addEventListener("click", () => {
+      const real = promoteDemoSource(node);
+      launchAgentFromSource(real, `extract audio as 320k mp3 and normalize volume ${real.url}`);
+    });
+    el.querySelector("[data-src-sum]")?.addEventListener("click", () => {
+      const real = promoteDemoSource(node);
+      launchAgentFromSource(real, `summarize the key points from ${real.url}`);
+    });
     el.querySelector("[data-src-streams]")?.addEventListener("click", () => { sfx.click(); node.streamsOpen = !node.streamsOpen; renderNode(node); });
     el.querySelectorAll("[data-src-fmt]").forEach((tr) => {
       tr.onclick = () => {
@@ -1271,7 +1350,15 @@
     setTimeout(() => a.remove(), 500);
   }
 
+  function recordHistoryJob(job) {
+    if (!job?.job_id) return;
+    const idx = state.historyJobs.findIndex((x) => x.job_id === job.job_id);
+    if (idx >= 0) state.historyJobs[idx] = job;
+    else state.historyJobs.unshift(job);
+  }
+
   function upsertResultNodeForJob(job, parentNode, forcedPos = null, kind = "extract") {
+    recordHistoryJob(job);
     const existingId = state.resultByJobId.get(job.job_id);
     if (existingId && state.nodes.has(existingId)) {
       const node = state.nodes.get(existingId);
@@ -1511,58 +1598,106 @@
     toast(`Spawned ${list.length} threaded extractions`, "ok");
   }
 
-  /* ---------- Searchable History & Spatial Fly-To Drawer ---------- */
+  /* ---------- Searchable History & Pin-to-Canvas Drawer ---------- */
+  function pinJobToCanvas(job) {
+    if (state.hasDemoGraph) clearDemoGraph();
+    const src = ensureSourceNode(job.url, null, false);
+    if (job.result?.title && !src.title) {
+      src.title = job.result.title;
+      if (job.result.thumbnail) {
+        src.probe = {
+          title: job.result.title,
+          thumbnail: job.result.thumbnail,
+          duration_seconds: job.result.duration_seconds,
+          source: job.result.source,
+          engine: job.result.engine,
+          content_type: job.result.content_type,
+        };
+      }
+      renderNode(src);
+    }
+    const rn = upsertResultNodeForJob(job, src, null, "extract");
+    sfx.plug();
+    glideToWorld((src.x + rn.x) / 2 + 170, rn.y + 100, 0.92);
+  }
+
   function renderHistoryList() {
     const host = $("history-list");
     if (!host) return;
     const q = ($("history-search")?.value || "").trim().toLowerCase();
     const filter = state.historyFilter;
 
-    const items = Array.from(state.nodes.values()).filter((n) => {
-      if (n.demo) return false;
-      if (filter === "completed" && !(n.type === "result" && n.job?.status === "completed")) return false;
-      if (filter === "agent" && n.type !== "agent") return false;
-      if (filter === "note" && n.type !== "note") return false;
+    // Combine active canvas notes/agents + all persisted SQLite jobs
+    const rows = [];
+    for (const n of state.nodes.values()) {
+      if (n.demo || n.type === "source" || n.type === "result") continue;
+      rows.push({ kind: n.type, node: n });
+    }
+    for (const j of state.historyJobs) {
+      // Hide legacy broken watch.html artifacts unless explicitly searching
+      const fn = (j.result?.download?.filename || "").toLowerCase();
+      if (!q && (fn === "watch.html" || fn === "watch.htm")) continue;
+      rows.push({ kind: "job", job: j, node: state.nodes.get(state.resultByJobId.get(j.job_id) || "") });
+    }
+
+    const filtered = rows.filter((r) => {
+      if (filter === "completed" && !(r.kind === "job" && r.job.status === "completed")) return false;
+      if (filter === "agent" && r.kind !== "agent") return false;
+      if (filter === "note" && r.kind !== "note") return false;
       if (!q) return true;
-      const hay = [n.title, n.url, n.prompt, n.text, n.job?.result?.download?.filename, n.job?.result?.title, n.job?.url].filter(Boolean).join(" ").toLowerCase();
+      const hay = r.kind === "job"
+        ? [r.job.result?.download?.filename, r.job.result?.title, r.job.url, r.job.result?.engine?.engine_used].filter(Boolean).join(" ").toLowerCase()
+        : [r.node.prompt, r.node.text, r.node.url].filter(Boolean).join(" ").toLowerCase();
       return hay.includes(q);
     });
 
-    if (!items.length) {
-      host.innerHTML = `<div class="muted mono" style="padding:18px;text-align:center;font-size:11.5px;">No saved nodes yet — paste a link to begin</div>`;
+    if (!filtered.length) {
+      host.innerHTML = `<div class="muted mono" style="padding:18px;text-align:center;font-size:11.5px;">No matching history yet</div>`;
       return;
     }
 
-    host.innerHTML = items.map((n) => {
-      let label = n.type.toUpperCase(), title = n.title || n.url || "Node", sub = "", badgeCls = "";
-      if (n.type === "result") {
-        title = n.job?.result?.download?.filename || n.job?.result?.title || n.job?.url || "Job";
-        sub = [fmtBytes(n.job?.result?.download?.size_bytes), fmtRelativeTime(n.job?.created_at)].filter(Boolean).join(" · ");
-        label = n.job?.status || "job";
-        badgeCls = n.job?.status === "completed" ? "ok" : n.job?.status === "failed" ? "err" : "warn";
-      } else if (n.type === "agent") {
-        title = n.prompt || "Agent run";
-        sub = n.provider || "local-planner";
-        badgeCls = n.done ? "ok" : "warn";
-      } else if (n.type === "note") {
-        title = (n.text || "Empty note").slice(0, 60);
-        sub = "Studio Note";
-      } else sub = shortHost(n.url);
-
+    host.innerHTML = filtered.map((r) => {
+      if (r.kind === "job") {
+        const j = r.job;
+        const dl = j.result?.download;
+        const title = dl?.filename || j.result?.title || j.url;
+        const sub = [fmtBytes(dl?.size_bytes), j.result?.engine?.engine_used, fmtRelativeTime(j.created_at)].filter(Boolean).join(" · ");
+        const badgeCls = j.status === "completed" ? "ok" : j.status === "failed" ? "err" : "warn";
+        const onCanvas = !!r.node;
+        return `
+          <div class="history-item" data-pin-job="${esc(j.job_id)}">
+            <div class="history-item-top">
+              <span class="history-item-title">${esc(title)}</span>
+              <span class="status-pill mono ${badgeCls}">${esc(j.status)}</span>
+            </div>
+            <div class="history-item-meta mono">
+              <span>${esc(sub)}</span>
+              <span>${onCanvas ? "Glide →" : "+ Pin to Desk"}</span>
+            </div>
+            ${dl?.artifact_url ? `<div class="history-item-actions"><a class="btn-link" href="${esc(dl.artifact_url)}" download="${esc(dl.filename || "download")}" onclick="event.stopPropagation()">Save File</a></div>` : ""}
+          </div>
+        `;
+      }
+      const n = r.node;
+      const title = n.type === "agent" ? (n.prompt || "Agent run") : (n.text || "Empty note").slice(0, 60);
+      const sub = n.type === "agent" ? (n.provider || "local-planner") : "Studio Note";
       return `
         <div class="history-item" data-focus-node="${esc(n.id)}">
           <div class="history-item-top">
             <span class="history-item-title">${esc(title)}</span>
-            <span class="status-pill mono ${badgeCls}">${esc(label)}</span>
+            <span class="status-pill mono ${n.done ? "ok" : ""}">${esc(n.type)}</span>
           </div>
-          <div class="history-item-meta mono">
-            <span>${esc(sub)}</span>
-            <span>Glide →</span>
-          </div>
+          <div class="history-item-meta mono"><span>${esc(sub)}</span><span>Glide →</span></div>
         </div>
       `;
     }).join("");
 
+    host.querySelectorAll("[data-pin-job]").forEach((row) => {
+      row.onclick = () => {
+        const j = state.historyJobs.find((x) => x.job_id === row.dataset.pinJob);
+        if (j) pinJobToCanvas(j);
+      };
+    });
     host.querySelectorAll("[data-focus-node]").forEach((row) => {
       row.onclick = () => {
         const n = state.nodes.get(row.dataset.focusNode);
@@ -1877,25 +2012,24 @@
     $("theme-btn").onclick = () => { sfx.click(); applyTheme((document.documentElement.getAttribute("data-theme") || "dark") === "dark" ? "light" : "dark"); };
   }
 
-  /* ---------- Hydrate Spatial Graph or Launch Default Interactive Showcase ---------- */
+  /* ---------- Hydrate History Drawer & Launch Crisp Default Showcase ---------- */
   async function hydrateFromBackend() {
     let saved = {};
     try { saved = JSON.parse(localStorage.getItem(LAYOUT_STORAGE_KEY) || "{}"); } catch (_) {}
 
+    // Load all past jobs cleanly into History Drawer (never clutter fresh canvas at 45% zoom!)
     try {
-      const jobs = await (await fetch("/v1/jobs?limit=25")).json();
-      for (const j of jobs.reverse()) {
-        state.autoSavedJobs.add(j.job_id);
-        const src = ensureSourceNode(j.url, null, false);
-        if (j.result?.title && !src.title) {
-          src.title = j.result.title;
-          if (j.result.thumbnail) src.probe = { thumbnail: j.result.thumbnail, duration_seconds: j.result.duration_seconds, source: j.result.source, engine: j.result.engine, content_type: j.result.content_type };
-          renderNode(src);
-        }
-        upsertResultNodeForJob(j, src, null, "extract");
-      }
+      const jobs = await (await fetch("/v1/jobs?limit=40")).json();
+      state.historyJobs = jobs;
+      for (const j of jobs) state.autoSavedJobs.add(j.job_id);
     } catch (_) {}
 
+    // Restore explicitly saved workspace notes & pinned nodes if any exist in v3 layout
+    const pinnedJobIds = Object.keys(saved.positions || {}).filter((k) => k.startsWith("job_")).map((k) => k.slice(4));
+    for (const jid of pinnedJobIds) {
+      const j = state.historyJobs.find((x) => x.job_id === jid);
+      if (j) pinJobToCanvas(j);
+    }
     for (const note of (saved.notes || [])) spawnNoteNode(note.x, note.y, note.text, null, note.id);
     for (const edge of (saved.customEdges || [])) {
       if (state.nodes.has(edge.from) && state.nodes.has(edge.to)) {
@@ -1904,10 +2038,8 @@
     }
 
     if (state.nodes.size === 0) {
-      // First-run default outlook: live interactive threaded workbench immediately!
+      // Crisp, immediately understandable real-world creator workflow at ~90% zoom!
       spawnDefaultShowcase();
-    } else if (!Object.keys(saved.positions || {}).length) {
-      tidyGraphLayout();
     } else {
       setTimeout(() => { renderThreads(); fitAllNodes(); }, 60);
     }
