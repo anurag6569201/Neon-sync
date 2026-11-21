@@ -1,810 +1,381 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Neon Sync Studio — Universal Media Extraction Engine</title>
-  <style>
-    :root {
-      --bg: #070a12;
-      --surface: #101726;
-      --surface-2: #172036;
-      --surface-3: #1e2a45;
-      --border: #273452;
-      --text: #e8eef8;
-      --muted: #8fa2c0;
-      --accent: #38bdf8;
-      --accent-2: #818cf8;
-      --ok: #34d399;
-      --warn: #fbbf24;
-      --err: #f87171;
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif;
-      background: radial-gradient(ellipse at top, #131f3a 0%, var(--bg) 60%);
-      color: var(--text);
-      min-height: 100vh;
-    }
-    .wrap { max-width: 1140px; margin: 0 auto; padding: 28px 20px 72px; }
-    header { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 22px; flex-wrap: wrap; }
-    .brand { display: flex; align-items: center; gap: 12px; }
-    .dot {
-      width: 14px; height: 14px; border-radius: 50%;
-      background: linear-gradient(135deg, var(--accent), var(--accent-2));
-      box-shadow: 0 0 20px var(--accent);
-    }
-    h1 { font-size: 21px; margin: 0; letter-spacing: -0.02em; }
-    h2 { font-size: 14px; margin: 0 0 12px; display: flex; justify-content: space-between; align-items: center; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
-    .sub { color: var(--muted); font-size: 12.5px; margin: 2px 0 0; }
-    .card {
-      background: rgba(16, 23, 38, 0.92);
-      border: 1px solid var(--border);
-      border-radius: 14px;
-      padding: 20px;
-      margin-bottom: 16px;
-      backdrop-filter: blur(10px);
-    }
-    .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
-    input[type="url"], input[type="text"], input[type="number"], textarea, select {
-      background: var(--surface-2);
-      border: 1px solid var(--border);
-      color: var(--text);
-      border-radius: 10px;
-      padding: 10px 12px;
-      font-size: 13.5px;
-      outline: none;
-      font-family: inherit;
-    }
-    input[type="url"], textarea { flex: 1; min-width: 260px; }
-    textarea { min-height: 86px; resize: vertical; }
-    input:focus, textarea:focus, select:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(56,189,248,0.16); }
-    button {
-      border: none; border-radius: 10px; padding: 10px 16px; font-size: 13.5px; font-weight: 600;
-      cursor: pointer; transition: transform .08s ease, background .15s ease, border-color .15s ease;
-    }
-    button:active { transform: scale(0.98); }
-    .btn-primary { background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #050914; }
-    .btn-secondary { background: var(--surface-2); color: var(--text); border: 1px solid var(--border); }
-    .btn-secondary:hover { border-color: var(--accent); }
-    .btn-danger { background: rgba(248,113,113,0.14); color: var(--err); border: 1px solid rgba(248,113,113,0.4); padding: 6px 10px; font-size: 12px; }
-    .btn-ghost { background: transparent; color: var(--muted); border: 1px solid transparent; padding: 6px 10px; font-size: 12px; }
-    .btn-ghost:hover { color: var(--text); border-color: var(--border); }
-
-    /* Presets bar */
-    .presets { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
-    .preset-btn {
-      background: var(--surface-2); border: 1px solid var(--border); color: var(--text);
-      padding: 7px 12px; border-radius: 999px; font-size: 12px; font-weight: 600;
-    }
-    .preset-btn:hover { border-color: var(--accent); }
-    .preset-btn.active {
-      background: rgba(56,189,248,0.15); border-color: var(--accent); color: var(--accent);
-    }
-
-    /* Tabs */
-    .tabs { display: flex; gap: 6px; border-bottom: 1px solid var(--border); margin: 16px 0 14px; padding-bottom: 8px; flex-wrap: wrap; }
-    .tab {
-      background: transparent; color: var(--muted); padding: 7px 13px; border-radius: 8px; font-size: 13px;
-    }
-    .tab.active { background: var(--surface-3); color: var(--accent); border: 1px solid rgba(56,189,248,0.35); }
-    .tab-pane { display: none; }
-    .tab-pane.active { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 12px; }
-    .field { display: flex; flex-direction: column; gap: 5px; }
-    .field label { font-size: 11.5px; color: var(--muted); font-weight: 600; }
-    .check-field { display: flex; align-items: center; gap: 8px; padding-top: 18px; font-size: 13px; color: var(--text); }
-    .check-field input { width: 16px; height: 16px; accent-color: var(--accent); }
-
-    /* Pills & Cards */
-    .pill {
-      display: inline-block; padding: 3px 9px; border-radius: 999px; font-size: 11px; font-weight: 600;
-      background: var(--surface-2); border: 1px solid var(--border); color: var(--muted);
-    }
-    .pill.ok { color: var(--ok); border-color: rgba(52,211,153,0.35); background: rgba(52,211,153,0.08); }
-    .pill.err { color: var(--err); border-color: rgba(248,113,113,0.35); background: rgba(248,113,113,0.08); }
-    .pill.warn { color: var(--warn); border-color: rgba(251,191,36,0.35); background: rgba(251,191,36,0.08); }
-    .pill.info { color: var(--accent); border-color: rgba(56,189,248,0.35); background: rgba(56,189,248,0.08); }
-
-    /* Format Picker Table */
-    .fmt-table-wrap { margin-top: 14px; max-height: 240px; overflow-y: auto; border: 1px solid var(--border); border-radius: 10px; }
-    table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
-    th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--border); }
-    th { position: sticky; top: 0; background: var(--surface-2); color: var(--muted); font-size: 11px; text-transform: uppercase; }
-    tr.fmt-row { cursor: pointer; }
-    tr.fmt-row:hover { background: rgba(56,189,248,0.08); }
-    tr.fmt-row.selected { background: rgba(56,189,248,0.18); }
-
-    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(225px, 1fr)); gap: 10px; }
-    .eng { background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 12px; }
-    .eng h4 { margin: 0 0 6px; font-size: 13.5px; display: flex; justify-content: space-between; align-items: center; }
-    .eng p { margin: 0; font-size: 11.5px; color: var(--muted); line-height: 1.45; }
-    .job { background: var(--surface-2); border: 1px solid var(--border); border-radius: 11px; padding: 14px; margin-bottom: 10px; }
-    .bar-bg { height: 6px; background: #080c17; border-radius: 999px; overflow: hidden; margin: 10px 0 8px; }
-    .bar-fill { height: 100%; background: linear-gradient(90deg, var(--accent), var(--ok)); transition: width .2s ease; }
-    .err-box {
-      background: rgba(248,113,113,0.1); border: 1px solid rgba(248,113,113,0.4);
-      color: #fecaca; border-radius: 10px; padding: 11px 14px; margin-top: 12px; font-size: 13px;
-    }
-    .hidden { display: none !important; }
-    a.dl-link {
-      display: inline-block; text-decoration: none; background: var(--ok); color: #04130d;
-      font-weight: 700; font-size: 12px; padding: 6px 12px; border-radius: 8px;
-    }
-    a.dl-link.secondary { background: var(--accent); color: #05111f; }
-    .preview { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-start; }
-    .preview img { width: 210px; max-height: 130px; object-fit: cover; border-radius: 10px; border: 1px solid var(--border); }
-    .muted { color: var(--muted); font-size: 12px; }
-    .active-format-banner {
-      margin-top: 10px; padding: 8px 12px; border-radius: 8px; font-size: 12.5px;
-      background: rgba(56,189,248,0.1); border: 1px solid rgba(56,189,248,0.35);
-      display: flex; justify-content: space-between; align-items: center;
-    }
-  </style>
+  <title>Neon Sync — Media Extraction Workstation</title>
+  <link rel="stylesheet" href="/static/app.css" />
 </head>
 <body>
-  <div class="wrap">
-    <header>
-      <div class="brand">
-        <div class="dot"></div>
-        <div>
-          <h1>Neon Sync Studio</h1>
-          <p class="sub">Universal Media Extraction Engine &middot; Multi-Engine Registry &middot; Safe Egress Proxy</p>
-        </div>
-      </div>
-      <div class="row">
-        <a href="/v1/formats" class="pill" style="text-decoration:none;">/v1/formats</a>
-        <a href="/docs" class="pill" style="text-decoration:none;">OpenAPI /docs</a>
-        <button class="btn-secondary" id="refresh-engines" style="padding:7px 12px;font-size:12px;">Refresh Engines</button>
-      </div>
-    </header>
-
-    <section class="card">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px;">
-        <span class="muted" style="font-weight:600;text-transform:uppercase;letter-spacing:.05em;">Quick Presets</span>
-        <div class="row">
-          <label class="muted" style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;">
-            <input type="checkbox" id="batch-toggle" /> Batch Mode (up to 10 URLs)
-          </label>
-          <button class="btn-ghost" id="reset-settings">Reset Defaults</button>
-        </div>
-      </div>
-      <div id="presets-bar" class="presets"></div>
-
-      <div class="row" id="single-url-row">
-        <input type="url" id="url-input" placeholder="Paste any video, audio, gallery, livestream, HLS/DASH, PDF, or webpage URL..." />
-        <button class="btn-secondary" id="probe-btn">Probe &amp; Inspect</button>
-        <button class="btn-primary" id="download-btn">Extract &amp; Download</button>
-      </div>
-      <div class="row hidden" id="batch-url-row" style="align-items:flex-end;">
-        <textarea id="batch-input" placeholder="Paste up to 10 URLs (one per line)..."></textarea>
-        <button class="btn-primary" id="batch-btn">Queue Batch</button>
-      </div>
-
-      <div id="selected-format-banner" class="active-format-banner hidden">
-        <span>Locked Format ID: <strong id="selected-format-label"></strong> (overrides Video Quality selector)</span>
-        <button class="btn-ghost" id="clear-format-btn">Clear</button>
-      </div>
-
-      <!-- Tabbed Advanced Settings -->
-      <div class="tabs" id="settings-tabs">
-        <button class="tab active" data-tab="video">Video</button>
-        <button class="tab" data-tab="audio">Audio</button>
-        <button class="tab" data-tab="image">Images &amp; Galleries</button>
-        <button class="tab" data-tab="subtitles">Subtitles &amp; Clip</button>
-        <button class="tab" data-tab="engine">Engine &amp; Advanced</button>
-      </div>
-
-      <!-- Video Tab -->
-      <div class="tab-pane active" id="tab-video">
-        <div class="field">
-          <label>Extraction Mode</label>
-          <select id="mode-select"></select>
-        </div>
-        <div class="field">
-          <label>Video Quality / Resolution</label>
-          <select id="video-quality"></select>
-        </div>
-        <div class="field">
-          <label>Video Container</label>
-          <select id="video-container"></select>
-        </div>
-        <div class="field">
-          <label>Preferred Video Codec</label>
-          <select id="video-codec"></select>
-        </div>
-        <div class="field">
-          <label>Max Frame Rate (FPS)</label>
-          <select id="fps-limit"></select>
-        </div>
-        <div class="check-field"><input type="checkbox" id="remux-faststart" checked /><label for="remux-faststart">MP4 Faststart Remux</label></div>
-        <div class="check-field"><input type="checkbox" id="embed-metadata" checked /><label for="embed-metadata">Embed Metadata &amp; Chapters</label></div>
-        <div class="check-field"><input type="checkbox" id="embed-thumbnail" /><label for="embed-thumbnail">Embed Cover Thumbnail</label></div>
-      </div>
-
-      <!-- Audio Tab -->
-      <div class="tab-pane" id="tab-audio">
-        <div class="field">
-          <label>Audio Format (when Mode = Audio)</label>
-          <select id="audio-format"></select>
-        </div>
-        <div class="field">
-          <label>Audio Bitrate</label>
-          <select id="audio-bitrate"></select>
-        </div>
-        <div class="check-field"><input type="checkbox" id="normalize-audio" /><label for="normalize-audio">EBU R128 Loudness Normalize</label></div>
-      </div>
-
-      <!-- Images & Galleries Tab -->
-      <div class="tab-pane" id="tab-image">
-        <div class="field">
-          <label>Image Output Format</label>
-          <select id="image-format"></select>
-        </div>
-        <div class="field">
-          <label>Image Quality: <strong id="image-quality-val">90</strong>%</label>
-          <input type="range" id="image-quality" min="10" max="100" value="90" style="padding:8px 0;" />
-        </div>
-        <div class="field">
-          <label>Image Max Width</label>
-          <select id="image-max-width"></select>
-        </div>
-        <div class="field">
-          <label>Gallery Archive Format</label>
-          <select id="gallery-archive-format"></select>
-        </div>
-        <div class="field">
-          <label>Gallery Range Start</label>
-          <input type="number" id="gallery-range-start" min="1" max="500" value="1" />
-        </div>
-        <div class="field">
-          <label>Gallery Range End (optional)</label>
-          <input type="number" id="gallery-range-end" min="1" max="500" placeholder="Auto (up to max)" />
-        </div>
-      </div>
-
-      <!-- Subtitles & Clip Tab -->
-      <div class="tab-pane" id="tab-subtitles">
-        <div class="check-field"><input type="checkbox" id="extract-subtitles" /><label for="extract-subtitles">Download Subtitles</label></div>
-        <div class="check-field"><input type="checkbox" id="embed-subtitles" /><label for="embed-subtitles">Embed Subtitles in Video</label></div>
-        <div class="check-field"><input type="checkbox" id="generate-transcript" /><label for="generate-transcript">Generate Clean .txt Transcript</label></div>
-        <div class="field">
-          <label>Subtitle Mode</label>
-          <select id="subtitle-mode"></select>
-        </div>
-        <div class="field">
-          <label>Subtitle Format</label>
-          <select id="subtitle-format"></select>
-        </div>
-        <div class="field">
-          <label>Subtitle Languages (comma-sep)</label>
-          <input type="text" id="subtitle-languages" value="en" placeholder="en,es,fr" />
-        </div>
-        <div class="field">
-          <label>Clip Start (sec or MM:SS)</label>
-          <input type="text" id="clip-start" placeholder="e.g. 0:10 or 10" />
-        </div>
-        <div class="field">
-          <label>Clip End (sec or MM:SS)</label>
-          <input type="text" id="clip-end" placeholder="e.g. 0:30 or 30" />
-        </div>
-      </div>
-
-      <!-- Engine & Advanced Tab -->
-      <div class="tab-pane" id="tab-engine">
-        <div class="field">
-          <label>Preferred Engine Override</label>
-          <select id="preferred-engine"><option value="">Auto (Smart Router)</option></select>
-        </div>
-        <div class="field">
-          <label>Custom Filename Prefix</label>
-          <input type="text" id="filename-prefix" maxlength="64" placeholder="e.g. project_clip" />
-        </div>
-        <div class="field">
-          <label>Playlist Items (e.g. 1-5 or 1,3)</label>
-          <input type="text" id="playlist-items" placeholder="All (up to max items)" />
-        </div>
-        <div class="field">
-          <label>Max Playlist / Gallery Items</label>
-          <input type="number" id="max-items" min="1" max="200" value="50" />
-        </div>
-        <div class="field">
-          <label>Live Stream Max Duration (sec)</label>
-          <input type="number" id="live-max-dur" min="5" max="7200" placeholder="Default (1800s)" />
-        </div>
-        <div class="check-field"><input type="checkbox" id="browser-fallback" /><label for="browser-fallback">Allow Tier-3 Playwright Fallback</label></div>
-      </div>
-
-      <div id="error-box" class="err-box hidden"></div>
-    </section>
-
-    <!-- Probe Inspector -->
-    <section id="probe-card" class="card hidden">
-      <h2>
-        <span>Probe Inspector</span>
-        <span id="probe-badges" class="row"></span>
-      </h2>
-      <div id="probe-body" class="preview"></div>
-      <div id="probe-formats-wrap" class="fmt-table-wrap hidden">
-        <table>
-          <thead>
-            <tr>
-              <th>Format ID</th>
-              <th>Resolution</th>
-              <th>FPS</th>
-              <th>Video Codec</th>
-              <th>Audio Codec</th>
-              <th>Container</th>
-              <th>Size</th>
-            </tr>
-          </thead>
-          <tbody id="probe-formats-tbody"></tbody>
-        </table>
-      </div>
-    </section>
-
-    <!-- Live SSE Queue -->
-    <section class="card">
-      <h2><span>Extraction Queue</span><span id="job-count" class="pill">0 jobs</span></h2>
-      <div id="jobs-list"><p class="muted">Submit a URL above to track real-time SSE extraction progress.</p></div>
-    </section>
-
-    <!-- Engine Registry -->
-    <section class="card">
-      <h2><span>Universal Engine Registry</span><span id="engine-summary" class="pill">Loading...</span></h2>
-      <div id="engines-grid" class="grid"></div>
-    </section>
-  </div>
-
-  <script>
-    const $ = (id) => document.getElementById(id);
-    const jobs = new Map();
-    const sources = new Map();
-    let catalog = null;
-    let selectedFormatId = null;
-
-    function showError(msg) {
-      const box = $("error-box");
-      if (!msg) { box.classList.add("hidden"); box.textContent = ""; return; }
-      box.textContent = msg;
-      box.classList.remove("hidden");
-    }
-
-    function fmtBytes(n) {
-      if (n === null || n === undefined) return "—";
-      const units = ["B", "KB", "MB", "GB"];
-      let v = n, i = 0;
-      while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
-      return `${v.toFixed(i ? 1 : 0)} ${units[i]}`;
-    }
-
-    function fmtDuration(sec) {
-      if (sec === null || sec === undefined) return "";
-      const s = Math.round(sec);
-      const h = Math.floor(s / 3600);
-      const m = Math.floor((s % 3600) / 60);
-      const r = s % 60;
-      return h ? `${h}:${String(m).padStart(2, "0")}:${String(r).padStart(2, "0")}` : `${m}:${String(r).padStart(2, "0")}`;
-    }
-
-    function parseTimeInput(raw) {
-      const s = (raw || "").trim();
-      if (!s) return null;
-      if (/^\d+(\.\d+)?$/.test(s)) return parseFloat(s);
-      const parts = s.split(":").map(Number);
-      if (parts.some(Number.isNaN)) return null;
-      if (parts.length === 2) return parts[0] * 60 + parts[1];
-      if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
-      return null;
-    }
-
-    function fillSelect(id, options, defaultVal) {
-      const el = $(id);
-      el.innerHTML = options.map((o) => `<option value="${o.id}">${o.label}</option>`).join("");
-      if (defaultVal !== undefined) el.value = defaultVal;
-    }
-
-    function setSelectedFormat(fmtId, label) {
-      selectedFormatId = fmtId;
-      const banner = $("selected-format-banner");
-      if (fmtId) {
-        $("selected-format-label").textContent = `${fmtId}${label ? " (" + label + ")" : ""}`;
-        banner.classList.remove("hidden");
-      } else {
-        banner.classList.add("hidden");
-      }
-      document.querySelectorAll("tr.fmt-row").forEach((tr) => {
-        tr.classList.toggle("selected", tr.dataset.fmtId === fmtId);
-      });
-    }
-
-    function resetDefaults() {
-      $("mode-select").value = "auto";
-      $("video-quality").value = "best";
-      $("video-container").value = "auto";
-      $("video-codec").value = "auto";
-      $("fps-limit").value = "any";
-      $("remux-faststart").checked = true;
-      $("embed-metadata").checked = true;
-      $("embed-thumbnail").checked = false;
-      $("audio-format").value = "best";
-      $("audio-bitrate").value = "auto";
-      $("normalize-audio").checked = false;
-      $("image-format").value = "original";
-      $("image-quality").value = "90";
-      $("image-quality-val").textContent = "90";
-      $("image-max-width").value = "original";
-      $("gallery-archive-format").value = "zip";
-      $("gallery-range-start").value = "1";
-      $("gallery-range-end").value = "";
-      $("extract-subtitles").checked = false;
-      $("embed-subtitles").checked = false;
-      $("generate-transcript").checked = false;
-      $("subtitle-mode").value = "prefer_manual";
-      $("subtitle-format").value = "vtt";
-      $("subtitle-languages").value = "en";
-      $("clip-start").value = "";
-      $("clip-end").value = "";
-      $("preferred-engine").value = "";
-      $("filename-prefix").value = "";
-      $("playlist-items").value = "";
-      $("max-items").value = "50";
-      $("live-max-dur").value = "";
-      $("browser-fallback").checked = false;
-      setSelectedFormat(null);
-      document.querySelectorAll(".preset-btn").forEach((b) => b.classList.remove("active"));
-    }
-
-    function applyPreset(preset) {
-      resetDefaults();
-      const s = preset.settings || {};
-      if (s.mode) $("mode-select").value = s.mode;
-      if (s.video_quality) $("video-quality").value = s.video_quality;
-      if (s.video_container) $("video-container").value = s.video_container;
-      if (s.video_codec) $("video-codec").value = s.video_codec;
-      if (s.fps_limit) $("fps-limit").value = String(s.fps_limit);
-      if (s.remux_faststart !== undefined) $("remux-faststart").checked = s.remux_faststart;
-      if (s.embed_metadata !== undefined) $("embed-metadata").checked = s.embed_metadata;
-      if (s.embed_thumbnail !== undefined) $("embed-thumbnail").checked = s.embed_thumbnail;
-      if (s.audio_format) $("audio-format").value = s.audio_format;
-      if (s.audio_bitrate) $("audio-bitrate").value = s.audio_bitrate;
-      if (s.normalize_audio !== undefined) $("normalize-audio").checked = s.normalize_audio;
-      if (s.image_format) $("image-format").value = s.image_format;
-      if (s.image_quality !== undefined) {
-        $("image-quality").value = String(s.image_quality);
-        $("image-quality-val").textContent = String(s.image_quality);
-      }
-      if (s.image_max_width) $("image-max-width").value = String(s.image_max_width);
-      if (s.gallery_archive_format) $("gallery-archive-format").value = s.gallery_archive_format;
-      if (s.extract_subtitles !== undefined) $("extract-subtitles").checked = s.extract_subtitles;
-      if (s.embed_subtitles !== undefined) $("embed-subtitles").checked = s.embed_subtitles;
-
-      document.querySelectorAll(".preset-btn").forEach((b) => {
-        b.classList.toggle("active", b.dataset.presetId === preset.id);
-      });
-    }
-
-    function collectOptions() {
-      const fpsVal = $("fps-limit").value;
-      const imgMaxW = $("image-max-width").value;
-      const rangeEnd = $("gallery-range-end").value.trim();
-      const liveMax = $("live-max-dur").value.trim();
-      const langs = $("subtitle-languages").value.split(",").map((x) => x.trim()).filter(Boolean);
-
-      const opts = {
-        mode: $("mode-select").value,
-        video_quality: $("video-quality").value,
-        video_container: $("video-container").value,
-        video_codec: $("video-codec").value,
-        fps_limit: fpsVal && fpsVal !== "any" ? parseInt(fpsVal, 10) : null,
-        remux_faststart: $("remux-faststart").checked,
-        embed_metadata: $("embed-metadata").checked,
-        embed_thumbnail: $("embed-thumbnail").checked,
-        audio_format: $("audio-format").value || null,
-        audio_bitrate: $("audio-bitrate").value,
-        normalize_audio: $("normalize-audio").checked,
-        image_format: $("image-format").value,
-        image_quality: parseInt($("image-quality").value, 10),
-        image_max_width: imgMaxW && imgMaxW !== "original" ? parseInt(imgMaxW, 10) : null,
-        gallery_archive_format: $("gallery-archive-format").value,
-        gallery_range_start: Math.max(1, parseInt($("gallery-range-start").value || "1", 10)),
-        gallery_range_end: rangeEnd ? parseInt(rangeEnd, 10) : null,
-        extract_subtitles: $("extract-subtitles").checked,
-        embed_subtitles: $("embed-subtitles").checked,
-        generate_transcript: $("generate-transcript").checked,
-        subtitle_mode: $("subtitle-mode").value,
-        subtitle_format: $("subtitle-format").value,
-        subtitle_languages: langs.length ? langs : ["en"],
-        clip_start_seconds: parseTimeInput($("clip-start").value),
-        clip_end_seconds: parseTimeInput($("clip-end").value),
-        preferred_engine: $("preferred-engine").value || null,
-        custom_filename_prefix: $("filename-prefix").value.trim(),
-        playlist_items: $("playlist-items").value.trim() || null,
-        max_items: Math.max(1, parseInt($("max-items").value || "50", 10)),
-        livestream_max_duration: liveMax ? parseInt(liveMax, 10) : null,
-        allow_browser_fallback: $("browser-fallback").checked,
-      };
-      if (selectedFormatId) opts.format_id = selectedFormatId;
-      return opts;
-    }
-
-    async function loadCatalog() {
-      catalog = await (await fetch("/v1/formats")).json();
-      fillSelect("mode-select", catalog.modes, "auto");
-      fillSelect("video-quality", catalog.video_qualities, "best");
-      fillSelect("video-container", catalog.video_containers, "auto");
-      fillSelect("video-codec", catalog.video_codecs, "auto");
-      fillSelect("fps-limit", catalog.fps_limits, "any");
-      fillSelect("audio-format", catalog.audio_formats, "best");
-      fillSelect("audio-bitrate", catalog.audio_bitrates, "auto");
-      fillSelect("image-format", catalog.image_formats, "original");
-      fillSelect("image-max-width", catalog.image_max_widths, "original");
-      fillSelect("gallery-archive-format", catalog.gallery_archive_formats, "zip");
-      fillSelect("subtitle-mode", catalog.subtitle_modes, "prefer_manual");
-      fillSelect("subtitle-format", catalog.subtitle_formats, "vtt");
-
-      $("presets-bar").innerHTML = catalog.presets.map(
-        (p) => `<button class="preset-btn" data-preset-id="${p.id}" title="${p.description}">${p.name}</button>`
-      ).join("");
-      document.querySelectorAll(".preset-btn").forEach((btn) => {
-        btn.onclick = () => {
-          const preset = catalog.presets.find((p) => p.id === btn.dataset.presetId);
-          if (preset) applyPreset(preset);
-        };
-      });
-    }
-
-    async function loadEngines(refresh = false) {
-      const res = await fetch(refresh ? "/v1/engines/refresh" : "/v1/engines", {
-        method: refresh ? "POST" : "GET",
-      });
-      const list = await res.json();
-      const installed = list.filter((e) => e.installation_status === "installed").length;
-      $("engine-summary").textContent = `${installed} / ${list.length} installed`;
-      $("engines-grid").innerHTML = list.map((e) => {
-        const ok = e.installation_status === "installed";
-        return `
-          <div class="eng">
-            <h4>
-              <span>${e.id}</span>
-              <span class="pill ${ok ? "ok" : "warn"}">${ok ? "ready" : e.installation_status}</span>
-            </h4>
-            <p>Tier ${e.tier} &middot; v${e.version}<br/>${e.license}<br/>Priority: ${e.priority}</p>
-          </div>`;
-      }).join("");
-
-      const cur = $("preferred-engine").value;
-      $("preferred-engine").innerHTML =
-        `<option value="">Auto (Smart Router)</option>` +
-        list
-          .filter((e) => e.id !== "ffmpeg")
-          .map((e) => `<option value="${e.id}">${e.id} (${e.installation_status})</option>`)
-          .join("");
-      $("preferred-engine").value = cur;
-    }
-
-    function renderProbe(data) {
-      setSelectedFormat(null);
-      $("probe-card").classList.remove("hidden");
-      $("probe-badges").innerHTML = `
-        <span class="pill ok">${data.content_type}</span>
-        ${data.is_live ? '<span class="pill err">LIVE</span>' : ""}
-        <span class="pill info">${data.engine.engine_used} (${data.engine.probe_duration_ms ?? 0}ms)</span>
-        ${data.engine.fallback_chain?.length > 1 ? `<span class="pill warn">chain: ${data.engine.fallback_chain.join(" → ")}</span>` : ""}
-      `;
-      const thumb = data.thumbnail?.url ? `<img src="${data.thumbnail.url}" alt="thumb" />` : "";
-      const subsInfo = (data.subtitles || []).length
-        ? `<div class="muted" style="margin-top:6px;">Subtitles: ${data.subtitles.slice(0, 8).map((s) => s.language + (s.is_auto_generated ? " (auto)" : "")).join(", ")}</div>`
-        : "";
-      const itemsInfo = (data.items || []).length
-        ? `<div class="muted" style="margin-top:6px;">Collection items detected: <strong>${data.items.length}</strong></div>`
-        : "";
-
-      $("probe-body").innerHTML = `
-        ${thumb}
-        <div style="flex:1;min-width:250px;">
-          <div style="font-weight:700;font-size:16px;margin-bottom:5px;">${data.title || data.url}</div>
-          <div class="muted">
-            ${data.source.domain}
-            ${data.author?.name ? " &middot; " + data.author.name : ""}
-            ${data.duration_seconds ? " &middot; " + fmtDuration(data.duration_seconds) : ""}
-            ${data.size_bytes ? " &middot; " + fmtBytes(data.size_bytes) : ""}
+  <div class="app-shell">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div>
+        <div class="brand-row">
+          <div class="brand-mark">
+            <span class="logo-box" aria-hidden="true">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+                <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+              </svg>
+            </span>
+            <span>Neon Sync</span>
           </div>
-          ${subsInfo}
-          ${itemsInfo}
+          <span class="ver-tag" id="app-version">v0.1.0</span>
         </div>
-      `;
 
-      const fmts = data.available_formats || [];
-      if (fmts.length) {
-        $("probe-formats-wrap").classList.remove("hidden");
-        $("probe-formats-tbody").innerHTML = fmts.slice(0, 40).map((f) => `
-          <tr class="fmt-row" data-fmt-id="${f.format_id}" data-fmt-label="${f.resolution || f.label || f.container}">
-            <td><code>${f.format_id}</code></td>
-            <td>${f.resolution || f.label || "—"}</td>
-            <td>${f.fps ? Math.round(f.fps) : "—"}</td>
-            <td>${f.video_codec || "—"}</td>
-            <td>${f.audio_codec || "—"}</td>
-            <td>${f.container}</td>
-            <td>${fmtBytes(f.size_bytes)}</td>
-          </tr>
-        `).join("");
-        document.querySelectorAll("tr.fmt-row").forEach((row) => {
-          row.onclick = () => {
-            const id = row.dataset.fmtId;
-            if (selectedFormatId === id) setSelectedFormat(null);
-            else setSelectedFormat(id, row.dataset.fmtLabel);
-          };
-        });
-      } else {
-        $("probe-formats-wrap").classList.add("hidden");
-      }
-    }
+        <div class="nav-section-label">Workspace</div>
+        <nav class="nav-list">
+          <button class="nav-item active" data-view="extract">
+            <span class="nav-left">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+              </svg>
+              <span>Extract</span>
+            </span>
+          </button>
 
-    function renderJobs() {
-      const arr = Array.from(jobs.values()).sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
-      $("job-count").textContent = `${arr.length} job${arr.length === 1 ? "" : "s"}`;
-      if (!arr.length) {
-        $("jobs-list").innerHTML = `<p class="muted">Submit a URL above to track real-time SSE extraction progress.</p>`;
-        return;
-      }
-      $("jobs-list").innerHTML = arr.map((j) => {
-        const pct = j.progress?.percent ?? (j.status === "completed" ? 100 : 0);
-        const cls = j.status === "completed" ? "ok" : (j.status === "failed" || j.status === "cancelled") ? "err" : "warn";
-        const dl = j.result?.download;
-        const tr = j.result?.transcript;
-        const ff = j.result?.metadata?.extra?.ffprobe;
-        const speedStr = j.progress?.speed_bps ? ` &middot; ${fmtBytes(j.progress.speed_bps)}/s` : "";
-        const etaStr = j.progress?.eta_seconds ? ` &middot; ETA ${Math.round(j.progress.eta_seconds)}s` : "";
-        const ffStr = ff ? ` &middot; ${[ff.video_codec, ff.audio_codec, ff.width && ff.height ? ff.width + "x" + ff.height : null].filter(Boolean).join(" / ")}` : "";
+          <button class="nav-item" data-view="queue">
+            <span class="nav-left">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>
+              </svg>
+              <span>Queue &amp; History</span>
+            </span>
+            <span class="nav-badge num" id="nav-job-count">0</span>
+          </button>
 
-        let actions = "";
-        if (dl?.artifact_url) {
-          actions += `<a class="dl-link" href="${dl.artifact_url}">Download ${dl.filename || "artifact"} (${fmtBytes(dl.size_bytes)})</a>`;
-        }
-        if (tr?.artifact_url) {
-          actions += ` <a class="dl-link secondary" href="${tr.artifact_url}">Transcript .txt</a>`;
-        }
-        if (["queued", "probing", "downloading", "post_processing"].includes(j.status)) {
-          actions += `<button class="btn-danger" onclick="cancelJob('${j.job_id}')">Cancel</button>`;
-        }
+          <button class="nav-item" data-view="engines">
+            <span class="nav-left">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/><line x1="20" y1="9" x2="23" y2="9"/><line x1="20" y1="14" x2="23" y2="14"/><line x1="1" y1="9" x2="4" y2="9"/><line x1="1" y1="14" x2="4" y2="14"/>
+              </svg>
+              <span>Engines</span>
+            </span>
+            <span class="nav-badge num" id="nav-engine-count">—</span>
+          </button>
 
-        return `
-          <div class="job">
-            <div style="display:flex;justify-content:space-between;gap:10px;align-items:center;">
-              <div style="font-weight:600;font-size:13px;word-break:break-all;">${j.url}</div>
-              <div class="row" style="gap:6px;">
-                ${j.result?.engine?.engine_used ? `<span class="pill info">${j.result.engine.engine_used}</span>` : ""}
-                <span class="pill ${cls}">${j.status}</span>
+          <button class="nav-item" data-view="api">
+            <span class="nav-left">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>
+              </svg>
+              <span>API &amp; Payload</span>
+            </span>
+          </button>
+        </nav>
+      </div>
+
+      <div class="sidebar-footer">
+        <div class="status-card">
+          <div class="status-indicator">
+            <span class="status-dot" id="sidebar-status-dot"></span>
+            <span id="sidebar-status-text">Checking engines...</span>
+          </div>
+          <button class="icon-btn" id="sidebar-refresh" title="Refresh Engine Health">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+            </svg>
+          </button>
+        </div>
+
+        <div class="footer-actions">
+          <a class="icon-btn" href="/docs" target="_blank" rel="noopener">OpenAPI</a>
+          <button class="icon-btn" id="theme-toggle" title="Toggle Dark / Light theme">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/>
+            </svg>
+            <span id="theme-label">Light</span>
+          </button>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Workspace -->
+    <div class="main-area">
+      <header class="topbar">
+        <div class="topbar-title" id="topbar-title">Extract</div>
+        <div class="topbar-meta">
+          <span class="kbd" title="Focus URL input">⌘K</span>
+          <span class="kbd" title="Start extraction">⌘↵</span>
+        </div>
+      </header>
+
+      <main class="workspace">
+        <!-- VIEW 1: EXTRACT -->
+        <section class="view active" id="view-extract">
+          <div class="panel">
+            <div class="panel-header">
+              <div class="panel-title">Media Source</div>
+              <div class="segmented" role="tablist">
+                <button class="seg-btn active" id="mode-single-btn">Single URL</button>
+                <button class="seg-btn" id="mode-batch-btn">Batch (up to 10)</button>
               </div>
             </div>
-            <div class="bar-bg"><div class="bar-fill" style="width:${Math.min(100, Math.max(0, pct))}%"></div></div>
-            <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
-              <span class="muted">
-                ${j.error || j.progress?.message || j.status}${speedStr}${etaStr}${ffStr}
-                ${dl?.sha256 ? " &middot; sha256:" + dl.sha256.slice(0, 12) : ""}
-              </span>
-              <div class="row" style="gap:6px;">${actions}</div>
+
+            <div class="panel-body">
+              <!-- Single URL Command Input -->
+              <div class="command-box" id="single-input-wrap">
+                <input
+                  type="url"
+                  class="command-input"
+                  id="url-input"
+                  placeholder="Paste video, audio, image gallery, livestream, HLS/DASH, PDF, or webpage URL..."
+                  autocomplete="off"
+                  spellcheck="false"
+                />
+                <button class="btn btn-ghost btn-sm" id="paste-btn" title="Paste from clipboard" style="height:34px;">Paste</button>
+                <button class="btn btn-secondary" id="probe-btn">Probe</button>
+                <button class="btn btn-primary" id="extract-btn">Extract</button>
+              </div>
+
+              <!-- Batch Input -->
+              <div id="batch-input-wrap" class="hidden">
+                <textarea class="batch-textarea" id="batch-input" placeholder="https://example.com/video-1&#10;https://example.com/gallery-2&#10;https://example.com/report.pdf"></textarea>
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;">
+                  <span class="mono" style="color:var(--text-muted);" id="batch-line-count">0 URLs</span>
+                  <button class="btn btn-primary" id="batch-submit-btn">Queue Batch</button>
+                </div>
+              </div>
+
+              <!-- Presets -->
+              <div class="presets-row" id="presets-row"></div>
+
+              <!-- Active Configuration Summary + Toggle Drawer -->
+              <div class="overrides-bar">
+                <div class="chips-list" id="active-chips"></div>
+                <div style="display:flex;gap:6px;align-items:center;">
+                  <button class="btn btn-ghost btn-sm" id="reset-btn">Reset</button>
+                  <button class="btn btn-secondary btn-sm" id="toggle-settings-btn">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/>
+                    </svg>
+                    <span id="toggle-settings-label">Configure Options</span>
+                  </button>
+                </div>
+              </div>
             </div>
-          </div>`;
-      }).join("");
-    }
 
-    function watchJob(jobId) {
-      if (sources.has(jobId)) return;
-      const es = new EventSource(`/v1/jobs/${jobId}/events`);
-      sources.set(jobId, es);
-      es.addEventListener("progress", async (ev) => {
-        const p = JSON.parse(ev.data);
-        const cur = jobs.get(jobId) || { job_id: jobId };
-        cur.status = p.status;
-        cur.progress = p;
-        jobs.set(jobId, cur);
-        renderJobs();
-        if (["completed", "failed", "cancelled"].includes(p.status)) {
-          es.close();
-          sources.delete(jobId);
-          const full = await (await fetch(`/v1/jobs/${jobId}`)).json();
-          jobs.set(jobId, full);
-          renderJobs();
-        }
-      });
-      es.onerror = () => { es.close(); sources.delete(jobId); };
-    }
+            <!-- Collapsible Advanced Options Drawer -->
+            <div class="settings-body hidden" id="settings-drawer">
+              <div class="settings-tabs" id="settings-tabs">
+                <button class="tab-btn active" data-tab="video">Video</button>
+                <button class="tab-btn" data-tab="audio">Audio</button>
+                <button class="tab-btn" data-tab="image">Images &amp; Galleries</button>
+                <button class="tab-btn" data-tab="subtitles">Subtitles &amp; Clip</button>
+                <button class="tab-btn" data-tab="engine">Engine &amp; Limits</button>
+              </div>
 
-    async function cancelJob(jobId) {
-      const res = await fetch(`/v1/jobs/${jobId}/cancel`, { method: "POST" });
-      if (res.ok) {
-        jobs.set(jobId, await res.json());
-        renderJobs();
-      }
-    }
-    window.cancelJob = cancelJob;
+              <!-- Video Tab -->
+              <div class="tab-pane active" id="tab-video">
+                <div class="field"><label>Extraction Mode</label><select id="mode-select"></select></div>
+                <div class="field"><label>Resolution / Quality</label><select id="video-quality"></select></div>
+                <div class="field"><label>Container</label><select id="video-container"></select></div>
+                <div class="field"><label>Video Codec</label><select id="video-codec"></select></div>
+                <div class="field"><label>Frame Rate Cap</label><select id="fps-limit"></select></div>
 
-    // Tab switching
-    document.querySelectorAll("#settings-tabs .tab").forEach((btn) => {
-      btn.onclick = () => {
-        document.querySelectorAll("#settings-tabs .tab").forEach((b) => b.classList.remove("active"));
-        document.querySelectorAll(".tab-pane").forEach((p) => p.classList.remove("active"));
-        btn.classList.add("active");
-        $("tab-" + btn.dataset.tab).classList.add("active");
-      };
-    });
+                <label class="toggle-row">
+                  <span class="toggle-text"><span class="toggle-title">MP4 Faststart</span><span class="toggle-sub">Optimize for web playback</span></span>
+                  <span class="switch"><input type="checkbox" id="remux-faststart" checked /><span class="slider"></span></span>
+                </label>
+                <label class="toggle-row">
+                  <span class="toggle-text"><span class="toggle-title">Embed Metadata</span><span class="toggle-sub">Title, author &amp; chapters</span></span>
+                  <span class="switch"><input type="checkbox" id="embed-metadata" checked /><span class="slider"></span></span>
+                </label>
+                <label class="toggle-row">
+                  <span class="toggle-text"><span class="toggle-title">Embed Thumbnail</span><span class="toggle-sub">Attach cover image</span></span>
+                  <span class="switch"><input type="checkbox" id="embed-thumbnail" /><span class="slider"></span></span>
+                </label>
+              </div>
 
-    $("image-quality").oninput = (e) => { $("image-quality-val").textContent = e.target.value; };
-    $("batch-toggle").onchange = (e) => {
-      $("single-url-row").classList.toggle("hidden", e.target.checked);
-      $("batch-url-row").classList.toggle("hidden", !e.target.checked);
-    };
-    $("clear-format-btn").onclick = () => setSelectedFormat(null);
-    $("reset-settings").onclick = resetDefaults;
+              <!-- Audio Tab -->
+              <div class="tab-pane" id="tab-audio">
+                <div class="field"><label>Audio Format</label><select id="audio-format"></select></div>
+                <div class="field"><label>Target Bitrate</label><select id="audio-bitrate"></select></div>
+                <label class="toggle-row">
+                  <span class="toggle-text"><span class="toggle-title">Loudness Normalize</span><span class="toggle-sub">FFmpeg EBU R128 loudnorm</span></span>
+                  <span class="switch"><input type="checkbox" id="normalize-audio" /><span class="slider"></span></span>
+                </label>
+              </div>
 
-    $("probe-btn").onclick = async () => {
-      showError("");
-      const url = $("url-input").value.trim();
-      if (!url) return showError("Enter a URL first.");
-      const opts = collectOptions();
-      const res = await fetch("/v1/probe", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          url,
-          preferred_engine: opts.preferred_engine,
-          max_items: opts.max_items,
-          allow_browser_fallback: opts.allow_browser_fallback,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) return showError(data.detail?.message || JSON.stringify(data.detail));
-      renderProbe(data);
-    };
+              <!-- Images & Galleries Tab -->
+              <div class="tab-pane" id="tab-image">
+                <div class="field"><label>Output Format</label><select id="image-format"></select></div>
+                <div class="field">
+                  <label><span>Compression Quality</span><span class="mono num" id="image-quality-val">90%</span></label>
+                  <input type="range" id="image-quality" min="10" max="100" value="90" />
+                </div>
+                <div class="field"><label>Max Width</label><select id="image-max-width"></select></div>
+                <div class="field"><label>Gallery Archive</label><select id="gallery-archive-format"></select></div>
+                <div class="field"><label>Gallery Range Start</label><input type="number" id="gallery-range-start" min="1" max="500" value="1" /></div>
+                <div class="field"><label>Gallery Range End</label><input type="number" id="gallery-range-end" min="1" max="500" placeholder="Auto" /></div>
+              </div>
 
-    $("download-btn").onclick = async () => {
-      showError("");
-      const url = $("url-input").value.trim();
-      if (!url) return showError("Enter a URL first.");
-      const payload = { url, ...collectOptions() };
-      const res = await fetch("/v1/jobs", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const data = await res.json();
-      if (!res.ok) return showError(data.detail?.message || JSON.stringify(data.detail));
-      jobs.set(data.job_id, data);
-      renderJobs();
-      watchJob(data.job_id);
-    };
+              <!-- Subtitles & Clip Tab -->
+              <div class="tab-pane" id="tab-subtitles">
+                <label class="toggle-row">
+                  <span class="toggle-text"><span class="toggle-title">Download Subtitles</span><span class="toggle-sub">Fetch caption tracks</span></span>
+                  <span class="switch"><input type="checkbox" id="extract-subtitles" /><span class="slider"></span></span>
+                </label>
+                <label class="toggle-row">
+                  <span class="toggle-text"><span class="toggle-title">Embed Subtitles</span><span class="toggle-sub">Mux into video container</span></span>
+                  <span class="switch"><input type="checkbox" id="embed-subtitles" /><span class="slider"></span></span>
+                </label>
+                <label class="toggle-row">
+                  <span class="toggle-text"><span class="toggle-title">Generate Transcript</span><span class="toggle-sub">Clean .txt from captions</span></span>
+                  <span class="switch"><input type="checkbox" id="generate-transcript" /><span class="slider"></span></span>
+                </label>
+                <div class="field"><label>Subtitle Mode</label><select id="subtitle-mode"></select></div>
+                <div class="field"><label>Subtitle Format</label><select id="subtitle-format"></select></div>
+                <div class="field"><label>Languages</label><input type="text" id="subtitle-languages" value="en" placeholder="en,es,fr" /></div>
+                <div class="field"><label>Clip Start</label><input type="text" id="clip-start" placeholder="0:10 or 10" /></div>
+                <div class="field"><label>Clip End</label><input type="text" id="clip-end" placeholder="0:45 or 45" /></div>
+              </div>
 
-    $("batch-btn").onclick = async () => {
-      showError("");
-      const urls = $("batch-input").value.split(/\r?\n/).map((u) => u.trim()).filter(Boolean);
-      if (!urls.length) return showError("Enter at least one URL (one per line).");
-      const opts = collectOptions();
-      delete opts.format_id;
-      const res = await fetch("/v1/jobs/batch", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ urls, ...opts }),
-      });
-      const data = await res.json();
-      if (!res.ok) return showError(data.detail?.message || JSON.stringify(data.detail));
-      for (const j of data) {
-        jobs.set(j.job_id, j);
-        watchJob(j.job_id);
-      }
-      renderJobs();
-    };
+              <!-- Engine & Limits Tab -->
+              <div class="tab-pane" id="tab-engine">
+                <div class="field"><label>Engine Override</label><select id="preferred-engine"><option value="">Auto (Smart Router)</option></select></div>
+                <div class="field"><label>Filename Prefix</label><input type="text" id="filename-prefix" maxlength="64" placeholder="Optional prefix" /></div>
+                <div class="field"><label>Playlist Items</label><input type="text" id="playlist-items" placeholder="e.g. 1-5 or 1,3,7" /></div>
+                <div class="field"><label>Max Items Cap</label><input type="number" id="max-items" min="1" max="200" value="50" /></div>
+                <div class="field"><label>Live Record Cap (sec)</label><input type="number" id="live-max-dur" min="5" max="7200" placeholder="1800" /></div>
+                <label class="toggle-row">
+                  <span class="toggle-text"><span class="toggle-title">Browser Fallback</span><span class="toggle-sub">Tier-3 Playwright JS sniffer</span></span>
+                  <span class="switch"><input type="checkbox" id="browser-fallback" /><span class="slider"></span></span>
+                </label>
+              </div>
+            </div>
+          </div>
 
-    $("refresh-engines").onclick = () => loadEngines(true);
+          <!-- Probe Inspector Panel -->
+          <div class="panel hidden" id="probe-panel">
+            <div class="panel-header">
+              <div class="panel-title">
+                <span>Probe Inspector</span>
+                <span id="probe-header-badges" style="display:inline-flex;gap:6px;"></span>
+              </div>
+              <div style="display:flex;gap:6px;align-items:center;">
+                <div class="segmented" id="fmt-filter-group">
+                  <button class="seg-btn active" data-fmt-filter="all">All</button>
+                  <button class="seg-btn" data-fmt-filter="muxed">Video+Audio</button>
+                  <button class="seg-btn" data-fmt-filter="video">Video</button>
+                  <button class="seg-btn" data-fmt-filter="audio">Audio</button>
+                </div>
+                <button class="btn btn-ghost btn-sm" id="close-probe-btn">Close</button>
+              </div>
+            </div>
+            <div class="panel-body">
+              <div class="probe-grid" id="probe-summary"></div>
+              <div id="probe-formats-section" class="hidden" style="margin-top:16px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                  <span class="mono" style="color:var(--text-muted);" id="probe-fmt-hint">Click any row to lock a specific format_id</span>
+                  <button class="btn btn-ghost btn-sm hidden" id="clear-fmt-lock-btn">Clear format lock</button>
+                </div>
+                <div class="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>ID</th>
+                        <th>Resolution</th>
+                        <th>FPS</th>
+                        <th>Video</th>
+                        <th>Audio</th>
+                        <th>Container</th>
+                        <th>Size</th>
+                      </tr>
+                    </thead>
+                    <tbody id="probe-formats-tbody"></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
 
-    (async () => {
-      await loadCatalog();
-      await loadEngines(false);
-      const existing = await (await fetch("/v1/jobs")).json();
-      for (const j of existing) jobs.set(j.job_id, j);
-      renderJobs();
-    })();
-  </script>
+          <!-- Recent / Active Jobs Preview -->
+          <div class="panel">
+            <div class="panel-header">
+              <div class="panel-title">
+                <span>Active &amp; Recent Jobs</span>
+                <span class="badge num" id="extract-job-count">0</span>
+              </div>
+              <button class="btn btn-ghost btn-sm" data-jump="queue">View all</button>
+            </div>
+            <div id="extract-jobs-list">
+              <div class="empty-state">No jobs yet. Paste a URL above and press <span class="kbd">⌘↵</span> to extract.</div>
+            </div>
+          </div>
+        </section>
+
+        <!-- VIEW 2: QUEUE & HISTORY -->
+        <section class="view" id="view-queue">
+          <div class="panel">
+            <div class="panel-header">
+              <div class="panel-title">Extraction Queue &amp; History</div>
+              <div class="segmented" id="queue-filter-group">
+                <button class="seg-btn active" data-qfilter="all">All</button>
+                <button class="seg-btn" data-qfilter="active">Active</button>
+                <button class="seg-btn" data-qfilter="completed">Completed</button>
+                <button class="seg-btn" data-qfilter="failed">Failed</button>
+              </div>
+            </div>
+            <div id="full-jobs-list">
+              <div class="empty-state">No extraction history recorded.</div>
+            </div>
+          </div>
+        </section>
+
+        <!-- VIEW 3: ENGINE REGISTRY -->
+        <section class="view" id="view-engines">
+          <div class="panel">
+            <div class="panel-header">
+              <div class="panel-title">
+                <span>Universal Engine Registry</span>
+                <span class="badge num" id="engines-ready-badge">—</span>
+              </div>
+              <button class="btn btn-secondary btn-sm" id="engines-refresh-btn">Re-check Health</button>
+            </div>
+            <div class="table-wrap" style="border:none;border-radius:0;max-height:none;">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Engine</th>
+                    <th>Tier</th>
+                    <th>Status</th>
+                    <th>Version</th>
+                    <th>Priority</th>
+                    <th>Mode</th>
+                    <th>License</th>
+                    <th>Capabilities</th>
+                  </tr>
+                </thead>
+                <tbody id="engines-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- VIEW 4: API & LIVE PAYLOAD -->
+        <section class="view" id="view-api">
+          <div class="panel">
+            <div class="panel-header">
+              <div class="panel-title">Live Request Payload (Synced with Current Settings)</div>
+              <div style="display:flex;gap:6px;">
+                <button class="btn btn-secondary btn-sm" id="copy-curl-btn">Copy cURL</button>
+                <button class="btn btn-secondary btn-sm" id="copy-json-btn">Copy JSON</button>
+              </div>
+            </div>
+            <div class="panel-body">
+              <p style="margin:0 0 12px;color:var(--text-secondary);font-size:12.5px;">
+                Every setting configured in the Extract workspace maps directly to the versioned <span class="mono">/v1/jobs</span> REST API.
+              </p>
+              <pre class="code-block" id="live-curl-preview"></pre>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <div class="toast-stack" id="toast-stack" aria-live="polite"></div>
+  <script src="/static/app.js"></script>
 </body>
 </html>

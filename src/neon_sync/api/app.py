@@ -10,6 +10,7 @@ from pathlib import Path
 import uvicorn
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 
 from neon_sync import __version__
 from neon_sync.adapters import (
@@ -37,7 +38,8 @@ from neon_sync.registry import EngineRegistry
 
 from .routes import router as v1_router
 
-_STATIC_INDEX = Path(__file__).resolve().parent / "static" / "index.html"
+_STATIC_DIR = Path(__file__).resolve().parent / "static"
+_STATIC_INDEX = _STATIC_DIR / "index.html"
 
 
 @dataclass
@@ -108,6 +110,8 @@ def create_app(
     )
     app.state.container = container
     app.include_router(v1_router, prefix="/v1")
+    if _STATIC_DIR.is_dir():
+        app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
 
     @app.get("/", response_class=HTMLResponse, include_in_schema=False)
     async def web_ui() -> HTMLResponse:
