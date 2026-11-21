@@ -11,6 +11,7 @@ from .storage import (
     StoredArtifact,
     build_storage,
 )
+from .tiers import TierEntitlements, TierLimitError, TierManager
 from .transcripts import normalize_subtitle_to_transcript
 
 __all__ = [
@@ -25,6 +26,9 @@ __all__ = [
     "SQLiteJobStore",
     "SlidingWindowRateLimiter",
     "StoredArtifact",
+    "TierEntitlements",
+    "TierLimitError",
+    "TierManager",
     "UrlRouter",
     "build_storage",
     "normalize_subtitle_to_transcript",

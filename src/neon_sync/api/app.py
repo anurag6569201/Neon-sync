@@ -23,6 +23,7 @@ from neon_sync.adapters import (
     StreamlinkAdapter,
     YtDlpAdapter,
 )
+from neon_sync.agent import NeonSyncAgent
 from neon_sync.config import Settings, get_settings
 from neon_sync.pipeline import (
     ArtifactStorage,
@@ -32,6 +33,7 @@ from neon_sync.pipeline import (
     JobStore,
     SlidingWindowRateLimiter,
     SQLiteJobStore,
+    TierManager,
     build_storage,
 )
 from neon_sync.registry import EngineRegistry
@@ -50,6 +52,8 @@ class AppContainer:
     job_store: JobStore
     orchestrator: ExtractionOrchestrator
     job_manager: JobManager
+    tier_manager: TierManager
+    agent: NeonSyncAgent
     probe_limiter: SlidingWindowRateLimiter
     download_limiter: SlidingWindowRateLimiter
 
@@ -79,6 +83,8 @@ def create_app(
     job_store: JobStore = SQLiteJobStore(cfg.job_db_path) if cfg.job_db_path else InMemoryJobStore()
     orchestrator = ExtractionOrchestrator(cfg, reg, storage)
     job_manager = JobManager(cfg, orchestrator, store=job_store)
+    tier_manager = TierManager(cfg)
+    agent = NeonSyncAgent(cfg, orchestrator, job_manager, tier_manager)
 
     container = AppContainer(
         settings=cfg,
@@ -87,6 +93,8 @@ def create_app(
         job_store=job_store,
         orchestrator=orchestrator,
         job_manager=job_manager,
+        tier_manager=tier_manager,
+        agent=agent,
         probe_limiter=SlidingWindowRateLimiter(cfg.rate_limit_probes_per_minute, 60.0),
         download_limiter=SlidingWindowRateLimiter(cfg.rate_limit_downloads_per_hour, 3600.0),
     )

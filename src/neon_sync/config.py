@@ -69,6 +69,24 @@ class Settings(BaseSettings):
     rate_limit_downloads_per_hour: int = 20
     probe_cache_ttl_seconds: int = 300  # 5 minutes
 
+    # SaaS Tiers (Guest try-without-signup vs Pro)
+    enforce_saas_tiers: bool = True
+    guest_downloads_per_hour: int = 5
+    guest_agent_runs_per_day: int = 3
+    guest_max_video_height: int = 1080
+    guest_max_job_bytes: int = 500 * 1024 * 1024  # 500 MiB for guest
+    guest_max_batch_urls: int = 3
+    pro_api_keys: str = "neon-pro-local"  # Comma-separated Pro API keys for local/SaaS testing
+
+    # Neon Sync AI Agent Providers (optional — falls back to local deterministic planner when unset)
+    gemini_api_key: str | None = None
+    gemini_model: str = "gemini-2.5-flash"
+    openai_api_key: str | None = None
+    openai_base_url: str = "https://api.openai.com/v1"
+    openai_model: str = "gpt-4o-mini"
+    ollama_url: str | None = None
+    ollama_model: str = "llama3.2"
+
     # Engine binary overrides (auto-discovered via PATH when None)
     ytdlp_bin: str = "yt-dlp"
     gallery_dl_bin: str = "gallery-dl"
