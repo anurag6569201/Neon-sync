@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import Literal
@@ -68,7 +68,7 @@ class CostProfile(BaseModel):
 
 class HealthStatus(BaseModel):
     state: HealthState = HealthState.HEALTHY
-    last_checked_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    last_checked_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     consecutive_failures: int = Field(default=0, ge=0)
     error_rate_5m: float = Field(default=0.0, ge=0.0, le=1.0)
     outdated_detected: bool = False
@@ -109,7 +109,7 @@ class HealthReport(BaseModel):
     version: str
     healthy: bool
     detail: str = ""
-    checked_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    checked_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class ProbeOptions(BaseModel):

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Literal
 
@@ -56,7 +56,7 @@ class ProgressEvent(BaseModel):
     items_completed: int | None = Field(default=None, ge=0)
     items_total: int | None = Field(default=None, ge=0)
     message: str = ""
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class JobRecord(BaseModel):
@@ -67,6 +67,6 @@ class JobRecord(BaseModel):
     progress: ProgressEvent | None = None
     result: NormalizedMediaOutput | None = None
     error: str | None = None
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     completed_at: datetime | None = None
