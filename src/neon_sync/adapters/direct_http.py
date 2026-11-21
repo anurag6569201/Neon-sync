@@ -593,6 +593,16 @@ class DirectHttpAdapter(ExtractorAdapter):
                         )
 
                     mime = resp.headers.get("content-type", "").split(";")[0].strip().lower() or None
+                    if mime in {"text/html", "application/xhtml+xml"} and plan.mode in {
+                        "video",
+                        "audio",
+                        "image",
+                    }:
+                        raise AdapterError(
+                            ErrorCode.ERR_UNSUPPORTED_URL,
+                            "URL returned an HTML webpage instead of a direct media file.",
+                            engine_id=self.id,
+                        )
                     filename = _parse_content_disposition_filename(
                         resp.headers.get("content-disposition")
                     ) or sanitize_filename(Path(urlsplit(final_url).path).name or "download")

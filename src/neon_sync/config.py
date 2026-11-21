@@ -44,7 +44,7 @@ class Settings(BaseSettings):
     max_playlist_items: int = 50
     max_gallery_items: int = 100
     max_livestream_duration_seconds: int = 1800  # 30 min live recording cap
-    probe_timeout_seconds: int = 25
+    probe_timeout_seconds: int = 40
     download_timeout_seconds: int = 1800
     ffmpeg_timeout_seconds: int = 600
     direct_aria2_threshold_bytes: int = 10 * 1024 * 1024  # >= 10 MiB uses aria2c

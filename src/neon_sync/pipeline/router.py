@@ -126,37 +126,56 @@ class UrlRouter:
 
         for candidate in candidates:
             adapter = candidate.adapter
+            # Never degrade a known video/gallery platform to direct-http HTML download when mode is media
+            if (
+                adapter.id == "direct-http"
+                and ctx.domain in _KNOWN_FAST_DOMAINS
+                and ctx.mode in {"video", "audio", "image"}
+            ):
+                continue
+
             attempted.append(adapter.id)
-            try:
-                result = await adapter.probe(ctx, options, cancel_token=cancel_token)
-                self._registry.record_outcome(adapter.id, ctx.domain, success=True)
-                result.engine.fallback_chain = list(attempted)
-                if warnings:
-                    result.warnings.extend(warnings)
-                return result
-            except AdapterError as exc:
-                last_error = exc
-                # Do not penalize circuit breaker when URL is simply unsupported by this engine
-                if exc.code != ErrorCode.ERR_UNSUPPORTED_URL:
-                    self._registry.record_outcome(
-                        adapter.id,
-                        ctx.domain,
-                        success=False,
-                        outdated=exc.outdated,
-                    )
+            max_attempts = 2 if candidate.match.confidence >= 90 else 1
+            for attempt in range(max_attempts):
+                try:
+                    result = await adapter.probe(ctx, options, cancel_token=cancel_token)
+                    self._registry.record_outcome(adapter.id, ctx.domain, success=True)
+                    result.engine.fallback_chain = list(attempted)
+                    if warnings:
+                        result.warnings.extend(warnings)
+                    return result
+                except AdapterError as exc:
+                    last_error = exc
+                    if exc.retryable and attempt + 1 < max_attempts:
+                        log.info(
+                            "Retrying %s on %s after transient error (%s)",
+                            adapter.id,
+                            ctx.domain,
+                            exc.code.value,
+                        )
+                        continue
+                    # Do not penalize circuit breaker when URL is simply unsupported by this engine
+                    if exc.code != ErrorCode.ERR_UNSUPPORTED_URL:
+                        self._registry.record_outcome(
+                            adapter.id,
+                            ctx.domain,
+                            success=False,
+                            outdated=exc.outdated,
+                        )
 
-                # Hard stop immediately on DRM, auth, SSRF, 404, geo-block, or quota errors
-                if exc.code in HARD_STOP_ERROR_CODES:
-                    log.info("Hard-stopping fallback chain on %s from %s", exc.code, adapter.id)
-                    raise
+                    # Hard stop immediately on DRM, auth, SSRF, 404, geo-block, or quota errors
+                    if exc.code in HARD_STOP_ERROR_CODES:
+                        log.info("Hard-stopping fallback chain on %s from %s", exc.code, adapter.id)
+                        raise
 
-                warnings.append(
-                    WarningInfo(
-                        code="WARN_ENGINE_FALLBACK",
-                        message=f"Engine '{adapter.id}' skipped ({exc.code.value}): {exc.message[:160]}",
-                        engine=adapter.id,
+                    warnings.append(
+                        WarningInfo(
+                            code="WARN_ENGINE_FALLBACK",
+                            message=f"Engine '{adapter.id}' skipped ({exc.code.value}): {exc.message[:160]}",
+                            engine=adapter.id,
+                        )
                     )
-                )
+                    break
 
         if last_error is not None:
             raise last_error
