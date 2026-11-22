@@ -25,7 +25,6 @@ class JobStatus(StrEnum):
 
 class ProbeRequest(BaseModel):
     url: str = Field(min_length=4, max_length=4096)
-    preferred_engine: str | None = None
     max_items: int = Field(default=50, ge=1, le=200)
     include_subtitles: bool = True
     allow_browser_fallback: bool = False
@@ -36,7 +35,6 @@ class DownloadRequest(AdvancedProcessingOptions):
     url: str = Field(min_length=4, max_length=4096)
     mode: Literal["auto", "video", "audio", "image", "direct"] = "auto"
     format_id: str | None = None
-    preferred_engine: str | None = None
     allow_browser_fallback: bool = False
     max_items: int = Field(default=50, ge=1, le=200)
     idempotency_key: str | None = Field(default=None, max_length=128)
@@ -45,7 +43,6 @@ class DownloadRequest(AdvancedProcessingOptions):
 class BatchDownloadRequest(AdvancedProcessingOptions):
     urls: list[str] = Field(min_length=1, max_length=10)
     mode: Literal["auto", "video", "audio", "image", "direct"] = "auto"
-    preferred_engine: str | None = None
     allow_browser_fallback: bool = False
     max_items: int = Field(default=50, ge=1, le=200)
 

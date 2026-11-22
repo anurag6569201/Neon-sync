@@ -7,8 +7,9 @@ import logging
 import time
 import uuid
 from collections import defaultdict, deque
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from datetime import UTC, datetime
+from typing import Any
 
 from neon_sync.adapters import AdapterError
 from neon_sync.config import Settings
@@ -55,15 +56,47 @@ class JobManager:
         orchestrator: ExtractionOrchestrator,
         *,
         store: JobStore | None = None,
+        on_pipeline_event: Callable[..., Any] | None = None,
     ) -> None:
         self._settings = settings
         self._orchestrator = orchestrator
         self._store: JobStore = store or InMemoryJobStore()
+        self._on_pipeline_event = on_pipeline_event
         self._semaphore = asyncio.Semaphore(settings.max_concurrent_downloads)
         self._active: dict[str, JobRecord] = {}
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._tokens: dict[str, CancellationToken] = {}
         self._subscribers: dict[str, set[asyncio.Queue[ProgressEvent | None]]] = defaultdict(set)
+
+    @property
+    def active_count(self) -> int:
+        return len(self._active)
+
+    def _emit_pipeline_log(
+        self,
+        *,
+        job_id: str,
+        stage: str,
+        status: str,
+        message: str,
+        level: str = "INFO",
+        duration_ms: float | None = None,
+        extra: dict[str, Any] | None = None,
+    ) -> None:
+        if self._on_pipeline_event is None:
+            return
+        try:
+            self._on_pipeline_event(
+                job_id=job_id,
+                stage=stage,
+                status=status,
+                message=message,
+                level=level,
+                duration_ms=duration_ms,
+                extra=extra,
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.debug("Pipeline telemetry callback ignored error: %s", exc)
 
     def get_job(self, job_id: str) -> JobRecord | None:
         return self._active.get(job_id) or self._store.get(job_id)
@@ -119,13 +152,25 @@ class JobManager:
         token: CancellationToken,
     ) -> None:
         record = self._active[job_id]
+        started = time.monotonic()
+        last_stage: str | None = None
 
         async def _on_progress(event: ProgressEvent) -> None:
+            nonlocal last_stage
             record.status = event.status
             record.progress = event
             record.updated_at = datetime.now(UTC)
             self._store.save(record)
             await self._broadcast(job_id, event)
+            if event.stage != last_stage:
+                last_stage = event.stage
+                self._emit_pipeline_log(
+                    job_id=job_id,
+                    stage=event.stage,
+                    status=event.status.value,
+                    message=event.message or f"Stage: {event.stage}",
+                    extra={"percent": event.percent, "mode": request.mode},
+                )
 
         try:
             async with self._semaphore:
@@ -139,6 +184,7 @@ class JobManager:
                     cancel_token=token,
                 )
                 now = datetime.now(UTC)
+                elapsed_ms = round((time.monotonic() - started) * 1000.0, 1)
                 record.status = JobStatus.COMPLETED
                 record.result = result
                 record.completed_at = now
@@ -150,13 +196,26 @@ class JobManager:
                     percent=100.0,
                     bytes_downloaded=result.download.size_bytes,
                     bytes_total=result.download.size_bytes,
-                    message="Download complete",
+                    message="Extraction complete",
                 )
                 record.progress = done_evt
                 self._store.save(record)
                 await self._broadcast(job_id, done_evt)
+                self._emit_pipeline_log(
+                    job_id=job_id,
+                    stage="completed",
+                    status="completed",
+                    message=f"Artifact ready: {result.download.filename} ({result.download.size_bytes or 0:,} bytes)",
+                    duration_ms=elapsed_ms,
+                    extra={
+                        "filename": result.download.filename,
+                        "size_bytes": result.download.size_bytes,
+                        "mime_type": result.download.mime_type,
+                    },
+                )
         except (SubprocessCancelledError, asyncio.CancelledError):
             now = datetime.now(UTC)
+            elapsed_ms = round((time.monotonic() - started) * 1000.0, 1)
             record.status = JobStatus.CANCELLED
             record.error = token.reason or "Job cancelled"
             record.completed_at = now
@@ -170,9 +229,18 @@ class JobManager:
             record.progress = evt
             self._store.save(record)
             await self._broadcast(job_id, evt)
+            self._emit_pipeline_log(
+                job_id=job_id,
+                stage="cancelled",
+                status="cancelled",
+                message=record.error,
+                level="WARN",
+                duration_ms=elapsed_ms,
+            )
         except (UrlValidationError, AdapterError, Exception) as exc:  # noqa: BLE001
             log.warning("Job %s failed: %s", job_id, exc)
             now = datetime.now(UTC)
+            elapsed_ms = round((time.monotonic() - started) * 1000.0, 1)
             record.status = JobStatus.FAILED
             record.error = str(exc)
             record.result = self._orchestrator.build_error_output(
@@ -191,6 +259,14 @@ class JobManager:
             record.progress = evt
             self._store.save(record)
             await self._broadcast(job_id, evt)
+            self._emit_pipeline_log(
+                job_id=job_id,
+                stage="failed",
+                status="failed",
+                message=str(exc),
+                level="ERROR",
+                duration_ms=elapsed_ms,
+            )
         finally:
             await self._broadcast(job_id, None)
             self._tasks.pop(job_id, None)

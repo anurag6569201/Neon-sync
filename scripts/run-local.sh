@@ -7,6 +7,8 @@ VENV_BIN="${ROOT_DIR}/.venv/bin"
 export PATH="${VENV_BIN}:/opt/homebrew/bin:/usr/local/bin:${PATH}"
 export NEON_SYNC_EGRESS_PROXY_URL="${NEON_SYNC_EGRESS_PROXY_URL:-http://127.0.0.1:3128}"
 export NEON_SYNC_JOB_DB_PATH="${NEON_SYNC_JOB_DB_PATH:-${ROOT_DIR}/data/jobs.sqlite3}"
+export NEON_SYNC_AUTH_DB_PATH="${NEON_SYNC_AUTH_DB_PATH:-${ROOT_DIR}/data/auth.sqlite3}"
+export NEON_SYNC_AUTOMATIONS_DB_PATH="${NEON_SYNC_AUTOMATIONS_DB_PATH:-${ROOT_DIR}/data/automations.sqlite3}"
 export NEON_SYNC_SCRATCH_DIR="${NEON_SYNC_SCRATCH_DIR:-${ROOT_DIR}/scratch/jobs}"
 export NEON_SYNC_STORAGE_DIR="${NEON_SYNC_STORAGE_DIR:-${ROOT_DIR}/data/artifacts}"
 

@@ -27,7 +27,6 @@
     sse: new Map(),
     autoSavedJobs: new Set(),
     oscActive: false,
-    historyFilter: "all",
     historyJobs: [],
     selectedNodeId: null,
     nodes: new Map(), // id -> { id, type: 'source'|'choice'|'agent'|'result'|'note', x, y, ... }
@@ -38,6 +37,23 @@
     pendingPatch: null,
     hasDemoGraph: false,
     lastApiPayload: null,
+    // Neon Sync Developer Console state
+    consoleTab: "logs",
+    consoleLogs: [],
+    consoleMetrics: null,
+    consolePaused: false,
+    consoleFilter: "all",
+    selectedLogId: null,
+    inspectorTab: "response",
+    logEventSource: null,
+    platformStatus: null,
+    wbEndpoint: "probe",
+    wbLang: "curl",
+    // Authentication & Account state
+    user: null,
+    authProviders: null,
+    authMode: "login",
+    accountTab: "profile",
   };
 
   try {
@@ -568,6 +584,7 @@
     }
     if (ct === "audio") {
       const list = [
+        { key: "watch_live", theme: "live", icon: "play", title: "Listen Live", sub: "Stream instantly · Zero download", edgeLabel: "LIVE PLAY", isLeaf: true, delta: { _livePlay: "audio" } },
         { key: "audio", theme: "audio", icon: "headphones", title: "Audio", sub: "MP3 · M4A · Opus · FLAC · WAV", edgeLabel: "AUDIO", nextStep: "audio_format", delta: { mode: "audio" } },
       ];
       if (hasThumb) list.push({ key: "image", theme: "image", icon: "image", title: "Cover Art", sub: "Extract & convert thumbnail", edgeLabel: "COVER", nextStep: "image_format", delta: { mode: "image", _useThumbnailUrl: true } });
@@ -583,6 +600,7 @@
 
     // Video / YouTube / Social / Stream
     const list = [
+      { key: "watch_live", theme: "live", icon: "play", title: "Watch Live", sub: "Instant network stream · VLC mode", edgeLabel: "LIVE PLAY", isLeaf: true, delta: { _livePlay: "video" } },
       { key: "video", theme: "video", icon: "film", title: "Video", sub: maxH ? `Up to ${maxH >= 2160 ? "4K" : maxH + "p"} · Audio or Muted` : "With Audio · Muted · Trim Clip", edgeLabel: "VIDEO", nextStep: "video_track", delta: { mode: "video" } },
       { key: "audio", theme: "audio", icon: "headphones", title: "Audio", sub: "MP3 · M4A · Opus · FLAC · WAV", edgeLabel: "AUDIO", nextStep: "audio_format", delta: { mode: "audio" } },
       { key: "subtitles", theme: "subtitles", icon: "subtitles", title: "Subtitles", sub: subCount ? `${subCount} track(s) · .txt · AI Brief` : "Auto captions · .txt · AI Brief", edgeLabel: "CAPTIONS", nextStep: "sub_lang", delta: { mode: "video", extract_subtitles: true, subtitles_only: true } },
@@ -718,9 +736,10 @@
 
     if (step === "agent_paths") {
       return [
+        { key: "ag_kit", theme: "agent", icon: "layers", title: "Viral Reel Kit", sub: "1080p MP4 + 320k MP3 + AI Hooks", edgeLabel: "MULTI-STEP", isLeaf: true, delta: { _agentPrompt: "create a viral reel kit with 1080p mp4, 320k mp3 and social hooks" } },
+        { key: "ag_watch_brief", theme: "live", icon: "play", title: "Watch Live + AI Brief", sub: "Instant stream + transcript takeaways", edgeLabel: "LIVE + AI", isLeaf: true, delta: { _agentPrompt: "watch live and summarize key takeaways with timestamps" } },
         { key: "ag_clip", theme: "agent", icon: "scissors", title: "15s Reel Clip", sub: "0:30–0:45 · 1080p H.264 MP4", edgeLabel: "AI CLIP", isLeaf: true, delta: { _agentPrompt: "clip 0:30 to 0:45 in 1080p h264 mp4" } },
-        { key: "ag_mp3", theme: "agent", icon: "headphones", title: "Mastered 320k MP3", sub: "Extract audio + Loudnorm", edgeLabel: "AI AUDIO", isLeaf: true, delta: { _agentPrompt: "extract audio as 320k mp3 and normalize volume" } },
-        { key: "ag_sum", theme: "agent", icon: "sparkles", title: "Summarize Media", sub: "Key takeaways & metadata", edgeLabel: "AI BRIEF", isLeaf: true, delta: { _agentPrompt: "summarize the key points from" } },
+        { key: "ag_mp3", theme: "agent", icon: "headphones", title: "Podcast Audio + Notes", sub: "320k MP3 + Loudnorm + AI brief", edgeLabel: "AI AUDIO", isLeaf: true, delta: { _agentPrompt: "extract audio as 320k mp3 with loudnorm and summarize key points" } },
         { key: "ag_custom", theme: "agent", icon: "terminal", title: "Custom AI Command", sub: "Tell Neon Agent what to build", edgeLabel: "PROMPT", inputKind: "agent_prompt", isLeaf: true, delta: {} },
       ];
     }
@@ -732,7 +751,7 @@
   function subtreeHasRealOutput(nodeId) {
     const n = state.nodes.get(nodeId);
     if (!n) return false;
-    if (n.type === "result" || n.type === "agent" || n.type === "note") return true;
+    if (n.type === "result" || n.type === "agent" || n.type === "note" || n.type === "player") return true;
     const kids = state.edges.filter((e) => e.from === nodeId).map((e) => e.to);
     return kids.some((cid) => subtreeHasRealOutput(cid));
   }
@@ -941,6 +960,11 @@
     const src = state.nodes.get(choiceNode.rootSourceId);
     const acc = { ...(choiceNode.accumulated || {}) };
 
+    // Handle Live Network Stream Watch / Listen leaf (VLC-style zero-download playback!)
+    if (acc._livePlay) {
+      return launchLivePlayerFromParent(choiceNode, src.url, acc._livePlay);
+    }
+
     // Handle inline AI Agent prompt leaf or preset AI prompt leaf
     if (acc._agentPrompt || choiceNode.inputKind === "agent_prompt") {
       const rawPrompt = choiceNode.inputKind === "agent_prompt" ? (choiceNode.customPrompt || "").trim() : acc._agentPrompt;
@@ -1009,7 +1033,7 @@
     }
     state.edges = state.edges.filter((e) => !e.demo);
     state.hasDemoGraph = false;
-    $("sandbox-banner").classList.add("hidden");
+    $("sandbox-banner")?.classList.add("hidden");
     renderThreads();
     syncWorkspaceMeta();
   }
@@ -1017,7 +1041,7 @@
   function promoteDemoTreeToReal() {
     if (!state.hasDemoGraph) return;
     state.hasDemoGraph = false;
-    $("sandbox-banner").classList.add("hidden");
+    $("sandbox-banner")?.classList.add("hidden");
     for (const n of state.nodes.values()) n.demo = false;
     for (const e of state.edges) e.demo = false;
     persistWorkspace();
@@ -1027,7 +1051,7 @@
   function spawnDefaultShowcase() {
     clearDemoGraph();
     state.hasDemoGraph = true;
-    $("sandbox-banner").classList.remove("hidden");
+    $("sandbox-banner")?.classList.remove("hidden");
 
     const v = SHOWCASE_VIDEO;
     const src = {
@@ -1047,7 +1071,7 @@
         source: { domain: "youtube.com" },
         author: { name: `${v.uploader} · ${v.views}` },
         thumbnail: { url: v.thumbnail },
-        engine: { engine_used: "yt-dlp" },
+        engine: { engine_used: "neon-sync" },
         available_formats: [
           { format_id: "137", resolution: "1920x1080", height: 1080, fps: 30, container: "mp4", video_codec: "avc1" },
           { format_id: "136", resolution: "1280x720", height: 720, fps: 30, container: "mp4", video_codec: "avc1" },
@@ -1080,11 +1104,6 @@
 
   /* ---------- Spatial Graph Core: Threads & Layout ---------- */
   function syncWorkspaceMeta() {
-    const realNodes = Array.from(state.nodes.values()).filter((n) => !n.demo && n.type !== "choice");
-    const realEdges = state.edges.filter((e) => !e.demo);
-    const totalHist = state.historyJobs.length + realNodes.filter((n) => n.type === "note" || n.type === "agent").length;
-    $("history-count-chip").textContent = String(totalHist);
-    $("history-stats").textContent = `${realNodes.length} on desk · ${state.historyJobs.length} saved · ${realEdges.length} threads`;
     drawMinimap();
   }
 
@@ -1128,12 +1147,15 @@
       if (n.url) state.sourceByUrl.delete(n.url);
     }
     if (n.type === "result" && n.jobId) state.resultByJobId.delete(n.jobId);
+    if (n.type === "player" && n.hls) {
+      try { n.hls.destroy(); } catch (_) {}
+      n.hls = null;
+    }
     state.nodes.delete(nodeId);
     state.edges = state.edges.filter((e) => e.from !== nodeId && e.to !== nodeId);
     document.querySelector(`[data-node-id="${CSS.escape(nodeId)}"]`)?.remove();
     sfx.click();
     renderThreads();
-    renderHistoryList();
     syncWorkspaceMeta();
     persistWorkspace();
   }
@@ -1270,7 +1292,7 @@
 
     const extraCls = node.type === "choice"
       ? `theme-${node.theme} ${node.isLeaf ? "is-leaf" : ""} ${node.inputKind ? "choice-interactive" : ""} ${node.expanded ? "path-lit" : ""}`
-      : "";
+      : node.type === "player" && node.theater ? "theater" : "";
     el.className = `node node-${node.type} ${extraCls} ${state.selectedNodeId === node.id ? "selected" : ""} ${node.collapsed ? "collapsed" : ""}`;
     el.style.left = `${node.x}px`;
     el.style.top = `${node.y}px`;
@@ -1335,7 +1357,7 @@
              ${p.is_live || p.duration_seconds ? `<span class="dur-badge mono num">${p.is_live ? "LIVE" : fmtDuration(p.duration_seconds)}</span>` : ""}
            </div>` : "";
       const metaBits = p
-        ? [p.source?.domain, p.author?.name, p.content_type?.toUpperCase(), p.size_bytes ? fmtBytes(p.size_bytes) : null, `via ${p.engine?.engine_used}`].filter(Boolean)
+        ? [p.source?.domain, p.author?.name, p.content_type?.toUpperCase(), p.size_bytes ? fmtBytes(p.size_bytes) : null, "Neon Sync"].filter(Boolean)
         : [shortHost(node.url), node.probing ? "Probing available paths…" : "Ready"];
       const caps = [];
       if (p) {
@@ -1361,6 +1383,13 @@
             ${thumbHtml}
             <div class="node-meta mono">${esc(metaBits.join(" · "))}</div>
             ${caps.length ? `<div class="node-caps">${caps.map((c) => `<span class="cap-tag mono">${esc(c)}</span>`).join("")}</div>` : ""}
+            <div class="source-quick-bar">
+              <button class="watch-pill-btn" data-watch-source="${esc(node.id)}" title="Stream & watch live immediately without downloading">
+                ${iconSvg("play", "ico-xs")}
+                <span>Watch Live</span>
+              </button>
+              <span class="mono muted" style="font-size:9.5px;">ZERO DOWNLOAD · VLC MODE</span>
+            </div>
           </div>
         </div>
       `;
@@ -1395,7 +1424,7 @@
       const isActive = !isDone && !isErr;
       const dl = j.result?.download;
       const tr = j.result?.transcript;
-      const ff = j.result?.metadata?.extra?.ffprobe;
+      const mediaInfo = j.result?.metadata?.extra?.media_analysis;
       const title = dl?.filename || j.result?.title || j.url || "Extraction";
 
       const metaBits = [];
@@ -1403,17 +1432,18 @@
       else if (isDone) metaBits.push(fmtBytes(dl?.size_bytes));
       else metaBits.push(j.progress?.message || j.status || "queued");
       if (isActive && j.progress?.speed_bps) metaBits.push(`${fmtBytes(j.progress.speed_bps)}/s`);
-      if (ff) {
-        const c = [ff.video_codec, ff.audio_codec, ff.width && ff.height ? `${ff.width}×${ff.height}` : null].filter(Boolean).join(" · ");
+      if (mediaInfo) {
+        const c = [mediaInfo.video_codec, mediaInfo.audio_codec, mediaInfo.width && mediaInfo.height ? `${mediaInfo.width}×${mediaInfo.height}` : null].filter(Boolean).join(" · ");
         if (c) metaBits.push(c);
       }
       if (j.created_at) metaBits.push(fmtRelativeTime(j.created_at));
 
+      const extBadge = dl?.filename && dl.filename.includes(".") ? dl.filename.split(".").pop().toUpperCase() : "NEON SYNC";
       inner = `
         <div class="port port-in" data-port="in" data-node="${esc(node.id)}"></div>
         <div class="port port-out" data-port="out" data-node="${esc(node.id)}"><span class="port-tip mono">Drag to link or annotate</span></div>
         <div class="node-head" data-drag-handle="1">
-          <span class="node-type-pill mono"><span class="node-type-dot"></span>ARTIFACT ${j.result?.engine?.engine_used ? `· ${esc(j.result.engine.engine_used.toUpperCase())}` : ""}</span>
+          <span class="node-type-pill mono"><span class="node-type-dot"></span>ARTIFACT · ${esc(extBadge)}</span>
           <div class="node-head-right">
             <span class="status-pill mono ${isDone ? "ok" : isErr ? "err" : "warn"}">${esc(j.status || "queued")}</span>
             <button class="node-icon-btn" data-node-collapse="${esc(node.id)}">${node.collapsed ? "▸" : "▾"}</button>
@@ -1435,6 +1465,87 @@
           </div>
         </div>
       `;
+    } else if (node.type === "player") {
+      const st = node.stream;
+      const tracks = st?.tracks || [];
+      const activeTrack = tracks.find((t) => t.stream_id === node.activeStreamId) || tracks[0] || null;
+      const isAudioOnly = activeTrack?.kind === "audio" || node.playMode === "audio";
+      const statusCls = node.error ? "err" : node.loading ? "warn" : "ok";
+      const statusTxt = node.error ? "error" : node.loading ? "buffering" : (st?.is_live ? "LIVE" : "streaming");
+      const speedVal = node.playbackRate || 1;
+      const subTracksHtml = (st?.subtitles || [])
+        .map((s, idx) => `<track kind="subtitles" srclang="${esc(s.language)}" label="${esc(s.name || s.language.toUpperCase())}" src="${esc(s.url)}" ${idx === 0 ? "" : ""} />`)
+        .join("");
+
+      let stageHtml = "";
+      if (node.error) {
+        stageHtml = `<div class="player-stage"><div class="player-loading"><span class="mono" style="color:var(--err);padding:0 16px;text-align:center;">${esc(node.error)}</span></div></div>`;
+      } else if (node.loading || !activeTrack) {
+        stageHtml = `<div class="player-stage"><div class="player-loading"><div class="player-spinner"></div><span class="mono">Resolving Neon Sync network stream…</span></div></div>`;
+      } else if (isAudioOnly) {
+        stageHtml = `
+          <div class="player-stage audio-stage">
+            <div class="audio-stage-top">
+              ${st.thumbnail_url ? `<img class="audio-cover" src="${esc(st.thumbnail_url)}" alt="" />` : ""}
+              <div style="min-width:0;">
+                <div style="font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(st.title)}</div>
+                <div class="mono muted" style="font-size:10.5px;">${esc(activeTrack.label)} · Zero Download Stream</div>
+              </div>
+            </div>
+            <audio controls autoplay playsinline data-media-el="${esc(node.id)}"></audio>
+          </div>
+        `;
+      } else {
+        stageHtml = `
+          <div class="player-stage">
+            <video controls autoplay playsinline crossorigin="anonymous" poster="${esc(st.thumbnail_url || "")}" data-media-el="${esc(node.id)}">
+              ${subTracksHtml}
+            </video>
+          </div>
+        `;
+      }
+
+      const chaptersHtml = (st?.chapters || []).length
+        ? `<div class="player-chapters">${st.chapters.map((ch) => `<button class="chapter-chip" data-seek-to="${ch.start_seconds}">${esc(fmtDuration(ch.start_seconds))} ${esc(ch.title.slice(0, 24))}</button>`).join("")}</div>`
+        : "";
+
+      inner = `
+        <div class="port port-in" data-port="in" data-node="${esc(node.id)}"></div>
+        <div class="port port-out" data-port="out" data-node="${esc(node.id)}"><span class="port-tip mono">Drag to link</span></div>
+        <div class="node-head" data-drag-handle="1">
+          <span class="node-type-pill mono"><span class="node-type-dot"></span>LIVE STREAM ${activeTrack ? `· ${esc(activeTrack.protocol.toUpperCase())}` : ""}</span>
+          <div class="node-head-right">
+            <span class="status-pill mono ${statusCls}">${esc(statusTxt)}</span>
+            <button class="node-icon-btn" data-player-theater="${esc(node.id)}" title="Toggle wide theater mode">${node.theater ? "⤢" : "⤡"}</button>
+            <button class="node-icon-btn" data-node-collapse="${esc(node.id)}">${node.collapsed ? "▸" : "▾"}</button>
+            <button class="node-icon-btn" data-node-del="${esc(node.id)}">×</button>
+          </div>
+        </div>
+        <div class="node-body">
+          <h3 class="node-title">${esc(st?.title || node.title || node.url)}</h3>
+          <div class="node-body-collapsible">
+            ${stageHtml}
+            ${activeTrack ? `
+              <div class="player-deck">
+                <div class="row-gap">
+                  <select class="player-select" data-player-track="${esc(node.id)}" title="Switch stream quality or audio track">
+                    ${tracks.map((t) => `<option value="${esc(t.stream_id)}" ${t.stream_id === activeTrack.stream_id ? "selected" : ""}>${esc(t.label)}</option>`).join("")}
+                  </select>
+                  <select class="player-select" data-player-speed="${esc(node.id)}" title="Playback speed">
+                    ${[0.5, 0.75, 1, 1.25, 1.5, 2].map((sp) => `<option value="${sp}" ${sp === speedVal ? "selected" : ""}>${sp}×</option>`).join("")}
+                  </select>
+                </div>
+                <div class="row-gap">
+                  ${!isAudioOnly ? `<button class="ghost-btn btn-xs mono" data-player-pip="${esc(node.id)}" title="Float video in Picture-in-Picture">PiP</button>` : ""}
+                  <button class="ghost-btn btn-xs mono" data-copy-stream-url="${esc(activeTrack.stream_url)}" title="Copy Network Stream URL for VLC (⌘N)">Copy VLC URL</button>
+                  <a class="ghost-btn btn-xs mono" href="${esc(activeTrack.m3u_url)}" download title="Open directly in VLC / IINA / mpv">.m3u ↗</a>
+                </div>
+              </div>
+              ${chaptersHtml}
+            ` : ""}
+          </div>
+        </div>
+      `;
     } else if (node.type === "note") {
       inner = `
         <div class="port port-in" data-port="in" data-node="${esc(node.id)}"></div>
@@ -1453,7 +1564,6 @@
     bindNodeElementEvents(el, node);
     requestAnimationFrame(renderThreads);
     syncWorkspaceMeta();
-    renderHistoryList();
   }
 
   function findNearestInputPort(wx, wy, excludeNodeId) {
@@ -1572,6 +1682,73 @@
     }
 
     // Standard buttons
+    el.querySelector("[data-watch-source]")?.addEventListener("click", (e) => {
+      e.stopPropagation();
+      promoteDemoTreeToReal();
+      launchLivePlayerFromParent(node, node.url, "video");
+    });
+    el.querySelector("[data-player-theater]")?.addEventListener("click", (e) => {
+      e.stopPropagation();
+      sfx.click();
+      node.theater = !node.theater;
+      el.classList.toggle("theater", node.theater);
+      e.currentTarget.textContent = node.theater ? "⤢" : "⤡";
+      renderThreads();
+    });
+    const trackSel = el.querySelector("[data-player-track]");
+    if (trackSel) {
+      trackSel.onpointerdown = (e) => e.stopPropagation();
+      trackSel.onchange = () => {
+        const mediaEl = el.querySelector("[data-media-el]");
+        const resumeAt = mediaEl && Number.isFinite(mediaEl.currentTime) ? mediaEl.currentTime : 0;
+        node.activeStreamId = trackSel.value;
+        const chosen = (node.stream?.tracks || []).find((t) => t.stream_id === trackSel.value);
+        node.playMode = chosen?.kind || "video";
+        node.resumeAt = resumeAt;
+        renderNode(node);
+      };
+    }
+    const speedSel = el.querySelector("[data-player-speed]");
+    if (speedSel) {
+      speedSel.onpointerdown = (e) => e.stopPropagation();
+      speedSel.onchange = () => {
+        node.playbackRate = parseFloat(speedSel.value) || 1;
+        const mediaEl = el.querySelector("[data-media-el]");
+        if (mediaEl) mediaEl.playbackRate = node.playbackRate;
+      };
+    }
+    el.querySelector("[data-player-pip]")?.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const v = el.querySelector("video[data-media-el]");
+      if (v && document.pictureInPictureEnabled) {
+        try {
+          if (document.pictureInPictureElement === v) await document.exitPictureInPicture();
+          else await v.requestPictureInPicture();
+        } catch (err) { toast(`PiP unavailable: ${err.message}`, "err"); }
+      }
+    });
+    el.querySelector("[data-copy-stream-url]")?.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const absUrl = `${window.location.origin}${e.currentTarget.dataset.copyStreamUrl}`;
+      await navigator.clipboard.writeText(absUrl);
+      sfx.click();
+      toast("Network stream URL copied — paste in VLC (Open Network Stream)", "ok");
+    });
+    el.querySelectorAll("[data-seek-to]").forEach((btn) => {
+      btn.onclick = (e) => {
+        e.stopPropagation();
+        const mediaEl = el.querySelector("[data-media-el]");
+        if (mediaEl) {
+          mediaEl.currentTime = parseFloat(btn.dataset.seekTo) || 0;
+          mediaEl.play().catch(() => {});
+          sfx.click();
+        }
+      };
+    });
+    if (node.type === "player" && !node.loading && !node.error) {
+      attachLiveMediaSource(el, node);
+    }
+
     el.querySelector("[data-node-del]")?.addEventListener("click", (e) => { e.stopPropagation(); removeNode(node.id); });
     el.querySelector("[data-node-collapse]")?.addEventListener("click", (e) => {
       e.stopPropagation(); sfx.click(); node.collapsed = !node.collapsed; renderNode(node); if (!node.demo) persistWorkspace();
@@ -1587,7 +1764,7 @@
     const noteArea = el.querySelector("[data-note-input]");
     if (noteArea) {
       noteArea.onpointerdown = (e) => e.stopPropagation();
-      noteArea.oninput = () => { node.text = noteArea.value; if (!node.demo) persistWorkspace(); renderHistoryList(); };
+      noteArea.oninput = () => { node.text = noteArea.value; if (!node.demo) persistWorkspace(); };
     }
   }
 
@@ -1776,7 +1953,7 @@
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
-      let spawnedResNode = null;
+      const spawnedJobs = new Map();
 
       while (true) {
         const { done, value } = await reader.read();
@@ -1797,10 +1974,16 @@
           if (evtType === "thought") { sfx.step(); agentNode.steps.push({ tag: "THINK", cls: "", msg: ev.message }); renderNode(agentNode); }
           else if (evtType === "plan") { sfx.step(); if (ev.data?.provider) agentNode.provider = ev.data.provider; agentNode.steps.push({ tag: "PLAN", cls: "plan", msg: ev.message }); renderNode(agentNode); }
           else if (evtType === "tool") { sfx.step(); agentNode.steps.push({ tag: `TOOL·${ev.data?.tool || "exec"}`, cls: "tool", msg: ev.message }); renderNode(agentNode); }
-          else if (evtType === "job" && ev.data?.job_id) {
-            spawnedResNode = upsertResultNodeForJob(ev.data, agentNode, null, "agent");
+          else if (evtType === "stream" && ev.data?.url) {
+            sfx.step();
+            agentNode.steps.push({ tag: "STREAM", cls: "tool", msg: ev.message || "Connected live stream" });
+            renderNode(agentNode);
+            launchLivePlayerFromParent(agentNode, ev.data.url, ev.data.mode || "video");
+          } else if (evtType === "job" && ev.data?.job_id) {
+            const rn = upsertResultNodeForJob(ev.data, agentNode, null, "agent");
+            spawnedJobs.set(ev.data.job_id, rn);
             if (ev.data.status === "completed") {
-              for (const e of state.edges) if (e.to === spawnedResNode.id) e.active = false;
+              for (const e of state.edges) if (e.to === rn.id) e.active = false;
               const dl = ev.data.result?.download;
               if (dl?.artifact_url && state.autoSave && !state.autoSavedJobs.has(ev.data.job_id)) {
                 state.autoSavedJobs.add(ev.data.job_id);
@@ -1808,9 +1991,12 @@
                 toast(`Agent saved ${dl.filename}`, "ok");
               }
             }
-          } else if (evtType === "progress" && ev.data?.job_id && spawnedResNode) {
-            spawnedResNode.job = { ...(spawnedResNode.job || {}), status: ev.data.status, progress: ev.data };
-            renderNode(spawnedResNode);
+          } else if (evtType === "progress" && ev.data?.job_id) {
+            const targetNode = spawnedJobs.get(ev.data.job_id);
+            if (targetNode) {
+              targetNode.job = { ...(targetNode.job || {}), status: ev.data.status, progress: ev.data };
+              renderNode(targetNode);
+            }
           } else if (evtType === "answer") {
             sfx.complete(); gravity.pulseAt(agentNode.x + 180, agentNode.y + 100);
             agentNode.done = true; agentNode.answer = ev.message; edgeIn.active = false; renderNode(agentNode);
@@ -1832,6 +2018,113 @@
     } finally {
       osc.set(false, "CANVAS READY");
       refreshTier();
+    }
+  }
+
+  /* ---------- Live Network Stream Player (VLC Mode · Zero Download) ---------- */
+  function attachLiveMediaSource(el, node) {
+    const mediaEl = el.querySelector("[data-media-el]");
+    const activeTrack = (node.stream?.tracks || []).find((t) => t.stream_id === node.activeStreamId) || node.stream?.tracks?.[0];
+    if (!mediaEl || !activeTrack) return;
+
+    if (node.hls) {
+      try { node.hls.destroy(); } catch (_) {}
+      node.hls = null;
+    }
+
+    const srcUrl = activeTrack.stream_url;
+    const resumeAt = node.resumeAt || 0;
+    const rate = node.playbackRate || 1;
+    node.resumeAt = 0;
+
+    const applyPlaybackPrefs = () => {
+      mediaEl.playbackRate = rate;
+      if (resumeAt > 1 && !node.stream?.is_live) {
+        try { mediaEl.currentTime = resumeAt; } catch (_) {}
+      }
+      mediaEl.play().catch(() => {});
+    };
+
+    if (activeTrack.protocol === "hls" && window.Hls && window.Hls.isSupported()) {
+      const hls = new window.Hls({ enableWorker: true, lowLatencyMode: !!node.stream?.is_live });
+      node.hls = hls;
+      hls.loadSource(srcUrl);
+      hls.attachMedia(mediaEl);
+      hls.on(window.Hls.Events.MANIFEST_PARSED, applyPlaybackPrefs);
+      hls.on(window.Hls.Events.ERROR, (_, data) => {
+        if (data.fatal) toast("Live stream interrupted — try switching track", "err");
+      });
+    } else {
+      mediaEl.src = srcUrl;
+      mediaEl.addEventListener("loadedmetadata", applyPlaybackPrefs, { once: true });
+    }
+  }
+
+  async function launchLivePlayerFromParent(parentNode, url, mode = "video") {
+    // Reuse existing live player node if already open for the exact same URL
+    const existing = Array.from(state.nodes.values()).find((n) => n.type === "player" && n.url === url && !n.error);
+    if (existing) {
+      sfx.click();
+      glideToWorld(existing.x + 250, existing.y + 150, Math.min(camera.zoom, 0.96));
+      return existing;
+    }
+    const siblings = state.edges.filter((e) => e.from === parentNode.id).length;
+    const pos = pickChildPosition(parentNode, siblings);
+    const playerNode = {
+      id: uid("player"),
+      type: "player",
+      url,
+      title: parentNode.title || url,
+      playMode: mode,
+      loading: true,
+      error: null,
+      stream: null,
+      activeStreamId: null,
+      playbackRate: 1,
+      theater: false,
+      hls: null,
+      x: pos.x,
+      y: pos.y,
+    };
+    state.nodes.set(playerNode.id, playerNode);
+    renderNode(playerNode);
+    const edge = addEdge(parentNode.id, playerNode.id, "live", true, mode === "audio" ? "LIVE AUDIO" : "LIVE STREAM");
+    if (parentNode.rootSourceId) layoutTreeFromRoot(parentNode.rootSourceId);
+    gravity.shockAt(playerNode.x + 260, playerNode.y + 160);
+    glideToWorld(playerNode.x + 250, playerNode.y + 150, Math.min(camera.zoom, 0.92));
+    sfx.capture();
+    osc.set(true, "CONNECTING LIVE STREAM…");
+
+    try {
+      const res = await fetch("/v1/stream/resolve", {
+        method: "POST",
+        headers: apiHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ url, mode, preferred_quality: "auto" }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        playerNode.loading = false;
+        playerNode.error = data.detail?.message || "Could not open live stream for this link.";
+        if (edge) edge.active = false;
+        renderNode(playerNode);
+        osc.set(false, "STREAM UNAVAILABLE");
+        return;
+      }
+      playerNode.loading = false;
+      playerNode.stream = data;
+      playerNode.title = data.title;
+      playerNode.activeStreamId = data.default_stream_id;
+      const chosen = (data.tracks || []).find((t) => t.stream_id === data.default_stream_id);
+      if (chosen) playerNode.playMode = chosen.kind;
+      renderNode(playerNode);
+      sfx.complete();
+      osc.set(false, "STREAMING LIVE · ZERO DOWNLOAD");
+    } catch (err) {
+      playerNode.loading = false;
+      playerNode.error = `Network error: ${err.message}`;
+      if (edge) edge.active = false;
+      renderNode(playerNode);
+      osc.set(false, "CANVAS READY");
     }
   }
 
@@ -1876,7 +2169,7 @@
     toast(`Spawning ${Math.min(6, urls.length)} possibility trees…`, "ok");
   }
 
-  /* ---------- Searchable History & Pin-to-Canvas Drawer ---------- */
+  /* ---------- Pin Saved Job to Canvas ---------- */
   function pinJobToCanvas(job) {
     if (state.hasDemoGraph) clearDemoGraph();
     const src = spawnSourceWithPossibilities(job.url, null, false);
@@ -1895,90 +2188,755 @@
     glideToWorld((src.x + rn.x) / 2 + 170, rn.y + 100, 0.92);
   }
 
-  function renderHistoryList() {
-    const host = $("history-list");
-    if (!host) return;
-    const q = ($("history-search")?.value || "").trim().toLowerCase();
-    const filter = state.historyFilter;
+  /* =========================================================================
+     NEON SYNC DEVELOPER CONSOLE (Live Logs, API Workbench & System Status)
+     ========================================================================= */
+  const WB_ENDPOINTS = {
+    probe: {
+      method: "POST",
+      path: "/v1/probe",
+      body: () => ({ url: state.lastApiPayload?.url || SHOWCASE_VIDEO.url, include_subtitles: true }),
+    },
+    stream: {
+      method: "POST",
+      path: "/v1/stream/resolve",
+      body: () => ({ url: state.lastApiPayload?.url || SHOWCASE_VIDEO.url, mode: "video", preferred_quality: "auto" }),
+    },
+    jobs: {
+      method: "POST",
+      path: "/v1/jobs",
+      body: () =>
+        state.lastApiPayload || {
+          url: SHOWCASE_VIDEO.url,
+          mode: "video",
+          video_quality: "1080",
+          video_container: "mp4",
+          video_codec: "h264",
+          remux_faststart: true,
+        },
+    },
+    batch: {
+      method: "POST",
+      path: "/v1/jobs/batch",
+      body: () => ({
+        urls: [SHOWCASE_VIDEO.url],
+        mode: "audio",
+        audio_format: "mp3",
+        audio_bitrate: "320k",
+      }),
+    },
+    agent: {
+      method: "POST",
+      path: "/v1/agent/run",
+      body: () => ({
+        prompt: `extract audio as 320k mp3 and normalize volume ${SHOWCASE_VIDEO.url}`,
+      }),
+    },
+    formats: { method: "GET", path: "/v1/formats", body: () => null },
+    status: { method: "GET", path: "/v1/status", body: () => null },
+    logs: { method: "GET", path: "/v1/logs?limit=50", body: () => null },
+  };
 
-    const rows = [];
-    for (const n of state.nodes.values()) {
-      if (n.demo || n.type === "source" || n.type === "result" || n.type === "choice") continue;
-      rows.push({ kind: n.type, node: n });
+  function fmtTimeShort(iso) {
+    if (!iso) return "";
+    try {
+      const d = new Date(iso);
+      return d.toTimeString().slice(0, 8);
+    } catch (_) {
+      return "";
     }
-    for (const j of state.historyJobs) {
-      const fn = (j.result?.download?.filename || "").toLowerCase();
-      if (!q && (fn === "watch.html" || fn === "watch.htm")) continue;
-      rows.push({ kind: "job", job: j, node: state.nodes.get(state.resultByJobId.get(j.job_id) || "") });
+  }
+
+  function fmtUptime(sec) {
+    const s = Math.max(0, Math.round(Number(sec || 0)));
+    if (s < 60) return `${s}s`;
+    if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s`;
+    return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
+  }
+
+  async function loadPlatformStatus(refresh = false) {
+    try {
+      const res = await fetch(refresh ? "/v1/status/refresh" : "/v1/status", {
+        method: refresh ? "POST" : "GET",
+        headers: apiHeaders(),
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      state.platformStatus = data;
+      const ready = data.capabilities_ready ?? 0;
+      const total = data.capabilities_total ?? 0;
+      if ($("status-pill-text")) $("status-pill-text").textContent = `Core ${ready}/${total}`;
+      if ($("status-led")) $("status-led").classList.toggle("live", data.status === "operational");
+      renderSystemStatusTab();
+      if (refresh) toast(`Neon Sync status verified (${ready}/${total} capabilities ready)`, "ok");
+    } catch (_) {}
+  }
+
+  function renderSystemStatusTab() {
+    const st = state.platformStatus;
+    if (!st) return;
+    if ($("status-banner-title")) {
+      $("status-banner-title").textContent =
+        st.status === "operational" ? "Neon Sync Platform Operational" : "Neon Sync Platform Degraded";
     }
-
-    const filtered = rows.filter((r) => {
-      if (filter === "completed" && !(r.kind === "job" && r.job.status === "completed")) return false;
-      if (filter === "agent" && r.kind !== "agent") return false;
-      if (filter === "note" && r.kind !== "note") return false;
-      if (!q) return true;
-      const hay = r.kind === "job"
-        ? [r.job.result?.download?.filename, r.job.result?.title, r.job.url, r.job.result?.engine?.engine_used].filter(Boolean).join(" ").toLowerCase()
-        : [r.node.prompt, r.node.text, r.node.url].filter(Boolean).join(" ").toLowerCase();
-      return hay.includes(q);
-    });
-
-    if (!filtered.length) {
-      host.innerHTML = `<div class="muted mono" style="padding:18px;text-align:center;font-size:11.5px;">No matching history yet</div>`;
-      return;
+    if ($("status-banner-sub")) {
+      $("status-banner-sub").textContent =
+        `v${st.version} · ${st.environment} · ${st.capabilities_ready}/${st.capabilities_total} capabilities operational · uptime ${fmtUptime(st.metrics?.uptime_seconds)}`;
     }
-
-    host.innerHTML = filtered.map((r) => {
-      if (r.kind === "job") {
-        const j = r.job, dl = j.result?.download;
-        const title = dl?.filename || j.result?.title || j.url;
-        const sub = [fmtBytes(dl?.size_bytes), j.result?.engine?.engine_used, fmtRelativeTime(j.created_at)].filter(Boolean).join(" · ");
-        const badgeCls = j.status === "completed" ? "ok" : j.status === "failed" ? "err" : "warn";
+    const secHost = $("status-security-strip");
+    if (secHost && st.security) {
+      const labels = {
+        ssrf_guard: "SSRF Guard",
+        egress_isolation: "Egress Isolation",
+        artifact_signing: "Artifact Integrity",
+        sandbox_headers: "Delivery Sandbox",
+      };
+      secHost.innerHTML = Object.entries(st.security)
+        .map(([k, v]) => `<span class="sec-chip"><span>${esc(labels[k] || k)}:</span><strong>${esc(String(v).toUpperCase())}</strong></span>`)
+        .join("") + `<span class="sec-chip"><span>API Surface:</span><strong>NEON SYNC UNIFIED</strong></span>`;
+    }
+    const grid = $("status-cap-grid");
+    if (grid) {
+      grid.innerHTML = (st.capabilities || []).map((c) => {
+        const cls = c.status === "operational" ? "ok" : c.status === "standby" ? "" : "warn";
         return `
-          <div class="history-item" data-pin-job="${esc(j.job_id)}">
-            <div class="history-item-top"><span class="history-item-title">${esc(title)}</span><span class="status-pill mono ${badgeCls}">${esc(j.status)}</span></div>
-            <div class="history-item-meta mono"><span>${esc(sub)}</span><span>${r.node ? "Glide →" : "+ Pin to Desk"}</span></div>
-            ${dl?.artifact_url ? `<div class="history-item-actions"><a class="btn-link" href="${esc(dl.artifact_url)}" download="${esc(dl.filename || "download")}" onclick="event.stopPropagation()">Save File</a></div>` : ""}
+          <div class="cap-card">
+            <div class="cap-card-head">
+              <span class="cap-card-title">${esc(c.name)}</span>
+              <span class="status-pill mono ${cls}">${esc(c.status)}</span>
+            </div>
+            <div class="cap-card-desc">${esc(c.description)}</div>
+            <div class="cap-card-foot">
+              <div class="node-caps">${(c.supported_types || []).map((t) => `<span class="cap-tag mono">${esc(t)}</span>`).join("")}</div>
+              <span class="mono muted" style="font-size:10px;">v${esc(c.version)}</span>
+            </div>
           </div>
         `;
-      }
-      const n = r.node;
-      const title = n.type === "agent" ? (n.prompt || "Agent run") : (n.text || "Empty note").slice(0, 60);
-      const sub = n.type === "agent" ? (n.provider || "local-planner") : "Studio Note";
+      }).join("");
+    }
+    const cloudGrid = $("status-cloud-grid");
+    if (cloudGrid && st.cloud_integrations) {
+      cloudGrid.innerHTML = st.cloud_integrations.map((ci) => {
+        const cls = ci.status === "active" ? "ok" : ci.status === "byok_ready" ? "warn" : "";
+        return `
+          <div class="cloud-card">
+            <div class="cloud-card-top">
+              <span>${esc(ci.name)}</span>
+              <span class="status-pill mono ${cls}">${esc(ci.status.replace("_", " "))}</span>
+            </div>
+            <div class="row-gap">
+              <span class="cloud-provider-tag mono">${esc(ci.provider)}</span>
+              <span class="cloud-card-detail mono">${esc(ci.detail)}</span>
+            </div>
+          </div>
+        `;
+      }).join("");
+    }
+  }
+
+  async function loadConsoleLogs() {
+    try {
+      const res = await fetch("/v1/logs?limit=150", { headers: apiHeaders() });
+      if (!res.ok) return;
+      const data = await res.json();
+      state.consoleLogs = data.logs || [];
+      state.consoleMetrics = data.metrics || null;
+      updateConsoleKpis();
+      renderConsoleLogs();
+    } catch (_) {}
+  }
+
+  function connectLogStream() {
+    if (state.logEventSource) return;
+    try {
+      const es = new EventSource("/v1/logs/stream");
+      state.logEventSource = es;
+      es.addEventListener("log", (ev) => {
+        const entry = JSON.parse(ev.data);
+        if (!state.consolePaused) {
+          state.consoleLogs.unshift(entry);
+          if (state.consoleLogs.length > 300) state.consoleLogs.length = 300;
+        }
+        if (entry.method !== "PIPELINE" && entry.method !== "SYSTEM") {
+          const cur = Number($("console-req-chip")?.textContent || "0");
+          if ($("console-req-chip")) $("console-req-chip").textContent = String(cur + 1);
+          if (state.consoleMetrics) {
+            state.consoleMetrics.total_requests = (state.consoleMetrics.total_requests || 0) + 1;
+            if ((entry.status_code || 200) < 400) state.consoleMetrics.success_requests = (state.consoleMetrics.success_requests || 0) + 1;
+            updateConsoleKpis();
+          }
+        }
+        if (!$("dev-console-modal")?.classList.contains("hidden") && state.consoleTab === "logs") {
+          renderConsoleLogs();
+        }
+      });
+      es.onerror = () => {
+        es.close();
+        state.logEventSource = null;
+        setTimeout(connectLogStream, 4000);
+      };
+    } catch (_) {}
+  }
+
+  function updateConsoleKpis() {
+    const m = state.consoleMetrics;
+    if (!m) return;
+    if ($("console-req-chip")) $("console-req-chip").textContent = String(m.total_requests ?? 0);
+    if ($("kpi-total-req")) $("kpi-total-req").textContent = String(m.total_requests ?? 0);
+    const rate = m.total_requests > 0 ? Math.round((m.success_requests / m.total_requests) * 100) : 100;
+    if ($("kpi-success-rate")) $("kpi-success-rate").textContent = `${rate}%`;
+    if ($("kpi-avg-ms")) $("kpi-avg-ms").textContent = `${m.avg_latency_ms ?? 0} ms`;
+    if ($("kpi-active-jobs")) $("kpi-active-jobs").textContent = String(m.active_jobs ?? 0);
+    if ($("kpi-uptime")) $("kpi-uptime").textContent = fmtUptime(m.uptime_seconds);
+  }
+
+  function filteredConsoleLogs() {
+    const q = ($("log-search-input")?.value || "").trim().toLowerCase();
+    const f = state.consoleFilter;
+    return state.consoleLogs.filter((item) => {
+      const code = item.status_code || 0;
+      if (f === "2xx" && !(code >= 200 && code < 300 && item.method !== "PIPELINE")) return false;
+      if (f === "errors" && !(code >= 400 || item.level === "ERROR")) return false;
+      if (f === "pipeline" && item.method !== "PIPELINE") return false;
+      if (f === "ai" && item.service !== "neon-sync-ai") return false;
+      if (!q) return true;
+      const hay = [item.request_id, item.event, item.method, item.path, item.service, item.job_id, item.summary, item.status_code]
+        .filter(Boolean).join(" ").toLowerCase();
+      return hay.includes(q);
+    });
+  }
+
+  function renderConsoleLogs() {
+    const host = $("console-log-rows");
+    if (!host) return;
+    const rows = filteredConsoleLogs();
+    if (!rows.length) {
+      host.innerHTML = `<div class="muted mono" style="padding:24px;text-align:center;font-size:11.5px;">No matching Neon Sync API logs yet. Paste a link or send a test request in API Requests.</div>`;
+      return;
+    }
+    host.innerHTML = rows.map((item) => {
+      const isPipe = item.method === "PIPELINE";
+      const code = item.status_code ?? 200;
+      const badgeCls = isPipe ? "spipe" : code >= 500 ? "s5xx" : code >= 400 ? "s4xx" : "s2xx";
+      const badgeText = isPipe ? "PIPE" : String(code);
+      const mCls = `m-${String(item.method || "get").toLowerCase()}`;
+      const sel = state.selectedLogId === item.id ? "selected" : "";
+      const lat = item.duration_ms !== null && item.duration_ms !== undefined ? `${item.duration_ms}ms` : "—";
       return `
-        <div class="history-item" data-focus-node="${esc(n.id)}">
-          <div class="history-item-top"><span class="history-item-title">${esc(title)}</span><span class="status-pill mono ${n.done ? "ok" : ""}">${esc(n.type)}</span></div>
-          <div class="history-item-meta mono"><span>${esc(sub)}</span><span>Glide →</span></div>
+        <div class="log-row mono ${sel}" data-log-id="${esc(item.id)}">
+          <span class="log-status-badge ${badgeCls}">${esc(badgeText)}</span>
+          <span class="log-method ${mCls}">${esc(item.method || "INFO")}</span>
+          <div class="log-path-cell">
+            <span class="log-path-main">${esc(item.path || item.event)}</span>
+            <span class="log-path-sub">${esc(item.event)} · ${esc(item.summary || item.service)}</span>
+          </div>
+          <span class="log-latency num">${esc(lat)}</span>
+          <span class="log-time num">${esc(fmtTimeShort(item.timestamp))}</span>
         </div>
       `;
     }).join("");
 
-    host.querySelectorAll("[data-pin-job]").forEach((row) => {
-      row.onclick = () => { const j = state.historyJobs.find((x) => x.job_id === row.dataset.pinJob); if (j) pinJobToCanvas(j); };
-    });
-    host.querySelectorAll("[data-focus-node]").forEach((row) => {
+    host.querySelectorAll("[data-log-id]").forEach((row) => {
       row.onclick = () => {
-        const n = state.nodes.get(row.dataset.focusNode);
-        if (!n) return;
-        sfx.click(); state.selectedNodeId = n.id;
-        document.querySelectorAll(".node.selected").forEach((x) => x.classList.remove("selected"));
-        document.querySelector(`[data-node-id="${CSS.escape(n.id)}"]`)?.classList.add("selected");
-        glideToWorld(n.x + 175, n.y + 110, 1);
+        sfx.click();
+        state.selectedLogId = row.dataset.logId;
+        renderConsoleLogs();
+        renderLogInspector();
+      };
+    });
+
+    if (!state.selectedLogId && rows.length) {
+      state.selectedLogId = rows[0].id;
+      renderLogInspector();
+    }
+  }
+
+  function buildCurlForLog(item) {
+    const method = item.method && ["GET", "POST", "PUT", "DELETE", "PATCH"].includes(item.method) ? item.method : "GET";
+    const url = `${window.location.origin}${item.path || "/v1/status"}`;
+    const lines = [`curl -X ${method} "${url}"`];
+    if (item.request_body !== null && item.request_body !== undefined) {
+      lines.push(`  -H "Content-Type: application/json"`);
+    }
+    if (state.proKey) lines.push(`  -H "X-Neon-Pro-Key: <YOUR_PRO_KEY>"`);
+    if (item.request_body !== null && item.request_body !== undefined) {
+      lines.push(`  -d '${JSON.stringify(item.request_body, null, 2)}'`);
+    }
+    return lines.join(" \\\n");
+  }
+
+  function renderLogInspector() {
+    const item = state.consoleLogs.find((x) => x.id === state.selectedLogId);
+    if (!item) {
+      $("inspector-empty")?.classList.remove("hidden");
+      $("inspector-content")?.classList.add("hidden");
+      return;
+    }
+    $("inspector-empty")?.classList.add("hidden");
+    $("inspector-content")?.classList.remove("hidden");
+
+    const code = item.status_code ?? 200;
+    const stEl = $("insp-status");
+    if (stEl) {
+      stEl.textContent = item.method === "PIPELINE" ? "PIPELINE" : String(code);
+      stEl.className = `status-pill mono ${code >= 500 ? "err" : code >= 400 ? "warn" : "ok"}`;
+    }
+    if ($("insp-endpoint")) $("insp-endpoint").textContent = `${item.method || "EVENT"} ${item.path || item.event}`;
+    if ($("insp-copy-reqid")) $("insp-copy-reqid").textContent = item.request_id;
+    if ($("insp-summary")) $("insp-summary").textContent = item.summary || item.event;
+
+    if ($("insp-meta-grid")) {
+      const cells = [
+        ["SERVICE", item.service || "neon-sync-api"],
+        ["EVENT", item.event || "—"],
+        ["LATENCY", item.duration_ms != null ? `${item.duration_ms} ms` : "—"],
+        ["TIER", (item.tier || "system").toUpperCase()],
+        ["JOB ID", item.job_id || "—"],
+        ["TIMESTAMP", fmtTimeShort(item.timestamp)],
+      ];
+      $("insp-meta-grid").innerHTML = cells
+        .map(([k, v]) => `<div class="insp-meta-item"><span class="insp-meta-k">${esc(k)}</span><span class="insp-meta-v" title="${esc(v)}">${esc(v)}</span></div>`)
+        .join("");
+    }
+
+    let text = "";
+    if (state.inspectorTab === "response") {
+      text = item.response_preview !== null && item.response_preview !== undefined
+        ? JSON.stringify(item.response_preview, null, 2)
+        : "// Streaming or binary response (metadata logged above)";
+    } else if (state.inspectorTab === "request") {
+      text = item.request_body !== null && item.request_body !== undefined
+        ? JSON.stringify(item.request_body, null, 2)
+        : "// No JSON request body";
+    } else if (state.inspectorTab === "headers") {
+      const hdrs = item.request_headers && Object.keys(item.request_headers).length
+        ? item.request_headers
+        : { "x-powered-by": "Neon Sync", "x-request-id": item.request_id };
+      text = JSON.stringify(hdrs, null, 2);
+    } else {
+      text = buildCurlForLog(item);
+    }
+    if ($("insp-code-pre")) $("insp-code-pre").textContent = text;
+  }
+
+  function buildWorkbenchSnippet() {
+    const ep = WB_ENDPOINTS[state.wbEndpoint] || WB_ENDPOINTS.probe;
+    const url = `${window.location.origin}${ep.path}`;
+    const rawBody = ($("wb-body-editor")?.value || "").trim();
+    const hasBody = ep.method === "POST" && rawBody.length > 0;
+    const proHdr = state.proKey ? true : false;
+
+    if (state.wbLang === "json") {
+      return hasBody ? rawBody : "// This GET endpoint takes no JSON request body.";
+    }
+    if (state.wbLang === "curl") {
+      const lines = [`curl -X ${ep.method} "${url}"`];
+      if (hasBody) lines.push(`  -H "Content-Type: application/json"`);
+      if (proHdr) lines.push(`  -H "X-Neon-Pro-Key: ${state.proKey}"`);
+      if (hasBody) lines.push(`  -d '${rawBody}'`);
+      return lines.join(" \\\n");
+    }
+    if (state.wbLang === "js") {
+      const hdrs = {};
+      if (hasBody) hdrs["Content-Type"] = "application/json";
+      if (proHdr) hdrs["X-Neon-Pro-Key"] = state.proKey;
+      const opts = { method: ep.method, headers: hdrs };
+      if (hasBody) opts.body = "__BODY__";
+      let optsStr = JSON.stringify(opts, null, 2);
+      if (hasBody) optsStr = optsStr.replace('"__BODY__"', `JSON.stringify(${rawBody.replace(/\n/g, "\n  ")})`);
+      return `const response = await fetch("${url}", ${optsStr});\nconst data = await response.json();\nconsole.log(response.headers.get("x-request-id"), data);`;
+    }
+    // Python (httpx)
+    const hdrs = {};
+    if (proHdr) hdrs["X-Neon-Pro-Key"] = state.proKey;
+    const hdrArg = Object.keys(hdrs).length ? `,\n    headers=${JSON.stringify(hdrs)}` : "";
+    const jsonArg = hasBody ? `,\n    json=${rawBody.replace(/\btrue\b/g, "True").replace(/\bfalse\b/g, "False").replace(/\bnull\b/g, "None")}` : "";
+    return `import httpx\n\nresp = httpx.${ep.method.lower()}(\n    "${url}"${hdrArg}${jsonArg},\n)\nprint(resp.headers.get("x-request-id"), resp.status_code)\nprint(resp.json())`;
+  }
+
+  function selectWorkbenchEndpoint(key) {
+    state.wbEndpoint = key;
+    document.querySelectorAll("#wb-endpoint-list [data-ep]").forEach((b) =>
+      b.classList.toggle("active", b.dataset.ep === key)
+    );
+    const ep = WB_ENDPOINTS[key] || WB_ENDPOINTS.probe;
+    const bodyObj = ep.body();
+    const editor = $("wb-body-editor");
+    if (editor) {
+      editor.disabled = ep.method === "GET";
+      editor.value = bodyObj ? JSON.stringify(bodyObj, null, 2) : "";
+      editor.placeholder = ep.method === "GET" ? "No request body for GET endpoints" : "{ ... }";
+    }
+    if ($("wb-snippet-pre")) $("wb-snippet-pre").textContent = buildWorkbenchSnippet();
+  }
+
+  async function sendWorkbenchRequest() {
+    const ep = WB_ENDPOINTS[state.wbEndpoint] || WB_ENDPOINTS.probe;
+    const btn = $("wb-send-btn");
+    const pre = $("wb-resp-pre");
+    const meta = $("wb-resp-meta");
+    let bodyStr = undefined;
+    if (ep.method === "POST") {
+      try {
+        const parsed = JSON.parse($("wb-body-editor").value || "{}");
+        bodyStr = JSON.stringify(parsed);
+      } catch (err) {
+        toast(`Invalid JSON: ${err.message}`, "err");
+        return;
+      }
+    }
+    if (btn) btn.disabled = true;
+    if (meta) meta.textContent = "Sending…";
+    const t0 = performance.now();
+    try {
+      const res = await fetch(ep.path, {
+        method: ep.method,
+        headers: apiHeaders(bodyStr ? { "Content-Type": "application/json" } : {}),
+        body: bodyStr,
+      });
+      const elapsed = Math.round(performance.now() - t0);
+      const reqId = res.headers.get("x-request-id") || "";
+      const ct = res.headers.get("content-type") || "";
+      if (meta) meta.textContent = `HTTP ${res.status} · ${elapsed}ms${reqId ? ` · ${reqId}` : ""}`;
+      if (ct.includes("application/json")) {
+        const data = await res.json();
+        if (pre) pre.textContent = JSON.stringify(data, null, 2);
+      } else {
+        const txt = await res.text();
+        if (pre) pre.textContent = txt.slice(0, 4000);
+      }
+      sfx.click();
+    } catch (err) {
+      if (meta) meta.textContent = "Network Error";
+      if (pre) pre.textContent = err.message;
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  function openDevConsole(tab = "logs") {
+    sfx.click();
+    $("dev-console-modal").classList.remove("hidden");
+    switchConsoleTab(tab);
+    if ($("wb-base-url")) $("wb-base-url").textContent = window.location.origin;
+    loadConsoleLogs();
+    loadPlatformStatus(false);
+    selectWorkbenchEndpoint(state.wbEndpoint);
+  }
+
+  function switchConsoleTab(tab) {
+    state.consoleTab = tab;
+    document.querySelectorAll(".console-tab[data-ctab]").forEach((b) =>
+      b.classList.toggle("active", b.dataset.ctab === tab)
+    );
+    ["logs", "requests", "status"].forEach((t) =>
+      $(`ctab-${t}`)?.classList.toggle("hidden", t !== tab)
+    );
+    if (tab === "logs") renderConsoleLogs();
+    if (tab === "requests" && $("wb-snippet-pre")) $("wb-snippet-pre").textContent = buildWorkbenchSnippet();
+    if (tab === "status") renderSystemStatusTab();
+  }
+
+  /* =========================================================================
+     NEON SYNC AUTOMATIONS STUDIO (Recipes, Schedules & Signed Webhooks)
+     ========================================================================= */
+  async function loadAutomations() {
+    try {
+      const [tplRes, listRes] = await Promise.all([
+        fetch("/v1/automations/templates", { headers: apiHeaders() }),
+        fetch("/v1/automations", { headers: apiHeaders() }),
+      ]);
+      if (tplRes.ok && $("auto-tpl-grid")) {
+        const tpls = await tplRes.json();
+        $("auto-tpl-grid").innerHTML = tpls.map((t) => `
+          <button type="button" class="auto-tpl-card" data-use-tpl="${esc(t.id)}">
+            <div class="wb-section-head">
+              <strong style="font-size:12.5px;">${esc(t.name)}</strong>
+              <span class="status-pill mono ok">${esc(t.badge)}</span>
+            </div>
+            <span class="muted" style="font-size:11px;line-height:1.4;">${esc(t.description)}</span>
+          </button>
+        `).join("");
+        $("auto-tpl-grid").querySelectorAll("[data-use-tpl]").forEach((btn) => {
+          btn.onclick = () => {
+            const tpl = tpls.find((x) => x.id === btn.dataset.useTpl);
+            if (!tpl) return;
+            sfx.click();
+            $("auto-name-input").value = tpl.name;
+            $("auto-action-select").value = tpl.action_type;
+            $("auto-trigger-select").value = tpl.trigger_type === "interval" ? `interval:${tpl.interval_minutes || 60}` : "manual";
+            $("auto-prompt-input").value = tpl.prompt || "";
+            if (!$("auto-url-input").value) $("auto-url-input").value = SHOWCASE_VIDEO.url;
+            $("auto-url-input").focus();
+            toast(`Loaded recipe: ${tpl.name}`, "ok");
+          };
+        });
+      }
+      if (listRes.ok) {
+        const rules = await listRes.json();
+        if ($("auto-count-chip")) $("auto-count-chip").textContent = String(rules.length);
+        if ($("auto-list-count")) $("auto-list-count").textContent = `${rules.length} rule${rules.length === 1 ? "" : "s"}`;
+        renderAutomationRules(rules);
+      }
+    } catch (_) {}
+  }
+
+  function renderAutomationRules(rules) {
+    const host = $("auto-rules-list");
+    if (!host) return;
+    if (!rules.length) {
+      host.innerHTML = `<div class="muted mono" style="padding:18px;text-align:center;font-size:11.5px;">No automations yet. Click a recipe above or create your first scheduled AI workflow.</div>`;
+      return;
+    }
+    host.innerHTML = rules.map((r) => {
+      const sched = r.trigger_type === "interval" ? `Every ${r.interval_minutes}m` : "On-demand";
+      const stCls = r.last_status === "completed" ? "ok" : r.last_status === "failed" ? "err" : "";
+      return `
+        <div class="acct-row">
+          <div style="min-width:0;flex:1;">
+            <div class="row-gap">
+              <strong>${esc(r.name)}</strong>
+              <span class="status-pill mono ${r.enabled ? "ok" : ""}">${r.enabled ? "ACTIVE" : "PAUSED"}</span>
+              <span class="cap-tag mono">${esc(sched)}</span>
+              ${r.last_status ? `<span class="status-pill mono ${stCls}">Last: ${esc(r.last_status)}</span>` : ""}
+            </div>
+            <div class="acct-row-meta mono">${esc(r.target_url)} · ${r.run_count} run(s)${r.webhook_url ? " · Signed Webhook" : ""}</div>
+            ${r.last_summary ? `<div class="acct-row-meta" style="color:var(--text-secondary);">${esc(r.last_summary.slice(0, 140))}</div>` : ""}
+          </div>
+          <div class="row-gap">
+            <button class="reactor-fire btn-sm" data-run-auto="${esc(r.id)}">Run Now</button>
+            <button class="ghost-btn btn-xs mono" data-toggle-auto="${esc(r.id)}" data-enabled="${r.enabled ? "1" : "0"}">${r.enabled ? "Pause" : "Enable"}</button>
+            <button class="ghost-btn btn-xs mono" data-del-auto="${esc(r.id)}">Delete</button>
+          </div>
+        </div>
+      `;
+    }).join("");
+
+    host.querySelectorAll("[data-run-auto]").forEach((btn) => {
+      btn.onclick = async () => {
+        btn.disabled = true;
+        btn.textContent = "Running…";
+        sfx.capture();
+        try {
+          const res = await fetch(`/v1/automations/${btn.dataset.runAuto}/run`, { method: "POST", headers: apiHeaders() });
+          const data = await res.json();
+          if (res.ok && data.status === "completed") {
+            sfx.complete();
+            toast(`Automation completed: ${data.summary.slice(0, 80)}`, "ok");
+          } else {
+            toast(data.error || data.detail?.message || "Automation failed", "err");
+          }
+          loadAutomations();
+        } finally {
+          btn.disabled = false;
+        }
+      };
+    });
+    host.querySelectorAll("[data-toggle-auto]").forEach((btn) => {
+      btn.onclick = async () => {
+        const nextEnabled = btn.dataset.enabled !== "1";
+        await fetch(`/v1/automations/${btn.dataset.toggleAuto}`, {
+          method: "PATCH",
+          headers: apiHeaders({ "Content-Type": "application/json" }),
+          body: JSON.stringify({ enabled: nextEnabled }),
+        });
+        sfx.click();
+        loadAutomations();
+      };
+    });
+    host.querySelectorAll("[data-del-auto]").forEach((btn) => {
+      btn.onclick = async () => {
+        await fetch(`/v1/automations/${btn.dataset.delAuto}`, { method: "DELETE", headers: apiHeaders() });
+        sfx.click();
+        toast("Automation deleted", "ok");
+        loadAutomations();
       };
     });
   }
 
-  /* ---------- Engine Registry ---------- */
-  async function loadEngines(refresh = false) {
-    const res = await fetch(refresh ? "/v1/engines/refresh" : "/v1/engines", { method: refresh ? "POST" : "GET" });
-    const list = await res.json();
-    const installed = list.filter((e) => e.installation_status === "installed").length;
-    $("engines-pill-text").textContent = `${installed}/${list.length}`;
-    $("engines-modal-tbody").innerHTML = list.map((e) => {
-      const ok = e.installation_status === "installed";
-      return `<tr><td><strong>${esc(e.id)}</strong></td><td><span class="status-pill mono ${ok ? "ok" : "warn"}">${esc(ok ? "ready" : e.installation_status)}</span></td><td class="mono num">${esc(e.version)}</td><td class="mono num">Tier ${e.tier}</td><td class="muted">${esc(e.license)}</td></tr>`;
-    }).join("");
-    if (refresh) toast(`Engines refreshed (${installed}/${list.length} ready)`, "ok");
+  /* =========================================================================
+     NEON SYNC AUTHENTICATION (GOOGLE OAUTH 2.0 + EMAIL/PASSWORD + API KEYS)
+     ========================================================================= */
+  function userInitials(name, email) {
+    const src = (name || email || "U").trim();
+    const parts = src.split(/\s+/).filter(Boolean);
+    return parts.length >= 2 ? (parts[0][0] + parts[1][0]).toUpperCase() : src.slice(0, 2).toUpperCase();
+  }
+
+  function renderAvatarInto(el, user) {
+    if (!el || !user) return;
+    if (user.avatar_url) {
+      el.innerHTML = `<img src="${esc(user.avatar_url)}" alt="${esc(user.name)}" referrerpolicy="no-referrer" />`;
+    } else {
+      el.textContent = userInitials(user.name, user.email);
+    }
+  }
+
+  function renderAuthBezel() {
+    const btn = $("auth-btn");
+    const av = $("auth-btn-avatar");
+    const ico = $("auth-btn-icon");
+    const lbl = $("auth-btn-label");
+    if (!btn) return;
+    if (state.user) {
+      btn.classList.add("signed-in");
+      if (av) { av.classList.remove("hidden"); renderAvatarInto(av, state.user); }
+      if (ico) ico.classList.add("hidden");
+      if (lbl) lbl.textContent = (state.user.name || state.user.email).split(" ")[0].slice(0, 14);
+    } else {
+      btn.classList.remove("signed-in");
+      if (av) av.classList.add("hidden");
+      if (ico) ico.classList.remove("hidden");
+      if (lbl) lbl.textContent = "Sign In";
+    }
+  }
+
+  async function refreshAuth() {
+    try {
+      const [meRes, provRes] = await Promise.all([
+        fetch("/v1/auth/me", { headers: apiHeaders() }),
+        fetch("/v1/auth/providers"),
+      ]);
+      if (meRes.ok) {
+        const me = await meRes.json();
+        state.user = me.authenticated ? me.user : null;
+      }
+      if (provRes.ok) {
+        state.authProviders = await provRes.json();
+        const tag = $("google-status-tag");
+        if (tag) {
+          tag.textContent = state.authProviders.google_enabled ? "Ready" : "Setup .env";
+          tag.classList.toggle("ready", !!state.authProviders.google_enabled);
+        }
+      }
+    } catch (_) {}
+    renderAuthBezel();
+  }
+
+  function setAuthMode(mode) {
+    state.authMode = mode;
+    const isReg = mode === "register";
+    $("auth-tab-login")?.classList.toggle("active", !isReg);
+    $("auth-tab-register")?.classList.toggle("active", isReg);
+    $("auth-name-wrap")?.classList.toggle("hidden", !isReg);
+    if ($("auth-heading")) $("auth-heading").textContent = isReg ? "Create your Neon Sync account" : "Sign in to Neon Sync";
+    if ($("auth-submit-btn")) $("auth-submit-btn").textContent = isReg ? "Create Account" : "Sign In";
+    if ($("auth-password-input")) $("auth-password-input").autocomplete = isReg ? "new-password" : "current-password";
+    $("auth-error-box")?.classList.add("hidden");
+  }
+
+  function showAuthError(msg) {
+    const box = $("auth-error-box");
+    if (!box) return;
+    box.textContent = msg;
+    box.classList.remove("hidden");
+  }
+
+  function openAuthModal(mode = "login") {
+    sfx.click();
+    setAuthMode(mode);
+    $("google-setup-box")?.classList.add("hidden");
+    $("auth-modal")?.classList.remove("hidden");
+    $("auth-email-input")?.focus();
+  }
+
+  async function openAccountModal(tab = "profile") {
+    sfx.click();
+    if (!state.user) return openAuthModal("login");
+    $("account-modal")?.classList.remove("hidden");
+    renderAccountHeader();
+    switchAccountTab(tab);
+  }
+
+  function renderAccountHeader() {
+    const u = state.user;
+    if (!u) return;
+    renderAvatarInto($("acct-avatar"), u);
+    if ($("acct-name")) $("acct-name").textContent = u.name;
+    if ($("acct-email")) $("acct-email").textContent = u.email + (u.email_verified ? " · verified" : "");
+    if ($("acct-tier-pill")) {
+      $("acct-tier-pill").textContent = u.tier.toUpperCase();
+      $("acct-tier-pill").className = `status-pill mono ${u.tier === "pro" ? "ok" : ""}`;
+    }
+    if ($("acct-name-input")) $("acct-name-input").value = u.name || "";
+    const provHost = $("acct-providers-badges");
+    if (provHost) {
+      const list = u.providers || [];
+      provHost.innerHTML = list.length
+        ? list.map((p) => `<span class="status-pill mono ok">${esc(p === "google" ? "Google Connected" : "Email & Password")}</span>`).join("")
+        : `<span class="muted mono" style="font-size:11px;">Standard account</span>`;
+    }
+  }
+
+  function switchAccountTab(tab) {
+    state.accountTab = tab;
+    document.querySelectorAll("[data-atab]").forEach((b) => b.classList.toggle("active", b.dataset.atab === tab));
+    ["profile", "apikeys", "sessions"].forEach((t) => $(`atab-${t}`)?.classList.toggle("hidden", t !== tab));
+    if (tab === "apikeys") loadAccountApiKeys();
+    if (tab === "sessions") loadAccountSessionsAndActivity();
+  }
+
+  async function loadAccountApiKeys() {
+    const host = $("acct-apikeys-list");
+    if (!host) return;
+    const res = await fetch("/v1/auth/api-keys");
+    if (!res.ok) return;
+    const keys = await res.json();
+    if (!keys.length) {
+      host.innerHTML = `<div class="muted mono" style="padding:14px;text-align:center;font-size:11.5px;">No personal API keys yet. Generate one above to call Neon Sync API from your backend or CLI.</div>`;
+      return;
+    }
+    host.innerHTML = keys.map((k) => `
+      <div class="acct-row">
+        <div>
+          <div><strong>${esc(k.name)}</strong> <code class="mono" style="font-size:11px;color:var(--accent);">${esc(k.key_prefix)}••••</code></div>
+          <div class="acct-row-meta mono">Scopes: ${esc((k.scopes || []).join(", "))} · Created ${esc(fmtRelativeTime(k.created_at))}${k.last_used_at ? ` · Used ${esc(fmtRelativeTime(k.last_used_at))}` : " · Never used"}</div>
+        </div>
+        <button class="ghost-btn btn-xs mono" data-revoke-key="${esc(k.id)}">Revoke</button>
+      </div>
+    `).join("");
+    host.querySelectorAll("[data-revoke-key]").forEach((btn) => {
+      btn.onclick = async () => {
+        const r = await fetch(`/v1/auth/api-keys/${btn.dataset.revokeKey}`, { method: "DELETE" });
+        if (r.ok) { sfx.click(); toast("API key revoked", "ok"); loadAccountApiKeys(); }
+      };
+    });
+  }
+
+  async function loadAccountSessionsAndActivity() {
+    const [sRes, aRes] = await Promise.all([fetch("/v1/auth/sessions"), fetch("/v1/auth/activity?limit=15")]);
+    if (sRes.ok && $("acct-sessions-list")) {
+      const sessions = await sRes.json();
+      $("acct-sessions-list").innerHTML = sessions.map((s) => `
+        <div class="acct-row">
+          <div>
+            <div class="row-gap">
+              <strong>${esc((s.user_agent || "Browser Session").slice(0, 56))}</strong>
+              ${s.is_current ? '<span class="status-pill mono ok">Current</span>' : ""}
+            </div>
+            <div class="acct-row-meta mono">IP ${esc(s.ip_address || "local")} · Active ${esc(fmtRelativeTime(s.last_seen_at))} · Created ${esc(fmtRelativeTime(s.created_at))}</div>
+          </div>
+          ${s.is_current ? "" : `<button class="ghost-btn btn-xs mono" data-revoke-sess="${esc(s.id)}">Revoke</button>`}
+        </div>
+      `).join("");
+      $("acct-sessions-list").querySelectorAll("[data-revoke-sess]").forEach((btn) => {
+        btn.onclick = async () => {
+          const r = await fetch(`/v1/auth/sessions/${btn.dataset.revokeSess}`, { method: "DELETE" });
+          if (r.ok) { sfx.click(); toast("Session signed out", "ok"); loadAccountSessionsAndActivity(); }
+        };
+      });
+    }
+    if (aRes.ok && $("acct-activity-list")) {
+      const events = await aRes.json();
+      $("acct-activity-list").innerHTML = events.map((ev) => `
+        <div class="acct-row">
+          <div>
+            <div><span class="status-pill mono">${esc(ev.event)}</span> <span>${esc(ev.detail || "")}</span></div>
+            <div class="acct-row-meta mono">IP ${esc(ev.ip_address || "local")} · ${esc(fmtRelativeTime(ev.created_at))}</div>
+          </div>
+        </div>
+      `).join("") || `<div class="muted mono" style="padding:10px;font-size:11px;">No activity recorded yet.</div>`;
+    }
   }
 
   /* ---------- Viewport, Minimap & Event Wiring ---------- */
@@ -2079,9 +3037,15 @@
     document.addEventListener("keydown", (e) => {
       if (e.key === "Escape") {
         closePatchMenu();
-        $("upgrade-modal").classList.add("hidden"); $("engines-modal").classList.add("hidden");
-        $("api-modal").classList.add("hidden"); $("history-drawer").classList.add("hidden");
+        $("upgrade-modal").classList.add("hidden"); $("dev-console-modal").classList.add("hidden");
+        $("auth-modal")?.classList.add("hidden"); $("account-modal")?.classList.add("hidden");
+        $("automations-modal")?.classList.add("hidden");
         $("dock-popover").classList.add("hidden"); state.batchOpen = false;
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "j") {
+        e.preventDefault();
+        if ($("dev-console-modal").classList.contains("hidden")) openDevConsole("logs");
+        else $("dev-console-modal").classList.add("hidden");
       }
       if ((e.key === "/" || ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k")) &&
           document.activeElement?.tagName !== "INPUT" && document.activeElement?.tagName !== "TEXTAREA") {
@@ -2100,6 +3064,11 @@
         if (act === "note") { spawnNoteNode(pending.wx, pending.wy - 50, "", fromNode.id); return; }
         const srcNode = resolveSourceNodeFor(fromNode.id);
         if (!srcNode) return toast("Drag from a Source or Path node first", "err");
+        if (act === "branch_play") {
+          promoteDemoTreeToReal();
+          launchLivePlayerFromParent(srcNode, srcNode.url, "video");
+          return;
+        }
         const l1 = getLevel1Choices(srcNode);
         const keyMap = { branch_video: "video", branch_audio: "audio", branch_subtitles: "subtitles", branch_image: "image", branch_agent: "agent" };
         const matched = l1.find((c) => c.key === keyMap[act]) || l1[0];
@@ -2110,8 +3079,7 @@
       };
     });
 
-    $("clear-sandbox-btn").onclick = () => { sfx.click(); clearDemoGraph(); };
-    $("show-demo-btn").onclick = () => { sfx.click(); $("history-drawer").classList.add("hidden"); spawnDefaultShowcase(); };
+    if ($("clear-sandbox-btn")) $("clear-sandbox-btn").onclick = () => { sfx.click(); clearDemoGraph(); };
 
     $("dock-batch-btn").onclick = () => {
       sfx.click(); state.batchOpen = !state.batchOpen;
@@ -2128,21 +3096,18 @@
       catch (_) { input.focus(); toast("Press ⌘V / Ctrl+V to paste"); }
     };
     $("clear-url-btn").onclick = () => { input.value = ""; syncDockModeVisuals(); input.focus(); };
+    $("watch-live-btn").onclick = async () => {
+      const raw = $("url-input").value.trim();
+      const url = extractUrl(raw);
+      if (!url) return toast("Paste a video, audio, or live stream URL to watch live", "err");
+      $("url-input").value = "";
+      syncDockModeVisuals();
+      const src = spawnSourceWithPossibilities(url, null, true);
+      await launchLivePlayerFromParent(src, url, "video");
+    };
     $("download-btn").onclick = fireDockCommand;
 
-    $("history-toggle-btn").onclick = () => { sfx.click(); $("history-drawer").classList.toggle("hidden"); renderHistoryList(); };
-    $("close-history-btn").onclick = () => $("history-drawer").classList.add("hidden");
-    $("history-search").oninput = renderHistoryList;
-    document.querySelectorAll("#history-filters [data-hfilter]").forEach((b) => {
-      b.onclick = () => { sfx.click(); state.historyFilter = b.dataset.hfilter; document.querySelectorAll("#history-filters [data-hfilter]").forEach((x) => x.classList.toggle("active", x === b)); renderHistoryList(); };
-    });
     $("tidy-graph-btn").onclick = tidyGraphLayout;
-    $("reset-layout-btn").onclick = () => {
-      localStorage.removeItem(LAYOUT_STORAGE_KEY); state.savedPositions = {};
-      for (const id of Array.from(state.nodes.keys())) removeNode(id);
-      $("sandbox-banner").classList.add("hidden");
-      toast("Desk cleared", "ok");
-    };
 
     // Pro / BYOK Upgrade Modal
     $("tier-pill").onclick = () => openUpgradeModal("");
@@ -2174,27 +3139,271 @@
     syncSfx();
     $("sfx-btn").onclick = () => { state.sfxEnabled = !state.sfxEnabled; localStorage.setItem("neon_sfx", String(state.sfxEnabled)); syncSfx(); if (state.sfxEnabled) sfx.click(); };
 
-    $("engines-modal-btn").onclick = () => { sfx.click(); $("engines-modal").classList.remove("hidden"); };
-    $("close-engines-modal").onclick = () => $("engines-modal").classList.add("hidden");
-    $("refresh-engines-btn").onclick = () => loadEngines(true);
+    $("status-modal-btn").onclick = () => openDevConsole("status");
+    $("api-modal-btn").onclick = () => openDevConsole("logs");
+    $("close-console-modal").onclick = () => $("dev-console-modal").classList.add("hidden");
+    $("refresh-status-btn").onclick = () => loadPlatformStatus(true);
 
-    $("api-modal-btn").onclick = () => {
+    document.querySelectorAll(".console-tab[data-ctab]").forEach((b) => {
+      b.onclick = () => { sfx.click(); switchConsoleTab(b.dataset.ctab); };
+    });
+    $("log-search-input").oninput = renderConsoleLogs;
+    document.querySelectorAll("#log-filter-pills [data-lfilter]").forEach((b) => {
+      b.onclick = () => {
+        sfx.click();
+        state.consoleFilter = b.dataset.lfilter;
+        document.querySelectorAll("#log-filter-pills [data-lfilter]").forEach((x) => x.classList.toggle("active", x === b));
+        renderConsoleLogs();
+      };
+    });
+    $("log-pause-btn").onclick = () => {
       sfx.click();
-      const body = state.lastApiPayload || { url: SHOWCASE_VIDEO.url, mode: "video", video_quality: "1080", video_only: false, video_container: "mp4", video_codec: "h264" };
-      const proHeader = state.proKey ? ` \\\n  -H "X-Neon-Pro-Key: ${state.proKey}"` : "";
-      $("api-curl-pre").textContent = `curl -X POST "${window.location.origin}/v1/jobs" \\\n  -H "Content-Type: application/json"${proHeader} \\\n  -d '${JSON.stringify(body, null, 2)}'`;
-      $("api-modal").classList.remove("hidden");
+      state.consolePaused = !state.consolePaused;
+      $("log-pause-btn").textContent = state.consolePaused ? "Resume" : "Pause";
+      $("console-stream-pill").classList.toggle("paused", state.consolePaused);
+      $("console-stream-label").textContent = state.consolePaused ? "PAUSED" : "LIVE";
+      if (!state.consolePaused) loadConsoleLogs();
     };
-    $("close-api-modal").onclick = () => $("api-modal").classList.add("hidden");
-    $("copy-curl-btn").onclick = async () => { await navigator.clipboard.writeText($("api-curl-pre").textContent); sfx.click(); toast("cURL copied", "ok"); };
-    $("copy-json-btn").onclick = async () => {
-      const body = state.lastApiPayload || { url: SHOWCASE_VIDEO.url, mode: "video", video_quality: "1080" };
-      await navigator.clipboard.writeText(JSON.stringify(body, null, 2)); sfx.click(); toast("JSON copied", "ok");
+    $("log-clear-btn").onclick = async () => {
+      sfx.click();
+      await fetch("/v1/logs", { method: "DELETE", headers: apiHeaders() });
+      state.consoleLogs = [];
+      state.selectedLogId = null;
+      renderConsoleLogs();
+      renderLogInspector();
+      toast("Console logs cleared", "ok");
+    };
+    $("log-export-btn").onclick = () => {
+      sfx.click();
+      const blob = new Blob([JSON.stringify(state.consoleLogs, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      triggerBrowserSave(url, `neon-sync-api-logs-${Date.now()}.json`);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      toast("Exported Neon Sync logs JSON", "ok");
+    };
+    document.querySelectorAll("#insp-tabs [data-itab]").forEach((b) => {
+      b.onclick = () => {
+        sfx.click();
+        state.inspectorTab = b.dataset.itab;
+        document.querySelectorAll("#insp-tabs [data-itab]").forEach((x) => x.classList.toggle("active", x === b));
+        renderLogInspector();
+      };
+    });
+    $("insp-copy-reqid").onclick = async () => {
+      await navigator.clipboard.writeText($("insp-copy-reqid").textContent);
+      sfx.click(); toast("Request ID copied", "ok");
+    };
+    $("insp-copy-body").onclick = async () => {
+      await navigator.clipboard.writeText($("insp-code-pre").textContent);
+      sfx.click(); toast("Copied to clipboard", "ok");
+    };
+
+    document.querySelectorAll("#wb-endpoint-list [data-ep]").forEach((b) => {
+      b.onclick = () => { sfx.click(); selectWorkbenchEndpoint(b.dataset.ep); };
+    });
+    document.querySelectorAll("#wb-lang-tabs [data-lang]").forEach((b) => {
+      b.onclick = () => {
+        sfx.click();
+        state.wbLang = b.dataset.lang;
+        document.querySelectorAll("#wb-lang-tabs [data-lang]").forEach((x) => x.classList.toggle("active", x === b));
+        $("wb-snippet-pre").textContent = buildWorkbenchSnippet();
+      };
+    });
+    $("wb-body-editor").oninput = () => { $("wb-snippet-pre").textContent = buildWorkbenchSnippet(); };
+    $("wb-send-btn").onclick = sendWorkbenchRequest;
+    $("wb-copy-snippet").onclick = async () => {
+      await navigator.clipboard.writeText($("wb-snippet-pre").textContent);
+      sfx.click(); toast("Snippet copied", "ok");
     };
 
     const applyTheme = (t) => { document.documentElement.setAttribute("data-theme", t); localStorage.setItem("neon_sync_theme", t); $("theme-text").textContent = t === "dark" ? "Light" : "Dark"; };
     applyTheme(localStorage.getItem("neon_sync_theme") || "dark");
     $("theme-btn").onclick = () => { sfx.click(); applyTheme((document.documentElement.getAttribute("data-theme") || "dark") === "dark" ? "light" : "dark"); };
+
+    // Automations Studio Wiring
+    $("automations-btn").onclick = () => { sfx.click(); $("automations-modal").classList.remove("hidden"); loadAutomations(); };
+    $("close-auto-modal").onclick = () => $("automations-modal").classList.add("hidden");
+    $("refresh-auto-btn").onclick = () => { sfx.click(); loadAutomations(); };
+    $("auto-create-form").onsubmit = async (e) => {
+      e.preventDefault();
+      const trigRaw = $("auto-trigger-select").value;
+      const isInt = trigRaw.startsWith("interval:");
+      const payload = {
+        name: $("auto-name-input").value.trim(),
+        target_url: $("auto-url-input").value.trim(),
+        action_type: $("auto-action-select").value,
+        trigger_type: isInt ? "interval" : "manual",
+        interval_minutes: isInt ? parseInt(trigRaw.split(":")[1], 10) : null,
+        prompt: $("auto-prompt-input").value.trim() || null,
+        preset_id: $("auto-action-select").value === "extract_preset" ? "best_compatible_mp4" : null,
+        webhook_url: $("auto-webhook-input").value.trim() || null,
+      };
+      const res = await fetch("/v1/automations", {
+        method: "POST",
+        headers: apiHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!res.ok) return toast(data.detail?.message || "Could not create automation", "err");
+      $("auto-create-form").reset();
+      sfx.complete();
+      toast(`Automation "${data.name}" saved!`, "ok");
+      loadAutomations();
+    };
+
+    // Auth & Account Modal Wiring
+    $("auth-btn").onclick = () => (state.user ? openAccountModal("profile") : openAuthModal("login"));
+    $("close-auth-modal").onclick = () => $("auth-modal").classList.add("hidden");
+    $("close-account-modal").onclick = () => $("account-modal").classList.add("hidden");
+    $("auth-tab-login").onclick = () => { sfx.click(); setAuthMode("login"); };
+    $("auth-tab-register").onclick = () => { sfx.click(); setAuthMode("register"); };
+
+    $("google-signin-btn").onclick = () => {
+      sfx.click();
+      if (state.authProviders?.google_enabled) {
+        window.location.href = "/v1/auth/google/start?next=/";
+        return;
+      }
+      const cb = state.authProviders?.google_redirect_uri || `${window.location.origin}/v1/auth/google/callback`;
+      $("google-setup-pre").textContent =
+        `# Authorized Redirect URI in Google Cloud Console:\n${cb}\n\n# Add to .env:\nNEON_SYNC_GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com\nNEON_SYNC_GOOGLE_CLIENT_SECRET=your-client-secret`;
+      $("google-setup-box").classList.remove("hidden");
+    };
+
+    $("auth-form").onsubmit = async (e) => {
+      e.preventDefault();
+      $("auth-error-box").classList.add("hidden");
+      const isReg = state.authMode === "register";
+      const payload = {
+        email: $("auth-email-input").value.trim(),
+        password: $("auth-password-input").value,
+      };
+      if (isReg) payload.name = $("auth-name-input").value.trim() || payload.email.split("@")[0];
+      $("auth-submit-btn").disabled = true;
+      try {
+        const res = await fetch(isReg ? "/v1/auth/register" : "/v1/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          showAuthError(data.detail?.message || "Authentication failed");
+          return;
+        }
+        state.user = data.user;
+        $("auth-password-input").value = "";
+        $("auth-modal").classList.add("hidden");
+        renderAuthBezel();
+        await refreshTier();
+        sfx.complete();
+        toast(isReg ? `Welcome to Neon Sync, ${state.user.name}!` : `Signed in as ${state.user.name}`, "ok");
+      } catch (err) {
+        showAuthError(err.message);
+      } finally {
+        $("auth-submit-btn").disabled = false;
+      }
+    };
+
+    document.querySelectorAll("[data-atab]").forEach((b) => {
+      b.onclick = () => { sfx.click(); switchAccountTab(b.dataset.atab); };
+    });
+
+    $("acct-signout-btn").onclick = async () => {
+      await fetch("/v1/auth/logout", { method: "POST" });
+      state.user = null;
+      $("account-modal").classList.add("hidden");
+      renderAuthBezel();
+      await refreshTier();
+      sfx.click();
+      toast("Signed out", "ok");
+    };
+
+    $("acct-save-profile-btn").onclick = async () => {
+      const name = $("acct-name-input").value.trim();
+      if (!name) return toast("Display name cannot be empty", "err");
+      const res = await fetch("/v1/auth/me", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      if (res.ok) {
+        state.user = await res.json();
+        renderAuthBezel();
+        renderAccountHeader();
+        sfx.complete();
+        toast("Profile updated", "ok");
+      }
+    };
+
+    $("acct-upgrade-btn").onclick = async () => {
+      const pro_key = $("acct-pro-key-input").value.trim();
+      if (!pro_key) return toast("Enter a Pro key", "err");
+      const res = await fetch("/v1/auth/upgrade", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pro_key }),
+      });
+      const data = await res.json();
+      if (!res.ok) return toast(data.detail?.message || "Invalid key", "err");
+      state.user = data;
+      $("acct-pro-key-input").value = "";
+      renderAccountHeader();
+      await refreshTier();
+      sfx.complete();
+      toast("Account upgraded to Neon Pro!", "ok");
+    };
+
+    $("acct-save-pw-btn").onclick = async () => {
+      const new_password = $("acct-new-pw").value;
+      const current_password = $("acct-cur-pw").value || null;
+      if (new_password.length < 8) return toast("Password must be at least 8 characters", "err");
+      const res = await fetch("/v1/auth/password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ current_password, new_password }),
+      });
+      const data = await res.json();
+      if (!res.ok) return toast(data.detail?.message || "Could not update password", "err");
+      state.user = data;
+      $("acct-cur-pw").value = "";
+      $("acct-new-pw").value = "";
+      renderAccountHeader();
+      sfx.complete();
+      toast("Password updated", "ok");
+    };
+
+    $("create-apikey-btn").onclick = async () => {
+      const name = $("new-apikey-name").value.trim();
+      if (!name) return toast("Enter a label for your API key", "err");
+      const res = await fetch("/v1/auth/api-keys", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, scopes: ["read", "write", "agent"] }),
+      });
+      if (!res.ok) return toast("Could not create API key", "err");
+      const data = await res.json();
+      $("new-apikey-name").value = "";
+      $("apikey-reveal-secret").textContent = data.secret;
+      $("apikey-reveal-box").classList.remove("hidden");
+      sfx.complete();
+      toast("API key generated — copy it now", "ok");
+      loadAccountApiKeys();
+    };
+    $("copy-new-apikey-btn").onclick = async () => {
+      await navigator.clipboard.writeText($("apikey-reveal-secret").textContent);
+      sfx.click(); toast("API key copied", "ok");
+    };
+
+    $("revoke-other-sessions-btn").onclick = async () => {
+      const res = await fetch("/v1/auth/sessions/revoke-others", { method: "POST" });
+      if (res.ok) {
+        const d = await res.json();
+        sfx.click();
+        toast(`Signed out ${d.revoked_count || 0} other session(s)`, "ok");
+        loadAccountSessionsAndActivity();
+      }
+    };
   }
 
   /* ---------- Hydrate History Drawer & Launch Cascading Possibility Tree ---------- */
@@ -2225,7 +3434,6 @@
     } else {
       setTimeout(() => { renderThreads(); fitAllNodes(); }, 60);
     }
-    renderHistoryList();
     syncWorkspaceMeta();
   }
 
@@ -2235,7 +3443,19 @@
       window.lucide.createIcons();
     }
     bindAllEvents();
-    await Promise.all([refreshTier(), loadEngines(false)]);
+    connectLogStream();
+    await Promise.all([refreshAuth(), refreshTier(), loadPlatformStatus(false), loadConsoleLogs(), loadAutomations()]);
     await hydrateFromBackend();
+
+    // Handle Google OAuth callback query feedback cleanly
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("auth") === "google_ok") {
+      if (state.user) toast(`Signed in with Google as ${state.user.name}`, "ok");
+      window.history.replaceState({}, "", window.location.pathname);
+    } else if (params.get("auth_error")) {
+      openAuthModal("login");
+      showAuthError(`Google Sign-In did not complete (${params.get("auth_error")}).`);
+      window.history.replaceState({}, "", window.location.pathname);
+    }
   })();
 })();

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import shutil
 import time
 import uuid
@@ -54,6 +55,7 @@ class ExtractionOrchestrator:
         self._storage = storage
         self._router = UrlRouter(registry)
         self._probe_cache: dict[tuple[str, str | None, int, bool], tuple[float, NormalizedMediaOutput]] = {}
+        self._inflight_probes: dict[tuple[str, str | None, int, bool], asyncio.Task[NormalizedMediaOutput]] = {}
 
     async def probe(
         self,
@@ -67,9 +69,10 @@ class ExtractionOrchestrator:
             max_length=self._settings.max_url_length,
         )
 
+        pref_engine = getattr(request, "preferred_engine", None)
         cache_key = (
             validated.canonical_url,
-            request.preferred_engine,
+            pref_engine,
             request.max_items,
             request.allow_browser_fallback,
         )
@@ -80,19 +83,34 @@ class ExtractionOrchestrator:
                 return cached.model_copy(deep=True)
             self._probe_cache.pop(cache_key, None)
 
+        # Coalesce concurrent probes for the exact same canonical URL (e.g. Probe + Watch Live)
+        if not request.bypass_cache and cancel_token is None and cache_key in self._inflight_probes:
+            shared_result = await asyncio.shield(self._inflight_probes[cache_key])
+            return shared_result.model_copy(deep=True)
+
         job_id = f"probe_{uuid.uuid4().hex[:16]}"
         ctx = UrlContext(validated=validated, job_id=job_id)
         options = ProbeOptions(
             timeout_seconds=self._settings.probe_timeout_seconds,
             max_items=request.max_items,
             include_subtitles=request.include_subtitles,
-            preferred_engine=request.preferred_engine,
+            preferred_engine=pref_engine,
             allow_browser_fallback=(
                 request.allow_browser_fallback and self._settings.enable_browser_fallback
             ),
         )
-        result = await self._router.probe_with_fallback(ctx, options, cancel_token=cancel_token)
-        self._probe_cache[cache_key] = (now, result.model_copy(deep=True))
+        task = asyncio.create_task(
+            self._router.probe_with_fallback(ctx, options, cancel_token=cancel_token)
+        )
+        if cancel_token is None:
+            self._inflight_probes[cache_key] = task
+        try:
+            result = await task
+        finally:
+            if self._inflight_probes.get(cache_key) is task:
+                self._inflight_probes.pop(cache_key, None)
+
+        self._probe_cache[cache_key] = (time.monotonic(), result.model_copy(deep=True))
         return result
 
     async def _emit(self, cb: ProgressCallback | None, event: ProgressEvent) -> None:
@@ -131,14 +149,15 @@ class ExtractionOrchestrator:
                 status=JobStatus.PROBING,
                 stage="probing",
                 percent=5.0,
-                message="Validating URL and probing candidate engines",
+                message="Validating URL and analyzing media source",
             ),
         )
 
         # Stage 3-6: Route & Probe (reuse fresh cached probe when available to avoid double-probing!)
+        pref_engine = getattr(request, "preferred_engine", None)
         cache_key = (
             validated.canonical_url,
-            request.preferred_engine,
+            pref_engine,
             request.max_items,
             request.allow_browser_fallback,
         )
@@ -152,7 +171,7 @@ class ExtractionOrchestrator:
                 timeout_seconds=self._settings.probe_timeout_seconds,
                 max_items=request.max_items,
                 include_subtitles=request.extract_subtitles,
-                preferred_engine=request.preferred_engine,
+                preferred_engine=pref_engine,
                 allow_browser_fallback=(
                     request.allow_browser_fallback and self._settings.enable_browser_fallback
                 ),
@@ -191,12 +210,12 @@ class ExtractionOrchestrator:
         downloader = self._router.select_downloader(
             ctx,
             probe_result=result,
-            preferred_engine=request.preferred_engine,
+            preferred_engine=pref_engine,
         )
         if downloader is None:
             raise AdapterError(
                 ErrorCode.ERR_UNSUPPORTED_URL,
-                "No available download engine found for this content.",
+                "Neon Sync could not find a compatible media stream for this URL.",
                 engine_id="orchestrator",
             )
 
@@ -213,7 +232,7 @@ class ExtractionOrchestrator:
                     status=JobStatus.DOWNLOADING,
                     stage="downloading",
                     percent=10.0,
-                    message=f"Downloading with {downloader.id}",
+                    message="Downloading media stream via Neon Sync",
                 ),
             )
 
@@ -282,7 +301,7 @@ class ExtractionOrchestrator:
                         status=JobStatus.POST_PROCESSING,
                         stage="post_processing",
                         percent=85.0,
-                        message="Validating and post-processing media with FFmpeg",
+                        message="Optimizing and verifying media with Neon Sync",
                     ),
                 )
                 is_image_output = final_mime.startswith("image/") or result.content_type == ContentType.IMAGE

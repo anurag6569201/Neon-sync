@@ -50,7 +50,15 @@ class TierManager:
         self._dl_hits: dict[str, deque[float]] = defaultdict(deque)
         self._agent_hits: dict[str, deque[float]] = defaultdict(deque)
 
-    def resolve_tier(self, pro_key: str | None, byok_key: str | None = None) -> TierName:
+    def resolve_tier(
+        self,
+        pro_key: str | None,
+        byok_key: str | None = None,
+        *,
+        account_tier: str | None = None,
+    ) -> TierName:
+        if account_tier == "pro":
+            return "pro"
         if pro_key and pro_key.strip() in self._pro_keys:
             return "pro"
         # Users bringing their own LLM key unlock Pro agent runs cleanly
@@ -69,8 +77,9 @@ class TierManager:
         *,
         pro_key: str | None = None,
         byok_key: str | None = None,
+        account_tier: str | None = None,
     ) -> TierEntitlements:
-        tier = self.resolve_tier(pro_key, byok_key)
+        tier = self.resolve_tier(pro_key, byok_key, account_tier=account_tier)
         has_llm = bool(
             byok_key
             or self._settings.gemini_api_key
@@ -123,8 +132,9 @@ class TierManager:
         *,
         pro_key: str | None = None,
         byok_key: str | None = None,
+        account_tier: str | None = None,
     ) -> TierEntitlements:
-        ent = self.get_entitlements(client_key, pro_key=pro_key, byok_key=byok_key)
+        ent = self.get_entitlements(client_key, pro_key=pro_key, byok_key=byok_key, account_tier=account_tier)
         if not self._settings.enforce_saas_tiers or ent.tier == "pro":
             return ent
 
@@ -143,8 +153,8 @@ class TierManager:
         if request.allow_browser_fallback and not ent.allow_browser_fallback:
             raise TierLimitError(
                 "ERR_PRO_FEATURE_REQUIRED",
-                "Tier-3 Playwright headless browser extraction is a Pro feature.",
-                upgrade_hint="Unlock Pro to enable JS-rendered browser extraction.",
+                "Dynamic Web Renderer extraction is a Pro feature.",
+                upgrade_hint="Unlock Pro to enable JS-rendered media discovery.",
             )
         if ent.downloads_remaining <= 0:
             raise TierLimitError(
@@ -154,7 +164,7 @@ class TierManager:
             )
 
         self._dl_hits[client_key].append(time.monotonic())
-        return self.get_entitlements(client_key, pro_key=pro_key, byok_key=byok_key)
+        return self.get_entitlements(client_key, pro_key=pro_key, byok_key=byok_key, account_tier=account_tier)
 
     def check_and_consume_agent(
         self,
@@ -162,8 +172,9 @@ class TierManager:
         *,
         pro_key: str | None = None,
         byok_key: str | None = None,
+        account_tier: str | None = None,
     ) -> TierEntitlements:
-        ent = self.get_entitlements(client_key, pro_key=pro_key, byok_key=byok_key)
+        ent = self.get_entitlements(client_key, pro_key=pro_key, byok_key=byok_key, account_tier=account_tier)
         if not self._settings.enforce_saas_tiers or ent.tier == "pro":
             return ent
 
@@ -175,4 +186,4 @@ class TierManager:
             )
 
         self._agent_hits[client_key].append(time.monotonic())
-        return self.get_entitlements(client_key, pro_key=pro_key, byok_key=byok_key)
+        return self.get_entitlements(client_key, pro_key=pro_key, byok_key=byok_key, account_tier=account_tier)

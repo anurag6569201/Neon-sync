@@ -55,12 +55,33 @@ class Settings(BaseSettings):
     browser_max_contexts: int = 2
     browser_recycle_after_jobs: int = 50
 
-    # Persistent job store & optional S3/R2 object storage
+    # Persistent job store, authentication & automation databases, and S3 / Cloudflare R2 storage
     job_db_path: Path | None = None
+    auth_db_path: Path = Field(default=Path("./data/auth.sqlite3"))
+    automations_db_path: Path = Field(default=Path("./data/automations.sqlite3"))
+    enable_automation_scheduler: bool = True
+    auth_session_ttl_seconds: int = 7 * 24 * 3600  # 7 days
+    auth_cookie_name: str = "neon_sync_session"
+    auth_cookie_secure: bool = False  # Automatically enforced in production / HTTPS
+    google_client_id: str | None = None
+    google_client_secret: str | None = None
+    google_redirect_uri: str | None = None
+    public_base_url: str | None = None
     s3_bucket: str | None = None
     s3_endpoint_url: str | None = None
     s3_region: str = "auto"
     s3_key_prefix: str = "neon-sync/artifacts/"
+
+    # Cloudflare Cloud Stack (R2 Storage, Workers AI Fallback, Turnstile Bot Protection)
+    cf_account_id: str | None = None
+    cf_api_token: str | None = None
+    cf_workers_ai_model: str = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
+    cf_r2_bucket: str | None = None
+    cf_r2_access_key_id: str | None = None
+    cf_r2_secret_access_key: str | None = None
+    cf_turnstile_site_key: str | None = None
+    cf_turnstile_secret: str | None = None
+    cf_turnstile_hostnames: str = "localhost,127.0.0.1"
 
     # Concurrency & rate limiting
     max_concurrent_probes: int = 8

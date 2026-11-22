@@ -13,17 +13,19 @@ BASE_URL = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8000"
 
 def main() -> int:
     with httpx.Client(base_url=BASE_URL, timeout=45.0) as client:
-        print(f"=== 1. Health & Engine Registry ({BASE_URL}) ===")
+        print(f"=== 1. Neon Sync Health & Platform Status ({BASE_URL}) ===")
         health = client.get("/v1/health")
         health.raise_for_status()
         hdata = health.json()
         print("Health:", hdata)
 
-        engines = client.get("/v1/engines").json()
-        for e in engines:
+        status_resp = client.get("/v1/status")
+        status_resp.raise_for_status()
+        sdata = status_resp.json()
+        for cap in sdata["capabilities"]:
             print(
-                f"  - {e['id']:14} | tier={e['tier']} | status={e['installation_status']:10} "
-                f"| v={e['version']:12} | {e['license']}"
+                f"  - {cap['id']:22} | {cap['category']:10} | status={cap['status']:11} "
+                f"| v={cap['version']:8} | {cap['name']}"
             )
 
         print("\n=== 2. SSRF Security Guard Check ===")

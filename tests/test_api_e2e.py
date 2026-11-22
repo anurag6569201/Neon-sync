@@ -68,21 +68,24 @@ async def test_api_health_engines_and_ssrf_blocking(tmp_path: Path):
     ) as client:
         h = await client.get("/v1/health")
         assert h.status_code == 200
-        assert "direct-http" in h.json()["engines_installed"]
+        hdata = h.json()
+        assert hdata["service"] == "neon-sync"
+        assert hdata["capabilities"]["neon-direct-transfer"] == "operational"
+        assert "engines_installed" not in hdata
 
-        eng = await client.get("/v1/engines")
-        assert eng.status_code == 200
-        ids = {e["id"] for e in eng.json()}
+        # Internal /v1/engines endpoint is not exposed publicly; /v1/status serves Neon Sync capabilities
+        assert (await client.get("/v1/engines")).status_code == 404
+        st = await client.get("/v1/status")
+        assert st.status_code == 200
+        cap_ids = {c["id"] for c in st.json()["capabilities"]}
         assert {
-            "direct-http",
-            "aria2",
-            "yt-dlp",
-            "gallery-dl",
-            "streamlink",
-            "n-m3u8dl-re",
-            "playwright",
-            "ffmpeg",
-        }.issubset(ids)
+            "neon-universal-media",
+            "neon-direct-transfer",
+            "neon-gallery-capture",
+            "neon-adaptive-streams",
+            "neon-media-mastering",
+            "neon-dynamic-renderer",
+        }.issubset(cap_ids)
 
         # SSRF attempt blocked at ingress with 403
         ssrf = await client.post("/v1/probe", json={"url": "http://169.254.169.254/latest/meta-data/"})
@@ -114,12 +117,13 @@ async def test_api_full_probe_download_sse_and_safe_artifact_delivery(
     ) as client:
         pdf_url = f"{e2e_media_server}/guide.pdf"
 
-        # 1. Probe
+        # 1. Probe (public response is white-labeled strictly as neon-sync)
         probe = await client.post("/v1/probe", json={"url": pdf_url})
         assert probe.status_code == 200
         pdata = probe.json()
         assert pdata["content_type"] == "document"
-        assert pdata["engine"]["engine_used"] == "direct-http"
+        assert pdata["engine"]["engine_used"] == "neon-sync"
+        assert pdata["engine"]["fallback_chain"] == ["neon-sync"]
 
         # 2. Submit job with idempotency key
         j1 = await client.post("/v1/jobs", json={"url": pdf_url, "idempotency_key": "idem-1"})
