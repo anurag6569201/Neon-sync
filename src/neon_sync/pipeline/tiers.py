@@ -1,4 +1,4 @@
-"""SaaS Tier & Freemium Credit Engine (Zero-Signup Guest Trial vs Pro Entitlements)."""
+"""SaaS Tier & Freemium Quota Engine (Zero-Signup Guest Trial vs Pro Entitlements)."""
 
 from __future__ import annotations
 
@@ -18,15 +18,12 @@ class TierEntitlements(BaseModel):
     tier: TierName
     downloads_limit_hourly: int
     downloads_remaining: int
-    agent_runs_limit_daily: int
-    agent_runs_remaining: int
     max_video_quality: str
     max_job_bytes: int
     max_batch_urls: int
     allow_lossless_audio: bool
     allow_4k: bool
     allow_browser_fallback: bool
-    has_llm_provider: bool
 
 
 class TierLimitError(RuntimeError):
@@ -40,7 +37,7 @@ class TierLimitError(RuntimeError):
 
 
 class TierManager:
-    """Tracks per-client Guest trial credits and validates Pro entitlements."""
+    """Tracks per-client Guest download credits and validates Pro entitlements."""
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
@@ -48,21 +45,16 @@ class TierManager:
             k.strip() for k in settings.pro_api_keys.split(",") if k.strip()
         }
         self._dl_hits: dict[str, deque[float]] = defaultdict(deque)
-        self._agent_hits: dict[str, deque[float]] = defaultdict(deque)
 
     def resolve_tier(
         self,
         pro_key: str | None,
-        byok_key: str | None = None,
         *,
         account_tier: str | None = None,
     ) -> TierName:
         if account_tier == "pro":
             return "pro"
         if pro_key and pro_key.strip() in self._pro_keys:
-            return "pro"
-        # Users bringing their own LLM key unlock Pro agent runs cleanly
-        if byok_key and byok_key.strip():
             return "pro"
         return "guest"
 
@@ -76,53 +68,37 @@ class TierManager:
         client_key: str,
         *,
         pro_key: str | None = None,
-        byok_key: str | None = None,
         account_tier: str | None = None,
     ) -> TierEntitlements:
-        tier = self.resolve_tier(pro_key, byok_key, account_tier=account_tier)
-        has_llm = bool(
-            byok_key
-            or self._settings.gemini_api_key
-            or self._settings.openai_api_key
-            or self._settings.ollama_url
-        )
+        tier = self.resolve_tier(pro_key, account_tier=account_tier)
 
         if tier == "pro":
             return TierEntitlements(
                 tier="pro",
                 downloads_limit_hourly=500,
                 downloads_remaining=500,
-                agent_runs_limit_daily=500,
-                agent_runs_remaining=500,
                 max_video_quality="2160",
                 max_job_bytes=self._settings.max_job_bytes,
                 max_batch_urls=10,
                 allow_lossless_audio=True,
                 allow_4k=True,
                 allow_browser_fallback=True,
-                has_llm_provider=has_llm,
             )
 
         dl_bucket = self._dl_hits[client_key]
-        ag_bucket = self._agent_hits[client_key]
         self._prune(dl_bucket, 3600.0)
-        self._prune(ag_bucket, 86400.0)
 
         dl_rem = max(0, self._settings.guest_downloads_per_hour - len(dl_bucket))
-        ag_rem = max(0, self._settings.guest_agent_runs_per_day - len(ag_bucket))
         return TierEntitlements(
             tier="guest",
             downloads_limit_hourly=self._settings.guest_downloads_per_hour,
             downloads_remaining=dl_rem,
-            agent_runs_limit_daily=self._settings.guest_agent_runs_per_day,
-            agent_runs_remaining=ag_rem,
             max_video_quality=str(self._settings.guest_max_video_height),
             max_job_bytes=self._settings.guest_max_job_bytes,
             max_batch_urls=self._settings.guest_max_batch_urls,
             allow_lossless_audio=False,
             allow_4k=False,
             allow_browser_fallback=False,
-            has_llm_provider=has_llm,
         )
 
     def check_and_consume_download(
@@ -131,10 +107,9 @@ class TierManager:
         request: DownloadRequest,
         *,
         pro_key: str | None = None,
-        byok_key: str | None = None,
         account_tier: str | None = None,
     ) -> TierEntitlements:
-        ent = self.get_entitlements(client_key, pro_key=pro_key, byok_key=byok_key, account_tier=account_tier)
+        ent = self.get_entitlements(client_key, pro_key=pro_key, account_tier=account_tier)
         if not self._settings.enforce_saas_tiers or ent.tier == "pro":
             return ent
 
@@ -164,26 +139,4 @@ class TierManager:
             )
 
         self._dl_hits[client_key].append(time.monotonic())
-        return self.get_entitlements(client_key, pro_key=pro_key, byok_key=byok_key, account_tier=account_tier)
-
-    def check_and_consume_agent(
-        self,
-        client_key: str,
-        *,
-        pro_key: str | None = None,
-        byok_key: str | None = None,
-        account_tier: str | None = None,
-    ) -> TierEntitlements:
-        ent = self.get_entitlements(client_key, pro_key=pro_key, byok_key=byok_key, account_tier=account_tier)
-        if not self._settings.enforce_saas_tiers or ent.tier == "pro":
-            return ent
-
-        if ent.agent_runs_remaining <= 0:
-            raise TierLimitError(
-                "ERR_AGENT_QUOTA_EXCEEDED",
-                f"You've used all {ent.agent_runs_limit_daily} free Guest AI Agent runs for today.",
-                upgrade_hint="Unlock Pro or add your own Gemini/OpenAI API key (BYOK) for unlimited Agent runs.",
-            )
-
-        self._agent_hits[client_key].append(time.monotonic())
-        return self.get_entitlements(client_key, pro_key=pro_key, byok_key=byok_key, account_tier=account_tier)
+        return self.get_entitlements(client_key, pro_key=pro_key, account_tier=account_tier)

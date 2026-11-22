@@ -1,15 +1,21 @@
-"""Tests for SQLiteJobStore durability, VTT/SRT transcript normalization & Web UI serving."""
+"""Tests for SQLiteJobStore, Artifact Durability, Turnstile, Transcripts & Spatial Graph UI."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
 import httpx
+import pytest
 
 from neon_sync.api import create_app
+from neon_sync.cloud import TurnstileVerificationError, verify_turnstile_token
 from neon_sync.config import Settings
 from neon_sync.models import DownloadRequest, JobRecord, JobStatus
-from neon_sync.pipeline import SQLiteJobStore, normalize_subtitle_to_transcript
+from neon_sync.pipeline import (
+    LocalArtifactStorage,
+    SQLiteJobStore,
+    normalize_subtitle_to_transcript,
+)
 
 
 def test_sqlite_job_store_persists_across_restarts(tmp_path: Path):
@@ -36,6 +42,36 @@ def test_sqlite_job_store_persists_across_restarts(tmp_path: Path):
         assert len(store2.list_recent(10)) == 1
     finally:
         store2.close()
+
+
+def test_local_artifact_storage_survives_restart(tmp_path: Path):
+    settings = Settings(storage_dir=tmp_path / "artifacts", artifact_ttl_seconds=3600)
+    src = tmp_path / "clip.mp4"
+    src.write_bytes(b"\x00\x00\x00\x18ftypmp42persist")
+
+    store1 = LocalArtifactStorage(settings)
+    art = store1.store(job_id="job_restart_1", source_path=src, filename="clip.mp4", mime_type="video/mp4")
+    store1.close()
+
+    store2 = LocalArtifactStorage(settings)
+    try:
+        resolved = store2.resolve("job_restart_1", "clip.mp4")
+        assert resolved is not None
+        assert resolved.sha256 == art.sha256
+        assert resolved.disk_path is not None and resolved.disk_path.exists()
+    finally:
+        store2.close()
+
+
+async def test_cloudflare_turnstile_fail_closed_and_dev_bypass():
+    dev_cfg = Settings(cf_turnstile_secret=None)
+    assert await verify_turnstile_token(token=None, expected_action="signup", client_ip="127.0.0.1", settings=dev_cfg) is True
+
+    prod_cfg = Settings(cf_turnstile_secret="test-secret", cf_turnstile_hostnames="app.neonsync.dev")
+    with pytest.raises(TurnstileVerificationError):
+        await verify_turnstile_token(token=None, expected_action="signup", client_ip="1.2.3.4", settings=prod_cfg)
+    with pytest.raises(TurnstileVerificationError):
+        await verify_turnstile_token(token="x" * 2100, expected_action="signup", client_ip="1.2.3.4", settings=prod_cfg)
 
 
 def test_normalize_vtt_and_srt_to_clean_transcript():
@@ -88,7 +124,8 @@ async def test_web_ui_served_at_root_with_sqlite_backing(tmp_path: Path):
         assert "Neon Sync" in resp.text
         assert "gravity-field" in resp.text
         assert "threads-svg" in resp.text
-        assert "dev-console-modal" in resp.text
+        assert "dev-console-modal" not in resp.text
+        assert "automations-modal" not in resp.text
         assert "history-drawer" not in resp.text
         assert "/static/app.css" in resp.text
         assert "/static/app.js" in resp.text
@@ -101,5 +138,7 @@ async def test_web_ui_served_at_root_with_sqlite_backing(tmp_path: Path):
         assert js.status_code == 200
         assert "/v1/probe" in js.text
         assert "/v1/jobs" in js.text
-        assert "/v1/agent/run" in js.text
+        assert "/v1/stream/resolve" in js.text
         assert "/v1/tier" in js.text
+        assert "/v1/agent/run" not in js.text
+        assert "/v1/logs" not in js.text

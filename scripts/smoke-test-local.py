@@ -13,20 +13,13 @@ BASE_URL = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8000"
 
 def main() -> int:
     with httpx.Client(base_url=BASE_URL, timeout=45.0) as client:
-        print(f"=== 1. Neon Sync Health & Platform Status ({BASE_URL}) ===")
+        print(f"=== 1. Neon Sync Health ({BASE_URL}) ===")
         health = client.get("/v1/health")
         health.raise_for_status()
         hdata = health.json()
         print("Health:", hdata)
-
-        status_resp = client.get("/v1/status")
-        status_resp.raise_for_status()
-        sdata = status_resp.json()
-        for cap in sdata["capabilities"]:
-            print(
-                f"  - {cap['id']:22} | {cap['category']:10} | status={cap['status']:11} "
-                f"| v={cap['version']:8} | {cap['name']}"
-            )
+        for cap_id, cap_status in hdata.get("capabilities", {}).items():
+            print(f"  - {cap_id:22} | status={cap_status}")
 
         print("\n=== 2. SSRF Security Guard Check ===")
         ssrf = client.post("/v1/probe", json={"url": "http://169.254.169.254/latest/meta-data/"})

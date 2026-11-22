@@ -124,11 +124,8 @@ async def test_email_password_auth_sessions_profile_upgrade_and_api_keys(tmp_pat
         ev_names = {e["event"] for e in activity.json()}
         assert {"register.password", "profile.updated", "account.upgraded", "api_key.created", "api_key.revoked"}.issubset(ev_names)
 
-        # 7. Telemetry logs MUST NEVER store plaintext password or generated API key secret!
-        logs = await client.get("/v1/logs?limit=100")
-        assert logs.status_code == 200
-        assert "SuperSecretPassword123!" not in logs.text
-        assert raw_secret not in logs.text
+        # 7. Developer /v1/logs endpoint is removed (never exposes auth traffic)
+        assert (await client.get("/v1/logs?limit=100")).status_code == 404
 
         # 8. Logout revokes session & clears cookie
         out = await client.post("/v1/auth/logout")

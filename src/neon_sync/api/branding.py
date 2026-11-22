@@ -1,8 +1,8 @@
 """Neon Sync Public White-Label Branding & Sanitization Boundary.
 
-Ensures every public API response, SSE stream, error detail, log entry, and status
-payload presents a unified, professional **Neon Sync** platform surface without
-exposing internal extraction engines, binaries, or third-party implementation details.
+Ensures every public API response, SSE stream, error detail, and health payload
+presents a unified **Neon Sync** surface without exposing internal extraction
+engines, binaries, host paths, or third-party implementation details.
 """
 
 from __future__ import annotations
@@ -26,7 +26,6 @@ from neon_sync.models import (
 
 PUBLIC_ENGINE_ID = "neon-sync"
 PUBLIC_MEDIA_PROCESSOR_ID = "neon-sync-media"
-PUBLIC_AI_SERVICE_ID = "neon-sync-ai"
 
 # Internal engine/binary tokens that must NEVER appear in public API responses or logs.
 _SANITIZE_RULES: list[tuple[re.Pattern[str], str]] = [
@@ -63,34 +62,6 @@ class CapabilityStatus(BaseModel):
     description: str
     supported_types: list[str] = Field(default_factory=list)
     version: str = __version__
-
-
-class PlatformMetrics(BaseModel):
-    """Live Neon Sync API & pipeline telemetry summary."""
-
-    uptime_seconds: float
-    total_requests: int
-    success_requests: int
-    client_errors: int
-    server_errors: int
-    avg_latency_ms: float
-    active_jobs: int
-    recent_jobs: int
-
-
-class PlatformStatusResponse(BaseModel):
-    """Unified public Neon Sync platform status response (`GET /v1/status`)."""
-
-    status: Literal["operational", "degraded"]
-    service: str = "neon-sync"
-    version: str = __version__
-    environment: str
-    capabilities_ready: int
-    capabilities_total: int
-    capabilities: list[CapabilityStatus]
-    cloud_integrations: list[dict[str, Any]] = Field(default_factory=list)
-    metrics: PlatformMetrics
-    security: dict[str, Any] = Field(default_factory=dict)
 
 
 def sanitize_public_text(text: str | None) -> str:
@@ -263,7 +234,7 @@ def brand_error_detail(
     request_id: str | None = None,
     upgrade_hint: str | None = None,
 ) -> dict[str, Any]:
-    """Build a consistent, professional Neon Sync API error payload."""
+    """Build a consistent, white-labeled Neon Sync API error payload."""
     detail: dict[str, Any] = {
         "code": code,
         "message": sanitize_public_text(message),
@@ -276,34 +247,3 @@ def brand_error_detail(
     if request_id:
         detail["request_id"] = request_id
     return detail
-
-
-def brand_agent_payload(data: dict[str, Any]) -> dict[str, Any]:
-    """Recursively white-label Agent SSE event data payloads."""
-    if not data:
-        return {}
-    out: dict[str, Any] = {}
-    for key, val in data.items():
-        if key == "engine":
-            out[key] = PUBLIC_ENGINE_ID
-        elif key == "provider" and isinstance(val, str):
-            out[key] = "neon-sync-ai" if val.startswith("gemini") else "neon-sync-core"
-        elif key == "probe" and isinstance(val, dict):
-            try:
-                model = NormalizedMediaOutput.model_validate(val)
-                out[key] = brand_media_output(model).model_dump(mode="json")
-            except Exception:  # noqa: BLE001
-                out[key] = brand_agent_payload(val)
-        elif key == "job" and isinstance(val, dict):
-            try:
-                rec = JobRecord.model_validate(val)
-                out[key] = brand_job_record(rec).model_dump(mode="json")
-            except Exception:  # noqa: BLE001
-                out[key] = brand_agent_payload(val)
-        elif isinstance(val, dict):
-            out[key] = brand_agent_payload(val)
-        elif isinstance(val, str):
-            out[key] = sanitize_public_text(val)
-        else:
-            out[key] = val
-    return out

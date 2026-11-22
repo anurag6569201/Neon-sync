@@ -5,13 +5,11 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING
 
-from fastapi import APIRouter, HTTPException, Query, Request, status
+from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import FileResponse, StreamingResponse
 
 from neon_sync import __version__
 from neon_sync.adapters import AdapterError
-from neon_sync.agent import AgentRequest, extract_url_from_prompt
-from neon_sync.cloud import get_cloud_integrations_status
 from neon_sync.models import (
     BatchDownloadRequest,
     DownloadRequest,
@@ -35,16 +33,12 @@ from neon_sync.security import (
 
 from .auth_routes import resolve_request_auth
 from .branding import (
-    PlatformStatusResponse,
-    brand_agent_payload,
     brand_error_detail,
     brand_job_record,
     brand_media_output,
     brand_progress_event,
     build_public_capabilities,
-    sanitize_public_text,
 )
-from .telemetry import LogsPageResponse
 
 if TYPE_CHECKING:
     from .app import AppContainer
@@ -72,14 +66,12 @@ def _client_key(request: Request) -> str:
     return "unknown"
 
 
-def _tier_context(request: Request) -> tuple[str | None, str | None, str | None]:
+def _tier_context(request: Request) -> tuple[str | None, str | None]:
     pro_key = request.headers.get("x-neon-pro-key")
-    byok_key = request.headers.get("x-gemini-api-key")
     auth_ctx = resolve_request_auth(request)
     account_tier = auth_ctx.user.tier if auth_ctx.user is not None else None
     return (
         pro_key.strip() if pro_key else None,
-        byok_key.strip() if byok_key else None,
         account_tier,
     )
 
@@ -112,119 +104,22 @@ def _error_status_code(code: ErrorCode) -> int:
     }.get(code, status.HTTP_502_BAD_GATEWAY)
 
 
-def _build_platform_status(c: AppContainer) -> PlatformStatusResponse:
+@router.get("/health", tags=["system"])
+async def health(request: Request) -> dict:
+    """Return minimal white-labeled Neon Sync readiness status."""
+    c = _container(request)
     manifests = c.registry.list_manifests()
     capabilities = build_public_capabilities(manifests)
     ready_count = sum(1 for cap in capabilities if cap.status == "operational")
-    recent = len(c.job_manager.list_jobs(limit=200))
-    metrics = c.telemetry.metrics(active_jobs=c.job_manager.active_count, recent_jobs=recent)
     core_ok = any(cap.id == "neon-direct-transfer" and cap.status == "operational" for cap in capabilities)
-    return PlatformStatusResponse(
-        status="operational" if core_ok else "degraded",
-        service="neon-sync",
-        version=__version__,
-        environment=c.settings.environment,
-        capabilities_ready=ready_count,
-        capabilities_total=len(capabilities),
-        capabilities=capabilities,
-        cloud_integrations=get_cloud_integrations_status(c.settings),
-        metrics=metrics,
-        security={
-            "ssrf_guard": "active",
-            "egress_isolation": "active" if c.settings.egress_proxy_url else "standard",
-            "artifact_signing": "sha256",
-            "turnstile_shield": "active" if c.settings.cf_turnstile_secret else "standby",
-            "sandbox_headers": "strict",
-        },
-    )
-
-
-@router.get("/health", tags=["system"])
-async def health(request: Request) -> dict:
-    """Return lightweight Neon Sync service health and capability availability."""
-    c = _container(request)
-    st = _build_platform_status(c)
     return {
-        "status": "ok" if st.status == "operational" else "degraded",
+        "status": "ok" if core_ok else "degraded",
         "service": "neon-sync",
         "version": __version__,
-        "environment": c.settings.environment,
-        "uptime_seconds": st.metrics.uptime_seconds,
-        "capabilities_ready": st.capabilities_ready,
-        "capabilities_total": st.capabilities_total,
-        "capabilities": {cap.id: cap.status for cap in st.capabilities},
+        "capabilities_ready": ready_count,
+        "capabilities_total": len(capabilities),
+        "capabilities": {cap.id: cap.status for cap in capabilities},
     }
-
-
-@router.get("/status", response_model=PlatformStatusResponse, tags=["system"])
-async def platform_status(request: Request) -> PlatformStatusResponse:
-    """Return detailed Neon Sync runtime capability health, security posture & live API metrics."""
-    return _build_platform_status(_container(request))
-
-
-@router.post("/status/refresh", response_model=PlatformStatusResponse, tags=["system"])
-async def refresh_platform_status(request: Request) -> PlatformStatusResponse:
-    """Re-verify Neon Sync runtime capability health and return updated status."""
-    c = _container(request)
-    await c.registry.refresh_health()
-    return _build_platform_status(c)
-
-
-@router.get("/logs", response_model=LogsPageResponse, tags=["developer"])
-async def list_api_logs(
-    request: Request,
-    limit: int = Query(default=100, ge=1, le=300),
-    level: str | None = Query(default=None),
-    status_group: str | None = Query(default=None, alias="status"),
-    service: str | None = Query(default=None),
-    q: str | None = Query(default=None),
-) -> LogsPageResponse:
-    """Return recent structured Neon Sync API request & pipeline console logs."""
-    c = _container(request)
-    entries = c.telemetry.list_logs(
-        limit=limit,
-        level=level,
-        status_group=status_group,
-        service=service,
-        search=q,
-    )
-    recent_jobs = len(c.job_manager.list_jobs(limit=200))
-    return LogsPageResponse(
-        total_buffered=c.telemetry.total_buffered,
-        returned=len(entries),
-        metrics=c.telemetry.metrics(active_jobs=c.job_manager.active_count, recent_jobs=recent_jobs),
-        logs=entries,
-    )
-
-
-@router.delete("/logs", tags=["developer"])
-async def clear_api_logs(request: Request) -> dict:
-    """Clear buffered Neon Sync API console logs."""
-    cleared = _container(request).telemetry.clear()
-    return {"status": "ok", "service": "neon-sync", "cleared": cleared}
-
-
-@router.get("/logs/stream", tags=["developer"])
-async def stream_api_logs(request: Request) -> StreamingResponse:
-    """Stream live Neon Sync API & pipeline console logs over Server-Sent Events (SSE)."""
-    c = _container(request)
-
-    async def _log_sse() -> AsyncIterator[str]:
-        yield 'event: ready\ndata: {"service":"neon-sync","status":"streaming"}\n\n'
-        async for entry in c.telemetry.subscribe():
-            if await request.is_disconnected():
-                break
-            yield f"event: log\ndata: {entry.model_dump_json()}\n\n"
-
-    return StreamingResponse(
-        _log_sse(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
 
 
 @router.get("/formats", response_model=FormatCatalog, tags=["system"])
@@ -235,84 +130,13 @@ async def list_format_catalog() -> FormatCatalog:
 
 @router.get("/tier", response_model=TierEntitlements, tags=["account"])
 async def get_tier_entitlements(request: Request) -> TierEntitlements:
-    """Return current Guest trial balance or Pro/BYOK/Account entitlements for this client."""
+    """Return current Guest trial balance or Pro entitlements for this client."""
     c = _container(request)
-    pro_key, byok_key, account_tier = _tier_context(request)
+    pro_key, account_tier = _tier_context(request)
     return c.tier_manager.get_entitlements(
         _client_key(request),
         pro_key=pro_key,
-        byok_key=byok_key,
         account_tier=account_tier,
-    )
-
-
-@router.post("/agent/run", tags=["agent"])
-async def run_agent(body: AgentRequest, request: Request) -> StreamingResponse:
-    """Run Neon Sync AI Agent over a natural-language media request and stream live SSE steps."""
-    c = _container(request)
-    client_key = _client_key(request)
-    pro_key, byok_key, account_tier = _tier_context(request)
-
-    extracted_url = extract_url_from_prompt(body.prompt, body.url)
-    if not extracted_url:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=brand_error_detail(
-                ErrorCode.ERR_INVALID_URL.value,
-                "Include a valid http(s) URL in your prompt or link field.",
-                request_id=_request_id(request),
-            ),
-        )
-    try:
-        validate_and_canonicalize_url(
-            extracted_url,
-            allow_private=c.settings.allow_private_addresses,
-            max_length=c.settings.max_url_length,
-        )
-    except UrlValidationError as exc:
-        raise HTTPException(
-            status_code=_error_status_code(exc.code),
-            detail=brand_error_detail(
-                exc.code.value,
-                exc.message,
-                request_id=_request_id(request),
-            ),
-        ) from exc
-
-    try:
-        c.tier_manager.check_and_consume_agent(
-            client_key,
-            pro_key=pro_key,
-            byok_key=byok_key,
-            account_tier=account_tier,
-        )
-    except TierLimitError as exc:
-        _raise_tier_limit(exc, request)
-
-    async def _agent_sse() -> AsyncIterator[str]:
-        async for event in c.agent.run_stream(
-            body,
-            client_key=client_key,
-            pro_key=pro_key,
-            byok_gemini_key=byok_key,
-            account_tier=account_tier,
-        ):
-            branded = event.model_copy(
-                update={
-                    "message": sanitize_public_text(event.message),
-                    "data": brand_agent_payload(event.data),
-                }
-            )
-            yield f"event: {branded.type}\ndata: {branded.model_dump_json()}\n\n"
-
-    return StreamingResponse(
-        _agent_sse(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
     )
 
 
@@ -321,12 +145,11 @@ async def probe_url(body: ProbeRequest, request: Request) -> NormalizedMediaOutp
     """Inspect a URL and return normalized media metadata, streams, subtitles & thumbnails."""
     c = _container(request)
     client_key = _client_key(request)
-    pro_key, byok_key, account_tier = _tier_context(request)
+    pro_key, account_tier = _tier_context(request)
     if body.allow_browser_fallback and c.settings.enforce_saas_tiers:
         ent = c.tier_manager.get_entitlements(
             client_key,
             pro_key=pro_key,
-            byok_key=byok_key,
             account_tier=account_tier,
         )
         if not ent.allow_browser_fallback:
@@ -385,7 +208,7 @@ async def create_job(body: DownloadRequest, request: Request) -> JobRecord:
     """Queue an asynchronous Neon Sync media extraction & mastering job."""
     c = _container(request)
     client_key = _client_key(request)
-    pro_key, byok_key, account_tier = _tier_context(request)
+    pro_key, account_tier = _tier_context(request)
 
     try:
         validate_and_canonicalize_url(
@@ -408,7 +231,6 @@ async def create_job(body: DownloadRequest, request: Request) -> JobRecord:
             client_key,
             body,
             pro_key=pro_key,
-            byok_key=byok_key,
             account_tier=account_tier,
         )
     except TierLimitError as exc:
@@ -441,7 +263,7 @@ async def create_batch_jobs(body: BatchDownloadRequest, request: Request) -> lis
     """Validate and enqueue up to 10 URLs sharing the same Neon Sync extraction settings."""
     c = _container(request)
     client_key = _client_key(request)
-    pro_key, byok_key, account_tier = _tier_context(request)
+    pro_key, account_tier = _tier_context(request)
 
     cleaned_urls: list[str] = []
     for raw_url in body.urls:
@@ -478,7 +300,6 @@ async def create_batch_jobs(body: BatchDownloadRequest, request: Request) -> lis
     ent = c.tier_manager.get_entitlements(
         client_key,
         pro_key=pro_key,
-        byok_key=byok_key,
         account_tier=account_tier,
     )
     if c.settings.enforce_saas_tiers and len(cleaned_urls) > ent.max_batch_urls:
@@ -500,7 +321,6 @@ async def create_batch_jobs(body: BatchDownloadRequest, request: Request) -> lis
                 client_key,
                 dl_req,
                 pro_key=pro_key,
-                byok_key=byok_key,
                 account_tier=account_tier,
             )
         except TierLimitError as exc:

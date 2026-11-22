@@ -73,11 +73,12 @@ async def test_api_health_engines_and_ssrf_blocking(tmp_path: Path):
         assert hdata["capabilities"]["neon-direct-transfer"] == "operational"
         assert "engines_installed" not in hdata
 
-        # Internal /v1/engines endpoint is not exposed publicly; /v1/status serves Neon Sync capabilities
+        # Internal /v1/engines, /v1/status, /v1/logs & OpenAPI docs are not exposed publicly
         assert (await client.get("/v1/engines")).status_code == 404
-        st = await client.get("/v1/status")
-        assert st.status_code == 200
-        cap_ids = {c["id"] for c in st.json()["capabilities"]}
+        assert (await client.get("/v1/status")).status_code == 404
+        assert (await client.get("/v1/logs")).status_code == 404
+        assert (await client.get("/openapi.json")).status_code == 404
+        cap_ids = set(hdata["capabilities"].keys())
         assert {
             "neon-universal-media",
             "neon-direct-transfer",

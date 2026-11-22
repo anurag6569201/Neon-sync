@@ -55,11 +55,9 @@ class Settings(BaseSettings):
     browser_max_contexts: int = 2
     browser_recycle_after_jobs: int = 50
 
-    # Persistent job store, authentication & automation databases, and S3 / Cloudflare R2 storage
+    # Persistent job store, authentication DB, and S3 / Cloudflare R2 storage
     job_db_path: Path | None = None
     auth_db_path: Path = Field(default=Path("./data/auth.sqlite3"))
-    automations_db_path: Path = Field(default=Path("./data/automations.sqlite3"))
-    enable_automation_scheduler: bool = True
     auth_session_ttl_seconds: int = 7 * 24 * 3600  # 7 days
     auth_cookie_name: str = "neon_sync_session"
     auth_cookie_secure: bool = False  # Automatically enforced in production / HTTPS
@@ -72,10 +70,7 @@ class Settings(BaseSettings):
     s3_region: str = "auto"
     s3_key_prefix: str = "neon-sync/artifacts/"
 
-    # Cloudflare Cloud Stack (R2 Storage, Workers AI Fallback, Turnstile Bot Protection)
-    cf_account_id: str | None = None
-    cf_api_token: str | None = None
-    cf_workers_ai_model: str = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
+    # Cloudflare Cloud Stack (R2 Storage & Turnstile Bot Protection)
     cf_r2_bucket: str | None = None
     cf_r2_access_key_id: str | None = None
     cf_r2_secret_access_key: str | None = None
@@ -93,20 +88,10 @@ class Settings(BaseSettings):
     # SaaS Tiers (Guest try-without-signup vs Pro)
     enforce_saas_tiers: bool = True
     guest_downloads_per_hour: int = 5
-    guest_agent_runs_per_day: int = 3
     guest_max_video_height: int = 1080
     guest_max_job_bytes: int = 500 * 1024 * 1024  # 500 MiB for guest
     guest_max_batch_urls: int = 3
     pro_api_keys: str = "neon-pro-local"  # Comma-separated Pro API keys for local/SaaS testing
-
-    # Neon Sync AI Agent Providers (optional — falls back to local deterministic planner when unset)
-    gemini_api_key: str | None = None
-    gemini_model: str = "gemini-2.5-flash"
-    openai_api_key: str | None = None
-    openai_base_url: str = "https://api.openai.com/v1"
-    openai_model: str = "gpt-4o-mini"
-    ollama_url: str | None = None
-    ollama_model: str = "llama3.2"
 
     # Engine binary overrides (auto-discovered via PATH when None)
     ytdlp_bin: str = "yt-dlp"

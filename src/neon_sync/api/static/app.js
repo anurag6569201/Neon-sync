@@ -17,38 +17,23 @@
 
   /* ---------- Application State ---------- */
   const state = {
-    forceAgent: false,
     batchOpen: false,
     autoSave: localStorage.getItem("neon_autosave") !== "false",
     sfxEnabled: localStorage.getItem("neon_sfx") !== "false",
     tier: null,
     proKey: sessionStorage.getItem("neon_pro_key") || "",
-    byokKey: sessionStorage.getItem("neon_byok_key") || "",
     sse: new Map(),
     autoSavedJobs: new Set(),
     oscActive: false,
     historyJobs: [],
     selectedNodeId: null,
-    nodes: new Map(), // id -> { id, type: 'source'|'choice'|'agent'|'result'|'note', x, y, ... }
+    nodes: new Map(), // id -> { id, type: 'source'|'choice'|'result'|'player'|'note', x, y, ... }
     edges: [],        // { id, from, to, kind, label, active?: bool, demo?: bool }
     sourceByUrl: new Map(),
     resultByJobId: new Map(),
     savedPositions: {},
     pendingPatch: null,
     hasDemoGraph: false,
-    lastApiPayload: null,
-    // Neon Sync Developer Console state
-    consoleTab: "logs",
-    consoleLogs: [],
-    consoleMetrics: null,
-    consolePaused: false,
-    consoleFilter: "all",
-    selectedLogId: null,
-    inspectorTab: "response",
-    logEventSource: null,
-    platformStatus: null,
-    wbEndpoint: "probe",
-    wbLang: "curl",
     // Authentication & Account state
     user: null,
     authProviders: null,
@@ -237,7 +222,7 @@
     for (const e of state.edges) {
       const n1 = state.nodes.get(e.from), n2 = state.nodes.get(e.to);
       if (!n1 || !n2) continue;
-      ctx.strokeStyle = e.kind === "agent" ? "rgba(22,196,127,0.55)" : e.kind === "audio" ? "rgba(168,85,247,0.55)" : e.kind === "subtitles" ? "rgba(59,130,246,0.55)" : "rgba(255,77,0,0.55)";
+      ctx.strokeStyle = e.kind === "live" ? "rgba(6,182,212,0.55)" : e.kind === "audio" ? "rgba(168,85,247,0.55)" : e.kind === "subtitles" ? "rgba(59,130,246,0.55)" : "rgba(255,77,0,0.55)";
       ctx.beginPath();
       ctx.moveTo(ox + (n1.x + 120) * scale, oy + (n1.y + 30) * scale);
       ctx.lineTo(ox + (n2.x + 120) * scale, oy + (n2.y + 30) * scale);
@@ -249,7 +234,7 @@
       const nw = Math.max(6, (el ? el.offsetWidth : 248) * scale);
       const nh = Math.max(3.5, (el ? el.offsetHeight : 58) * scale);
       ctx.fillStyle = n.type === "source" ? "#ff4d00"
-        : n.type === "agent" || n.theme === "agent" ? "#16c47f"
+        : n.type === "player" || n.theme === "live" ? "#06b6d4"
         : n.theme === "audio" ? "#a855f7"
         : n.theme === "subtitles" ? "#3b82f6"
         : n.type === "note" || n.theme === "image" ? "#f5b700"
@@ -429,14 +414,6 @@
     const m = (text || "").match(URL_RE);
     return m ? m[0].replace(/[.,;:]+$/, "") : null;
   }
-  function isNaturalLanguageCommand(raw) {
-    const trimmed = (raw || "").trim();
-    if (!trimmed) return false;
-    if (state.forceAgent) return true;
-    const url = extractUrl(trimmed);
-    if (!url) return trimmed.includes(" ");
-    return trimmed.replace(url, "").trim().length >= 3;
-  }
   function shortHost(url) {
     try { return new URL(url).hostname.replace(/^www\./, ""); } catch (_) { return "link"; }
   }
@@ -463,11 +440,10 @@
     return `BEST${muteTag}`;
   }
 
-  /* ---------- SaaS Tier & Headers ---------- */
+  /* ---------- Quota Tier & Headers ---------- */
   function apiHeaders(extra = {}) {
     const h = { ...extra };
     if (state.proKey) h["X-Neon-Pro-Key"] = state.proKey;
-    if (state.byokKey) h["X-Gemini-Api-Key"] = state.byokKey;
     return h;
   }
   function isPro() { return state.tier?.tier === "pro"; }
@@ -496,18 +472,14 @@
     const pro = t.tier === "pro";
     document.body.classList.toggle("is-pro", pro);
     $("tier-pill").classList.toggle("is-pro", pro);
-    $("tier-badge").textContent = pro ? (state.byokKey ? "PRO · BYOK" : "PRO") : "GUEST";
+    $("tier-badge").textContent = pro ? "PRO" : "GUEST";
     $("clear-keys-btn").classList.toggle("hidden", !pro);
     if (pro) {
-      $("fuel-ai-count").textContent = "∞";
       $("fuel-dl-count").textContent = "∞";
-      renderLedStrip($("fuel-ai-leds"), 5, 5, true);
       renderLedStrip($("fuel-dl-leds"), 5, 5, true);
-      $("tier-cta").textContent = t.has_llm_provider ? "Gemini Ready" : "Pro Active";
+      $("tier-cta").textContent = "Pro Active";
     } else {
-      $("fuel-ai-count").textContent = `${t.agent_runs_remaining}/${t.agent_runs_limit_daily}`;
       $("fuel-dl-count").textContent = `${t.downloads_remaining}/${t.downloads_limit_hourly}`;
-      renderLedStrip($("fuel-ai-leds"), t.agent_runs_remaining, t.agent_runs_limit_daily, false);
       renderLedStrip($("fuel-dl-leds"), t.downloads_remaining, t.downloads_limit_hourly, false);
       $("tier-cta").textContent = "Pro ↗";
     }
@@ -519,7 +491,6 @@
     if (reasonText) { box.textContent = reasonText; box.classList.remove("hidden"); }
     else box.classList.add("hidden");
     $("pro-key-input").value = state.proKey;
-    $("byok-key-input").value = state.byokKey;
     $("upgrade-modal").classList.remove("hidden");
   }
 
@@ -581,7 +552,6 @@
     if (ct === "image" || ct === "gallery") {
       return [
         { key: "image", theme: "image", icon: "image", title: ct === "gallery" ? "Gallery Images" : "Image", sub: "Original · WebP · PNG · JPEG", edgeLabel: "IMAGE", nextStep: "image_format", delta: { mode: "image" } },
-        { key: "agent", theme: "agent", icon: "sparkles", title: "AI Agent", sub: "Resize, slice or custom command", edgeLabel: "AGENT", nextStep: "agent_paths", delta: {} },
       ];
     }
     if (ct === "audio") {
@@ -590,13 +560,11 @@
         { key: "audio", theme: "audio", icon: "headphones", title: "Audio", sub: "MP3 · M4A · Opus · FLAC · WAV", edgeLabel: "AUDIO", nextStep: "audio_format", delta: { mode: "audio" } },
       ];
       if (hasThumb) list.push({ key: "image", theme: "image", icon: "image", title: "Cover Art", sub: "Extract & convert thumbnail", edgeLabel: "COVER", nextStep: "image_format", delta: { mode: "image", _useThumbnailUrl: true } });
-      list.push({ key: "agent", theme: "agent", icon: "sparkles", title: "AI Agent", sub: "Trim, normalize or summarize", edgeLabel: "AGENT", nextStep: "agent_paths", delta: {} });
       return list;
     }
     if (ct === "document" || ct === "archive" || ct === "file") {
       return [
         { key: "direct", theme: "video", icon: "file-down", title: "Direct Download", sub: p?.size_bytes ? `${fmtBytes(p.size_bytes)} · Verified` : "Fast verified file", edgeLabel: "FILE", isLeaf: true, delta: { mode: "direct" } },
-        { key: "agent", theme: "agent", icon: "sparkles", title: "AI Agent", sub: "Inspect or automate workflow", edgeLabel: "AGENT", nextStep: "agent_paths", delta: {} },
       ];
     }
 
@@ -605,12 +573,11 @@
       { key: "watch_live", theme: "live", icon: "play", title: "Watch Live", sub: "Instant network stream · VLC mode", edgeLabel: "LIVE PLAY", isLeaf: true, delta: { _livePlay: "video" } },
       { key: "video", theme: "video", icon: "film", title: "Video", sub: maxH ? `Up to ${maxH >= 2160 ? "4K" : maxH + "p"} · Audio or Muted` : "With Audio · Muted · Trim Clip", edgeLabel: "VIDEO", nextStep: "video_track", delta: { mode: "video" } },
       { key: "audio", theme: "audio", icon: "headphones", title: "Audio", sub: "MP3 · M4A · Opus · FLAC · WAV", edgeLabel: "AUDIO", nextStep: "audio_format", delta: { mode: "audio" } },
-      { key: "subtitles", theme: "subtitles", icon: "subtitles", title: "Subtitles", sub: subCount ? `${subCount} track(s) · .txt · AI Brief` : "Auto captions · .txt · AI Brief", edgeLabel: "CAPTIONS", nextStep: "sub_lang", delta: { mode: "video", extract_subtitles: true, subtitles_only: true } },
+      { key: "subtitles", theme: "subtitles", icon: "subtitles", title: "Subtitles", sub: subCount ? `${subCount} track(s) · SRT · VTT · .txt` : "Auto captions · SRT · VTT · .txt", edgeLabel: "CAPTIONS", nextStep: "sub_lang", delta: { mode: "video", extract_subtitles: true, subtitles_only: true } },
     ];
     if (hasThumb) {
       list.push({ key: "image", theme: "image", icon: "image", title: "Thumbnail", sub: "HD Cover · WebP · PNG · JPEG", edgeLabel: "COVER", nextStep: "image_format", delta: { mode: "image", _useThumbnailUrl: true } });
     }
-    list.push({ key: "agent", theme: "agent", icon: "sparkles", title: "AI Agent", sub: "Smart clips, audio & summaries", edgeLabel: "AGENT", nextStep: "agent_paths", delta: {} });
     return list;
   }
 
@@ -696,16 +663,6 @@
             { key: "lang_en", theme: "subtitles", icon: "globe", title: "English (EN)", sub: "Manual or auto captions", edgeLabel: "EN", nextStep: "sub_format", delta: { subtitle_languages: ["en"], subtitle_mode: "include_auto" } },
             { key: "lang_hi", theme: "subtitles", icon: "globe", title: "Hindi (HI)", sub: "Manual or auto captions", edgeLabel: "HI", nextStep: "sub_format", delta: { subtitle_languages: ["hi"], subtitle_mode: "include_auto" } },
           ];
-      langNodes.push({
-        key: "sub_ai_brief",
-        theme: "agent",
-        icon: "sparkles",
-        title: "AI Summary Brief",
-        sub: "Instant key points via Neon Agent",
-        edgeLabel: "AI BRIEF",
-        isLeaf: true,
-        delta: { _agentPrompt: "summarize the key points from" },
-      });
       return langNodes;
     }
 
@@ -736,16 +693,6 @@
       ];
     }
 
-    if (step === "agent_paths") {
-      return [
-        { key: "ag_kit", theme: "agent", icon: "layers", title: "Viral Reel Kit", sub: "1080p MP4 + 320k MP3 + AI Hooks", edgeLabel: "MULTI-STEP", isLeaf: true, delta: { _agentPrompt: "create a viral reel kit with 1080p mp4, 320k mp3 and social hooks" } },
-        { key: "ag_watch_brief", theme: "live", icon: "play", title: "Watch Live + AI Brief", sub: "Instant stream + transcript takeaways", edgeLabel: "LIVE + AI", isLeaf: true, delta: { _agentPrompt: "watch live and summarize key takeaways with timestamps" } },
-        { key: "ag_clip", theme: "agent", icon: "scissors", title: "15s Reel Clip", sub: "0:30–0:45 · 1080p H.264 MP4", edgeLabel: "AI CLIP", isLeaf: true, delta: { _agentPrompt: "clip 0:30 to 0:45 in 1080p h264 mp4" } },
-        { key: "ag_mp3", theme: "agent", icon: "headphones", title: "Podcast Audio + Notes", sub: "320k MP3 + Loudnorm + AI brief", edgeLabel: "AI AUDIO", isLeaf: true, delta: { _agentPrompt: "extract audio as 320k mp3 with loudnorm and summarize key points" } },
-        { key: "ag_custom", theme: "agent", icon: "terminal", title: "Custom AI Command", sub: "Tell Neon Agent what to build", edgeLabel: "PROMPT", inputKind: "agent_prompt", isLeaf: true, delta: {} },
-      ];
-    }
-
     return [];
   }
 
@@ -753,7 +700,7 @@
   function subtreeHasRealOutput(nodeId) {
     const n = state.nodes.get(nodeId);
     if (!n) return false;
-    if (n.type === "result" || n.type === "agent" || n.type === "note" || n.type === "player") return true;
+    if (n.type === "result" || n.type === "note" || n.type === "player") return true;
     const kids = state.edges.filter((e) => e.from === nodeId).map((e) => e.to);
     return kids.some((cid) => subtreeHasRealOutput(cid));
   }
@@ -818,7 +765,6 @@
         animDelayMs: idx * 32,
         clipStart: "0:30",
         clipEnd: "0:45",
-        customPrompt: "clip 0:30 to 0:45 in 1080p mp4",
         x: parentNode.x + 360,
         y: parentNode.y,
       };
@@ -967,14 +913,6 @@
       return launchLivePlayerFromParent(choiceNode, src.url, acc._livePlay);
     }
 
-    // Handle inline AI Agent prompt leaf or preset AI prompt leaf
-    if (acc._agentPrompt || choiceNode.inputKind === "agent_prompt") {
-      const rawPrompt = choiceNode.inputKind === "agent_prompt" ? (choiceNode.customPrompt || "").trim() : acc._agentPrompt;
-      if (!rawPrompt) return toast("Type an instruction for Neon Agent", "err");
-      const fullPrompt = rawPrompt.includes("http") ? rawPrompt : `${rawPrompt} ${src.url}`;
-      return launchAgentFromParent(choiceNode, fullPrompt, src.url);
-    }
-
     // Handle inline Trim Clip leaf
     if (choiceNode.inputKind === "trim") {
       acc.clip_start_seconds = parseTime(choiceNode.clipStart);
@@ -984,13 +922,11 @@
     // Build clean DownloadRequest payload
     const targetUrl = acc._useThumbnailUrl && src?.probe?.thumbnail?.url ? src.probe.thumbnail.url : src.url;
     delete acc._useThumbnailUrl;
-    delete acc._agentPrompt;
 
     const payload = { url: targetUrl, ...acc };
     if (targetUrl === src?.probe?.thumbnail?.url && src?.title) {
       payload.custom_filename_prefix = src.title.replace(/[^a-zA-Z0-9_-]+/g, "_").slice(0, 32);
     }
-    state.lastApiPayload = payload;
     osc.set(true, `EXTRACTING · ${choiceNode.title.toUpperCase()}…`);
     sfx.capture();
 
@@ -1324,13 +1260,6 @@
             <button class="reactor-fire btn-sm" data-run-inline-leaf="${esc(node.id)}">${iconSvg("play", "ico-xs")}<span>Extract Clip</span></button>
           </div>
         `;
-      } else if (node.inputKind === "agent_prompt") {
-        inlineExtra = `
-          <div class="choice-inline-body">
-            <input type="text" class="cfg-input" data-agent-prompt value="${esc(node.customPrompt)}" placeholder="clip 0:30 to 0:45 in 1080p…" />
-            <button class="reactor-fire btn-sm btn-agent" data-run-inline-leaf="${esc(node.id)}">${iconSvg("sparkles", "ico-xs")}<span>Run Agent</span></button>
-          </div>
-        `;
       }
 
       inner = `
@@ -1392,29 +1321,6 @@
               </button>
               <span class="mono muted" style="font-size:9.5px;">ZERO DOWNLOAD · VLC MODE</span>
             </div>
-          </div>
-        </div>
-      `;
-    } else if (node.type === "agent") {
-      const stepsHtml = (node.steps || []).map((s) =>
-        `<div class="trace-item"><span class="step-tag mono ${esc(s.cls)}">${esc(s.tag)}</span><span>${esc(s.msg)}</span></div>`
-      ).join("");
-      inner = `
-        <div class="port port-in" data-port="in" data-node="${esc(node.id)}"></div>
-        <div class="port port-out" data-port="out" data-node="${esc(node.id)}"><span class="port-tip mono">Drag to link</span></div>
-        <div class="node-head" data-drag-handle="1">
-          <span class="node-type-pill mono"><span class="node-type-dot"></span>NEON AGENT ${node.provider ? `· ${esc(node.provider)}` : ""}</span>
-          <div class="node-head-right">
-            <span class="status-pill mono ${node.done ? "ok" : node.failed ? "err" : "warn"}">${node.done ? "done" : node.failed ? "halt" : "live"}</span>
-            <button class="node-icon-btn" data-node-collapse="${esc(node.id)}">${node.collapsed ? "▸" : "▾"}</button>
-            <button class="node-icon-btn" data-node-del="${esc(node.id)}">×</button>
-          </div>
-        </div>
-        <div class="node-body">
-          <div class="agent-prompt-quote">“${esc(node.prompt)}”</div>
-          <div class="node-body-collapsible">
-            <div class="trace-list">${stepsHtml}</div>
-            ${node.answer ? `<div class="agent-answer-card">${esc(node.answer)}</div>` : ""}
           </div>
         </div>
       `;
@@ -1619,17 +1525,11 @@
       };
     }
 
-    // Inline inputs on Trim / Agent Custom Prompt nodes
+    // Inline inputs on Trim nodes
     const tStart = el.querySelector("[data-trim-start]");
     if (tStart) { tStart.onpointerdown = (e) => e.stopPropagation(); tStart.oninput = () => { node.clipStart = tStart.value; }; }
     const tEnd = el.querySelector("[data-trim-end]");
     if (tEnd) { tEnd.onpointerdown = (e) => e.stopPropagation(); tEnd.oninput = () => { node.clipEnd = tEnd.value; }; }
-    const aPrompt = el.querySelector("[data-agent-prompt]");
-    if (aPrompt) {
-      aPrompt.onpointerdown = (e) => e.stopPropagation();
-      aPrompt.oninput = () => { node.customPrompt = aPrompt.value; };
-      aPrompt.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); executeChoiceLeaf(node); } };
-    }
     el.querySelector("[data-run-inline-leaf]")?.addEventListener("click", (e) => { e.stopPropagation(); executeChoiceLeaf(node); });
 
     // Magnetic Patch Cable Dragging from Output Jack
@@ -1825,7 +1725,7 @@
     } catch (_) {}
     node.probing = false;
     renderNode(node);
-    // Bloom ONLY Level 1 paths cleanly (Video, Audio, Subtitles, Thumbnail, AI Agent) — click any one to bloom its sub-paths!
+    // Bloom Level 1 paths cleanly (Watch Live, Video, Audio, Subtitles, Thumbnail)
     spawnChoiceChildren(node, getLevel1Choices(node), true, true);
     osc.set(false, "CLICK ANY PATH TO EXPLORE");
   }
@@ -1907,120 +1807,6 @@
       }
     });
     es.onerror = () => { es.close(); state.sse.delete(jobId); };
-  }
-
-  async function launchAgentFromParent(parentNode, promptText, explicitUrl = null) {
-    const url = explicitUrl || parentNode.url || extractUrl(promptText);
-    const siblings = state.edges.filter((e) => e.from === parentNode.id).length;
-    const pos = pickChildPosition(parentNode, siblings);
-    const cleanPrompt = promptText.replace(url || "", "").trim() || promptText;
-    const shortTag = /clip|trim/i.test(cleanPrompt) ? "AI · CLIP" : /mp3|audio/i.test(cleanPrompt) ? "AI · AUDIO" : /summar|brief/i.test(cleanPrompt) ? "AI · BRIEF" : "AI AGENT";
-
-    const agentNode = {
-      id: uid("agent"), type: "agent", x: pos.x, y: pos.y, url,
-      prompt: cleanPrompt, provider: "", steps: [], answer: "", done: false, failed: false,
-    };
-    state.nodes.set(agentNode.id, agentNode);
-    renderNode(agentNode);
-    const edgeIn = addEdge(parentNode.id, agentNode.id, "agent", true, shortTag);
-    if (parentNode.rootSourceId) layoutTreeFromRoot(parentNode.rootSourceId);
-    gravity.shockAt(agentNode.x + 180, agentNode.y + 80);
-    glideToWorld((parentNode.x + agentNode.x) / 2 + 160, agentNode.y + 100, Math.min(camera.zoom, 0.9));
-    sfx.capture();
-    osc.set(true, "AGENT REASONING…");
-
-    try {
-      const res = await fetch("/v1/agent/run", {
-        method: "POST",
-        headers: apiHeaders({ "Content-Type": "application/json" }),
-        body: JSON.stringify({ prompt: promptText, url }),
-      });
-      if (res.status === 402) {
-        const err = await res.json();
-        removeNode(agentNode.id);
-        openUpgradeModal(`${err.detail?.message} ${err.detail?.upgrade_hint || ""}`.trim());
-        osc.set(false, "UPGRADE REQUIRED");
-        return;
-      }
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        agentNode.failed = true;
-        agentNode.steps.push({ tag: "ERR", cls: "err", msg: err.detail?.message || "Agent failed" });
-        edgeIn.active = false;
-        renderNode(agentNode);
-        return;
-      }
-
-      refreshTier();
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      const spawnedJobs = new Map();
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const frames = buffer.split("\n\n");
-        buffer = frames.pop() || "";
-
-        for (const frame of frames) {
-          let evtType = "message", dataStr = "";
-          for (const line of frame.split("\n")) {
-            if (line.startsWith("event:")) evtType = line.slice(6).trim();
-            else if (line.startsWith("data:")) dataStr += line.slice(5).trim();
-          }
-          if (!dataStr) continue;
-          const ev = JSON.parse(dataStr);
-
-          if (evtType === "thought") { sfx.step(); agentNode.steps.push({ tag: "THINK", cls: "", msg: ev.message }); renderNode(agentNode); }
-          else if (evtType === "plan") { sfx.step(); if (ev.data?.provider) agentNode.provider = ev.data.provider; agentNode.steps.push({ tag: "PLAN", cls: "plan", msg: ev.message }); renderNode(agentNode); }
-          else if (evtType === "tool") { sfx.step(); agentNode.steps.push({ tag: `TOOL·${ev.data?.tool || "exec"}`, cls: "tool", msg: ev.message }); renderNode(agentNode); }
-          else if (evtType === "stream" && ev.data?.url) {
-            sfx.step();
-            agentNode.steps.push({ tag: "STREAM", cls: "tool", msg: ev.message || "Connected live stream" });
-            renderNode(agentNode);
-            launchLivePlayerFromParent(agentNode, ev.data.url, ev.data.mode || "video");
-          } else if (evtType === "job" && ev.data?.job_id) {
-            const rn = upsertResultNodeForJob(ev.data, agentNode, null, "agent");
-            spawnedJobs.set(ev.data.job_id, rn);
-            if (ev.data.status === "completed") {
-              for (const e of state.edges) if (e.to === rn.id) e.active = false;
-              const dl = ev.data.result?.download;
-              if (dl?.artifact_url && state.autoSave && !state.autoSavedJobs.has(ev.data.job_id)) {
-                state.autoSavedJobs.add(ev.data.job_id);
-                triggerBrowserSave(dl.artifact_url, dl.filename);
-                toast(`Agent saved ${dl.filename}`, "ok");
-              }
-            }
-          } else if (evtType === "progress" && ev.data?.job_id) {
-            const targetNode = spawnedJobs.get(ev.data.job_id);
-            if (targetNode) {
-              targetNode.job = { ...(targetNode.job || {}), status: ev.data.status, progress: ev.data };
-              renderNode(targetNode);
-            }
-          } else if (evtType === "answer") {
-            sfx.complete(); gravity.pulseAt(agentNode.x + 180, agentNode.y + 100);
-            agentNode.done = true; agentNode.answer = ev.message; edgeIn.active = false; renderNode(agentNode);
-          } else if (evtType === "error") {
-            agentNode.failed = true; edgeIn.active = false;
-            agentNode.steps.push({ tag: "HALT", cls: "err", msg: ev.message }); renderNode(agentNode);
-            if (ev.data?.code === "ERR_PRO_FEATURE_REQUIRED" || ev.data?.code === "ERR_GUEST_QUOTA_EXCEEDED") {
-              openUpgradeModal(`${ev.message} ${ev.data?.upgrade_hint || ""}`.trim());
-            } else toast(ev.message, "err");
-          }
-        }
-      }
-      if (!agentNode.failed) agentNode.done = true;
-      edgeIn.active = false;
-      renderNode(agentNode);
-    } catch (err) {
-      agentNode.failed = true; edgeIn.active = false;
-      agentNode.steps.push({ tag: "ERR", cls: "err", msg: err.message }); renderNode(agentNode);
-    } finally {
-      osc.set(false, "CANVAS READY");
-      refreshTier();
-    }
   }
 
   /* ---------- Live Network Stream Player (VLC Mode · Zero Download) ---------- */
@@ -2133,10 +1919,6 @@
   /* ---------- Dock Submission ---------- */
   function syncDockModeVisuals() {
     const raw = $("url-input").value.trim();
-    const agent = isNaturalLanguageCommand(raw);
-    $("reactor-shell").classList.toggle("agent-mode", agent);
-    $("intent-label").textContent = agent ? "NEON AI AGENT" : "SPAWN POSSIBILITIES";
-    $("fire-label").textContent = agent ? "Run Agent" : "Spawn";
     $("clear-url-btn").classList.toggle("hidden", !raw);
     const url = extractUrl(raw);
     if (url) { $("platform-tag").textContent = shortHost(url).toUpperCase(); $("platform-tag").classList.remove("hidden"); }
@@ -2145,20 +1927,14 @@
 
   async function fireDockCommand() {
     const raw = $("url-input").value.trim();
-    if (!raw) return toast("Paste a link or type an Agent command", "err");
+    if (!raw) return toast("Paste a media link to spawn its paths", "err");
     const url = extractUrl(raw);
     if (!url) return toast("Include a valid http(s) URL", "err");
 
     $("url-input").value = "";
     syncDockModeVisuals();
     sfx.capture();
-
-    if (isNaturalLanguageCommand(raw)) {
-      const src = spawnSourceWithPossibilities(url, null, false);
-      await launchAgentFromParent(src, raw, url);
-    } else {
-      spawnSourceWithPossibilities(url, null, true);
-    }
+    spawnSourceWithPossibilities(url, null, true);
   }
 
   function spawnBatchTrees() {
@@ -2190,574 +1966,20 @@
     glideToWorld((src.x + rn.x) / 2 + 170, rn.y + 100, 0.92);
   }
 
-  /* =========================================================================
-     NEON SYNC DEVELOPER CONSOLE (Live Logs, API Workbench & System Status)
-     ========================================================================= */
-  const WB_ENDPOINTS = {
-    probe: {
-      method: "POST",
-      path: "/v1/probe",
-      body: () => ({ url: state.lastApiPayload?.url || SHOWCASE_VIDEO.url, include_subtitles: true }),
-    },
-    stream: {
-      method: "POST",
-      path: "/v1/stream/resolve",
-      body: () => ({ url: state.lastApiPayload?.url || SHOWCASE_VIDEO.url, mode: "video", preferred_quality: "auto" }),
-    },
-    jobs: {
-      method: "POST",
-      path: "/v1/jobs",
-      body: () =>
-        state.lastApiPayload || {
-          url: SHOWCASE_VIDEO.url,
-          mode: "video",
-          video_quality: "1080",
-          video_container: "mp4",
-          video_codec: "h264",
-          remux_faststart: true,
-        },
-    },
-    batch: {
-      method: "POST",
-      path: "/v1/jobs/batch",
-      body: () => ({
-        urls: [SHOWCASE_VIDEO.url],
-        mode: "audio",
-        audio_format: "mp3",
-        audio_bitrate: "320k",
-      }),
-    },
-    agent: {
-      method: "POST",
-      path: "/v1/agent/run",
-      body: () => ({
-        prompt: `extract audio as 320k mp3 and normalize volume ${SHOWCASE_VIDEO.url}`,
-      }),
-    },
-    formats: { method: "GET", path: "/v1/formats", body: () => null },
-    status: { method: "GET", path: "/v1/status", body: () => null },
-    logs: { method: "GET", path: "/v1/logs?limit=50", body: () => null },
-  };
-
-  function fmtTimeShort(iso) {
-    if (!iso) return "";
+  /* ---------- Minimal Core Health Indicator ---------- */
+  async function loadCoreHealth() {
     try {
-      const d = new Date(iso);
-      return d.toTimeString().slice(0, 8);
-    } catch (_) {
-      return "";
-    }
-  }
-
-  function fmtUptime(sec) {
-    const s = Math.max(0, Math.round(Number(sec || 0)));
-    if (s < 60) return `${s}s`;
-    if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s`;
-    return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
-  }
-
-  async function loadPlatformStatus(refresh = false) {
-    try {
-      const res = await fetch(refresh ? "/v1/status/refresh" : "/v1/status", {
-        method: refresh ? "POST" : "GET",
-        headers: apiHeaders(),
-      });
+      const res = await fetch("/v1/health");
       if (!res.ok) return;
       const data = await res.json();
-      state.platformStatus = data;
-      const ready = data.capabilities_ready ?? 0;
-      const total = data.capabilities_total ?? 0;
-      if ($("status-pill-text")) $("status-pill-text").textContent = `Core ${ready}/${total}`;
-      if ($("status-led")) $("status-led").classList.toggle("live", data.status === "operational");
-      renderSystemStatusTab();
-      if (refresh) toast(`Neon Sync status verified (${ready}/${total} capabilities ready)`, "ok");
+      const ok = data.status === "ok";
+      if ($("status-pill-text")) $("status-pill-text").textContent = ok ? "Core OK" : "Degraded";
+      if ($("status-led")) $("status-led").classList.toggle("live", ok);
     } catch (_) {}
-  }
-
-  function renderSystemStatusTab() {
-    const st = state.platformStatus;
-    if (!st) return;
-    if ($("status-banner-title")) {
-      $("status-banner-title").textContent =
-        st.status === "operational" ? "Neon Sync Platform Operational" : "Neon Sync Platform Degraded";
-    }
-    if ($("status-banner-sub")) {
-      $("status-banner-sub").textContent =
-        `v${st.version} · ${st.environment} · ${st.capabilities_ready}/${st.capabilities_total} capabilities operational · uptime ${fmtUptime(st.metrics?.uptime_seconds)}`;
-    }
-    const secHost = $("status-security-strip");
-    if (secHost && st.security) {
-      const labels = {
-        ssrf_guard: "SSRF Guard",
-        egress_isolation: "Egress Isolation",
-        artifact_signing: "Artifact Integrity",
-        sandbox_headers: "Delivery Sandbox",
-      };
-      secHost.innerHTML = Object.entries(st.security)
-        .map(([k, v]) => `<span class="sec-chip"><span>${esc(labels[k] || k)}:</span><strong>${esc(String(v).toUpperCase())}</strong></span>`)
-        .join("") + `<span class="sec-chip"><span>API Surface:</span><strong>NEON SYNC UNIFIED</strong></span>`;
-    }
-    const grid = $("status-cap-grid");
-    if (grid) {
-      grid.innerHTML = (st.capabilities || []).map((c) => {
-        const cls = c.status === "operational" ? "ok" : c.status === "standby" ? "" : "warn";
-        return `
-          <div class="cap-card">
-            <div class="cap-card-head">
-              <span class="cap-card-title">${esc(c.name)}</span>
-              <span class="status-pill mono ${cls}">${esc(c.status)}</span>
-            </div>
-            <div class="cap-card-desc">${esc(c.description)}</div>
-            <div class="cap-card-foot">
-              <div class="node-caps">${(c.supported_types || []).map((t) => `<span class="cap-tag mono">${esc(t)}</span>`).join("")}</div>
-              <span class="mono muted" style="font-size:10px;">v${esc(c.version)}</span>
-            </div>
-          </div>
-        `;
-      }).join("");
-    }
-    const cloudGrid = $("status-cloud-grid");
-    if (cloudGrid && st.cloud_integrations) {
-      cloudGrid.innerHTML = st.cloud_integrations.map((ci) => {
-        const cls = ci.status === "active" ? "ok" : ci.status === "byok_ready" ? "warn" : "";
-        return `
-          <div class="cloud-card">
-            <div class="cloud-card-top">
-              <span>${esc(ci.name)}</span>
-              <span class="status-pill mono ${cls}">${esc(ci.status.replace("_", " "))}</span>
-            </div>
-            <div class="row-gap">
-              <span class="cloud-provider-tag mono">${esc(ci.provider)}</span>
-              <span class="cloud-card-detail mono">${esc(ci.detail)}</span>
-            </div>
-          </div>
-        `;
-      }).join("");
-    }
-  }
-
-  async function loadConsoleLogs() {
-    try {
-      const res = await fetch("/v1/logs?limit=150", { headers: apiHeaders() });
-      if (!res.ok) return;
-      const data = await res.json();
-      state.consoleLogs = data.logs || [];
-      state.consoleMetrics = data.metrics || null;
-      updateConsoleKpis();
-      renderConsoleLogs();
-    } catch (_) {}
-  }
-
-  function connectLogStream() {
-    if (state.logEventSource) return;
-    try {
-      const es = new EventSource("/v1/logs/stream");
-      state.logEventSource = es;
-      es.addEventListener("log", (ev) => {
-        const entry = JSON.parse(ev.data);
-        if (!state.consolePaused) {
-          state.consoleLogs.unshift(entry);
-          if (state.consoleLogs.length > 300) state.consoleLogs.length = 300;
-        }
-        if (entry.method !== "PIPELINE" && entry.method !== "SYSTEM") {
-          const cur = Number($("console-req-chip")?.textContent || "0");
-          if ($("console-req-chip")) $("console-req-chip").textContent = String(cur + 1);
-          if (state.consoleMetrics) {
-            state.consoleMetrics.total_requests = (state.consoleMetrics.total_requests || 0) + 1;
-            if ((entry.status_code || 200) < 400) state.consoleMetrics.success_requests = (state.consoleMetrics.success_requests || 0) + 1;
-            updateConsoleKpis();
-          }
-        }
-        if (!$("dev-console-modal")?.classList.contains("hidden") && state.consoleTab === "logs") {
-          renderConsoleLogs();
-        }
-      });
-      es.onerror = () => {
-        es.close();
-        state.logEventSource = null;
-        setTimeout(connectLogStream, 4000);
-      };
-    } catch (_) {}
-  }
-
-  function updateConsoleKpis() {
-    const m = state.consoleMetrics;
-    if (!m) return;
-    if ($("console-req-chip")) $("console-req-chip").textContent = String(m.total_requests ?? 0);
-    if ($("kpi-total-req")) $("kpi-total-req").textContent = String(m.total_requests ?? 0);
-    const rate = m.total_requests > 0 ? Math.round((m.success_requests / m.total_requests) * 100) : 100;
-    if ($("kpi-success-rate")) $("kpi-success-rate").textContent = `${rate}%`;
-    if ($("kpi-avg-ms")) $("kpi-avg-ms").textContent = `${m.avg_latency_ms ?? 0} ms`;
-    if ($("kpi-active-jobs")) $("kpi-active-jobs").textContent = String(m.active_jobs ?? 0);
-    if ($("kpi-uptime")) $("kpi-uptime").textContent = fmtUptime(m.uptime_seconds);
-  }
-
-  function filteredConsoleLogs() {
-    const q = ($("log-search-input")?.value || "").trim().toLowerCase();
-    const f = state.consoleFilter;
-    return state.consoleLogs.filter((item) => {
-      const code = item.status_code || 0;
-      if (f === "2xx" && !(code >= 200 && code < 300 && item.method !== "PIPELINE")) return false;
-      if (f === "errors" && !(code >= 400 || item.level === "ERROR")) return false;
-      if (f === "pipeline" && item.method !== "PIPELINE") return false;
-      if (f === "ai" && item.service !== "neon-sync-ai") return false;
-      if (!q) return true;
-      const hay = [item.request_id, item.event, item.method, item.path, item.service, item.job_id, item.summary, item.status_code]
-        .filter(Boolean).join(" ").toLowerCase();
-      return hay.includes(q);
-    });
-  }
-
-  function renderConsoleLogs() {
-    const host = $("console-log-rows");
-    if (!host) return;
-    const rows = filteredConsoleLogs();
-    if (!rows.length) {
-      host.innerHTML = `<div class="muted mono" style="padding:24px;text-align:center;font-size:11.5px;">No matching Neon Sync API logs yet. Paste a link or send a test request in API Requests.</div>`;
-      return;
-    }
-    host.innerHTML = rows.map((item) => {
-      const isPipe = item.method === "PIPELINE";
-      const code = item.status_code ?? 200;
-      const badgeCls = isPipe ? "spipe" : code >= 500 ? "s5xx" : code >= 400 ? "s4xx" : "s2xx";
-      const badgeText = isPipe ? "PIPE" : String(code);
-      const mCls = `m-${String(item.method || "get").toLowerCase()}`;
-      const sel = state.selectedLogId === item.id ? "selected" : "";
-      const lat = item.duration_ms !== null && item.duration_ms !== undefined ? `${item.duration_ms}ms` : "—";
-      return `
-        <div class="log-row mono ${sel}" data-log-id="${esc(item.id)}">
-          <span class="log-status-badge ${badgeCls}">${esc(badgeText)}</span>
-          <span class="log-method ${mCls}">${esc(item.method || "INFO")}</span>
-          <div class="log-path-cell">
-            <span class="log-path-main">${esc(item.path || item.event)}</span>
-            <span class="log-path-sub">${esc(item.event)} · ${esc(item.summary || item.service)}</span>
-          </div>
-          <span class="log-latency num">${esc(lat)}</span>
-          <span class="log-time num">${esc(fmtTimeShort(item.timestamp))}</span>
-        </div>
-      `;
-    }).join("");
-
-    host.querySelectorAll("[data-log-id]").forEach((row) => {
-      row.onclick = () => {
-        sfx.click();
-        state.selectedLogId = row.dataset.logId;
-        renderConsoleLogs();
-        renderLogInspector();
-      };
-    });
-
-    if (!state.selectedLogId && rows.length) {
-      state.selectedLogId = rows[0].id;
-      renderLogInspector();
-    }
-  }
-
-  function buildCurlForLog(item) {
-    const method = item.method && ["GET", "POST", "PUT", "DELETE", "PATCH"].includes(item.method) ? item.method : "GET";
-    const url = `${window.location.origin}${item.path || "/v1/status"}`;
-    const lines = [`curl -X ${method} "${url}"`];
-    if (item.request_body !== null && item.request_body !== undefined) {
-      lines.push(`  -H "Content-Type: application/json"`);
-    }
-    if (state.proKey) lines.push(`  -H "X-Neon-Pro-Key: <YOUR_PRO_KEY>"`);
-    if (item.request_body !== null && item.request_body !== undefined) {
-      lines.push(`  -d '${JSON.stringify(item.request_body, null, 2)}'`);
-    }
-    return lines.join(" \\\n");
-  }
-
-  function renderLogInspector() {
-    const item = state.consoleLogs.find((x) => x.id === state.selectedLogId);
-    if (!item) {
-      $("inspector-empty")?.classList.remove("hidden");
-      $("inspector-content")?.classList.add("hidden");
-      return;
-    }
-    $("inspector-empty")?.classList.add("hidden");
-    $("inspector-content")?.classList.remove("hidden");
-
-    const code = item.status_code ?? 200;
-    const stEl = $("insp-status");
-    if (stEl) {
-      stEl.textContent = item.method === "PIPELINE" ? "PIPELINE" : String(code);
-      stEl.className = `status-pill mono ${code >= 500 ? "err" : code >= 400 ? "warn" : "ok"}`;
-    }
-    if ($("insp-endpoint")) $("insp-endpoint").textContent = `${item.method || "EVENT"} ${item.path || item.event}`;
-    if ($("insp-copy-reqid")) $("insp-copy-reqid").textContent = item.request_id;
-    if ($("insp-summary")) $("insp-summary").textContent = item.summary || item.event;
-
-    if ($("insp-meta-grid")) {
-      const cells = [
-        ["SERVICE", item.service || "neon-sync-api"],
-        ["EVENT", item.event || "—"],
-        ["LATENCY", item.duration_ms != null ? `${item.duration_ms} ms` : "—"],
-        ["TIER", (item.tier || "system").toUpperCase()],
-        ["JOB ID", item.job_id || "—"],
-        ["TIMESTAMP", fmtTimeShort(item.timestamp)],
-      ];
-      $("insp-meta-grid").innerHTML = cells
-        .map(([k, v]) => `<div class="insp-meta-item"><span class="insp-meta-k">${esc(k)}</span><span class="insp-meta-v" title="${esc(v)}">${esc(v)}</span></div>`)
-        .join("");
-    }
-
-    let text = "";
-    if (state.inspectorTab === "response") {
-      text = item.response_preview !== null && item.response_preview !== undefined
-        ? JSON.stringify(item.response_preview, null, 2)
-        : "// Streaming or binary response (metadata logged above)";
-    } else if (state.inspectorTab === "request") {
-      text = item.request_body !== null && item.request_body !== undefined
-        ? JSON.stringify(item.request_body, null, 2)
-        : "// No JSON request body";
-    } else if (state.inspectorTab === "headers") {
-      const hdrs = item.request_headers && Object.keys(item.request_headers).length
-        ? item.request_headers
-        : { "x-powered-by": "Neon Sync", "x-request-id": item.request_id };
-      text = JSON.stringify(hdrs, null, 2);
-    } else {
-      text = buildCurlForLog(item);
-    }
-    if ($("insp-code-pre")) $("insp-code-pre").textContent = text;
-  }
-
-  function buildWorkbenchSnippet() {
-    const ep = WB_ENDPOINTS[state.wbEndpoint] || WB_ENDPOINTS.probe;
-    const url = `${window.location.origin}${ep.path}`;
-    const rawBody = ($("wb-body-editor")?.value || "").trim();
-    const hasBody = ep.method === "POST" && rawBody.length > 0;
-    const proHdr = state.proKey ? true : false;
-
-    if (state.wbLang === "json") {
-      return hasBody ? rawBody : "// This GET endpoint takes no JSON request body.";
-    }
-    if (state.wbLang === "curl") {
-      const lines = [`curl -X ${ep.method} "${url}"`];
-      if (hasBody) lines.push(`  -H "Content-Type: application/json"`);
-      if (proHdr) lines.push(`  -H "X-Neon-Pro-Key: ${state.proKey}"`);
-      if (hasBody) lines.push(`  -d '${rawBody}'`);
-      return lines.join(" \\\n");
-    }
-    if (state.wbLang === "js") {
-      const hdrs = {};
-      if (hasBody) hdrs["Content-Type"] = "application/json";
-      if (proHdr) hdrs["X-Neon-Pro-Key"] = state.proKey;
-      const opts = { method: ep.method, headers: hdrs };
-      if (hasBody) opts.body = "__BODY__";
-      let optsStr = JSON.stringify(opts, null, 2);
-      if (hasBody) optsStr = optsStr.replace('"__BODY__"', `JSON.stringify(${rawBody.replace(/\n/g, "\n  ")})`);
-      return `const response = await fetch("${url}", ${optsStr});\nconst data = await response.json();\nconsole.log(response.headers.get("x-request-id"), data);`;
-    }
-    // Python (httpx)
-    const hdrs = {};
-    if (proHdr) hdrs["X-Neon-Pro-Key"] = state.proKey;
-    const hdrArg = Object.keys(hdrs).length ? `,\n    headers=${JSON.stringify(hdrs)}` : "";
-    const jsonArg = hasBody ? `,\n    json=${rawBody.replace(/\btrue\b/g, "True").replace(/\bfalse\b/g, "False").replace(/\bnull\b/g, "None")}` : "";
-    return `import httpx\n\nresp = httpx.${ep.method.lower()}(\n    "${url}"${hdrArg}${jsonArg},\n)\nprint(resp.headers.get("x-request-id"), resp.status_code)\nprint(resp.json())`;
-  }
-
-  function selectWorkbenchEndpoint(key) {
-    state.wbEndpoint = key;
-    document.querySelectorAll("#wb-endpoint-list [data-ep]").forEach((b) =>
-      b.classList.toggle("active", b.dataset.ep === key)
-    );
-    const ep = WB_ENDPOINTS[key] || WB_ENDPOINTS.probe;
-    const bodyObj = ep.body();
-    const editor = $("wb-body-editor");
-    if (editor) {
-      editor.disabled = ep.method === "GET";
-      editor.value = bodyObj ? JSON.stringify(bodyObj, null, 2) : "";
-      editor.placeholder = ep.method === "GET" ? "No request body for GET endpoints" : "{ ... }";
-    }
-    if ($("wb-snippet-pre")) $("wb-snippet-pre").textContent = buildWorkbenchSnippet();
-  }
-
-  async function sendWorkbenchRequest() {
-    const ep = WB_ENDPOINTS[state.wbEndpoint] || WB_ENDPOINTS.probe;
-    const btn = $("wb-send-btn");
-    const pre = $("wb-resp-pre");
-    const meta = $("wb-resp-meta");
-    let bodyStr = undefined;
-    if (ep.method === "POST") {
-      try {
-        const parsed = JSON.parse($("wb-body-editor").value || "{}");
-        bodyStr = JSON.stringify(parsed);
-      } catch (err) {
-        toast(`Invalid JSON: ${err.message}`, "err");
-        return;
-      }
-    }
-    if (btn) btn.disabled = true;
-    if (meta) meta.textContent = "Sending…";
-    const t0 = performance.now();
-    try {
-      const res = await fetch(ep.path, {
-        method: ep.method,
-        headers: apiHeaders(bodyStr ? { "Content-Type": "application/json" } : {}),
-        body: bodyStr,
-      });
-      const elapsed = Math.round(performance.now() - t0);
-      const reqId = res.headers.get("x-request-id") || "";
-      const ct = res.headers.get("content-type") || "";
-      if (meta) meta.textContent = `HTTP ${res.status} · ${elapsed}ms${reqId ? ` · ${reqId}` : ""}`;
-      if (ct.includes("application/json")) {
-        const data = await res.json();
-        if (pre) pre.textContent = JSON.stringify(data, null, 2);
-      } else {
-        const txt = await res.text();
-        if (pre) pre.textContent = txt.slice(0, 4000);
-      }
-      sfx.click();
-    } catch (err) {
-      if (meta) meta.textContent = "Network Error";
-      if (pre) pre.textContent = err.message;
-    } finally {
-      if (btn) btn.disabled = false;
-    }
-  }
-
-  function openDevConsole(tab = "logs") {
-    sfx.click();
-    $("dev-console-modal").classList.remove("hidden");
-    switchConsoleTab(tab);
-    if ($("wb-base-url")) $("wb-base-url").textContent = window.location.origin;
-    loadConsoleLogs();
-    loadPlatformStatus(false);
-    selectWorkbenchEndpoint(state.wbEndpoint);
-  }
-
-  function switchConsoleTab(tab) {
-    state.consoleTab = tab;
-    document.querySelectorAll(".console-tab[data-ctab]").forEach((b) =>
-      b.classList.toggle("active", b.dataset.ctab === tab)
-    );
-    ["logs", "requests", "status"].forEach((t) =>
-      $(`ctab-${t}`)?.classList.toggle("hidden", t !== tab)
-    );
-    if (tab === "logs") renderConsoleLogs();
-    if (tab === "requests" && $("wb-snippet-pre")) $("wb-snippet-pre").textContent = buildWorkbenchSnippet();
-    if (tab === "status") renderSystemStatusTab();
   }
 
   /* =========================================================================
-     NEON SYNC AUTOMATIONS STUDIO (Recipes, Schedules & Signed Webhooks)
-     ========================================================================= */
-  async function loadAutomations() {
-    try {
-      const [tplRes, listRes] = await Promise.all([
-        fetch("/v1/automations/templates", { headers: apiHeaders() }),
-        fetch("/v1/automations", { headers: apiHeaders() }),
-      ]);
-      if (tplRes.ok && $("auto-tpl-grid")) {
-        const tpls = await tplRes.json();
-        $("auto-tpl-grid").innerHTML = tpls.map((t) => `
-          <button type="button" class="auto-tpl-card" data-use-tpl="${esc(t.id)}">
-            <div class="wb-section-head">
-              <strong style="font-size:12.5px;">${esc(t.name)}</strong>
-              <span class="status-pill mono ok">${esc(t.badge)}</span>
-            </div>
-            <span class="muted" style="font-size:11px;line-height:1.4;">${esc(t.description)}</span>
-          </button>
-        `).join("");
-        $("auto-tpl-grid").querySelectorAll("[data-use-tpl]").forEach((btn) => {
-          btn.onclick = () => {
-            const tpl = tpls.find((x) => x.id === btn.dataset.useTpl);
-            if (!tpl) return;
-            sfx.click();
-            $("auto-name-input").value = tpl.name;
-            $("auto-action-select").value = tpl.action_type;
-            $("auto-trigger-select").value = tpl.trigger_type === "interval" ? `interval:${tpl.interval_minutes || 60}` : "manual";
-            $("auto-prompt-input").value = tpl.prompt || "";
-            if (!$("auto-url-input").value) $("auto-url-input").value = SHOWCASE_VIDEO.url;
-            $("auto-url-input").focus();
-            toast(`Loaded recipe: ${tpl.name}`, "ok");
-          };
-        });
-      }
-      if (listRes.ok) {
-        const rules = await listRes.json();
-        if ($("auto-count-chip")) $("auto-count-chip").textContent = String(rules.length);
-        if ($("auto-list-count")) $("auto-list-count").textContent = `${rules.length} rule${rules.length === 1 ? "" : "s"}`;
-        renderAutomationRules(rules);
-      }
-    } catch (_) {}
-  }
-
-  function renderAutomationRules(rules) {
-    const host = $("auto-rules-list");
-    if (!host) return;
-    if (!rules.length) {
-      host.innerHTML = `<div class="muted mono" style="padding:18px;text-align:center;font-size:11.5px;">No automations yet. Click a recipe above or create your first scheduled AI workflow.</div>`;
-      return;
-    }
-    host.innerHTML = rules.map((r) => {
-      const sched = r.trigger_type === "interval" ? `Every ${r.interval_minutes}m` : "On-demand";
-      const stCls = r.last_status === "completed" ? "ok" : r.last_status === "failed" ? "err" : "";
-      return `
-        <div class="acct-row">
-          <div style="min-width:0;flex:1;">
-            <div class="row-gap">
-              <strong>${esc(r.name)}</strong>
-              <span class="status-pill mono ${r.enabled ? "ok" : ""}">${r.enabled ? "ACTIVE" : "PAUSED"}</span>
-              <span class="cap-tag mono">${esc(sched)}</span>
-              ${r.last_status ? `<span class="status-pill mono ${stCls}">Last: ${esc(r.last_status)}</span>` : ""}
-            </div>
-            <div class="acct-row-meta mono">${esc(r.target_url)} · ${r.run_count} run(s)${r.webhook_url ? " · Signed Webhook" : ""}</div>
-            ${r.last_summary ? `<div class="acct-row-meta" style="color:var(--text-secondary);">${esc(r.last_summary.slice(0, 140))}</div>` : ""}
-          </div>
-          <div class="row-gap">
-            <button class="reactor-fire btn-sm" data-run-auto="${esc(r.id)}">Run Now</button>
-            <button class="ghost-btn btn-xs mono" data-toggle-auto="${esc(r.id)}" data-enabled="${r.enabled ? "1" : "0"}">${r.enabled ? "Pause" : "Enable"}</button>
-            <button class="ghost-btn btn-xs mono" data-del-auto="${esc(r.id)}">Delete</button>
-          </div>
-        </div>
-      `;
-    }).join("");
-
-    host.querySelectorAll("[data-run-auto]").forEach((btn) => {
-      btn.onclick = async () => {
-        btn.disabled = true;
-        btn.textContent = "Running…";
-        sfx.capture();
-        try {
-          const res = await fetch(`/v1/automations/${btn.dataset.runAuto}/run`, { method: "POST", headers: apiHeaders() });
-          const data = await res.json();
-          if (res.ok && data.status === "completed") {
-            sfx.complete();
-            toast(`Automation completed: ${data.summary.slice(0, 80)}`, "ok");
-          } else {
-            toast(data.error || data.detail?.message || "Automation failed", "err");
-          }
-          loadAutomations();
-        } finally {
-          btn.disabled = false;
-        }
-      };
-    });
-    host.querySelectorAll("[data-toggle-auto]").forEach((btn) => {
-      btn.onclick = async () => {
-        const nextEnabled = btn.dataset.enabled !== "1";
-        await fetch(`/v1/automations/${btn.dataset.toggleAuto}`, {
-          method: "PATCH",
-          headers: apiHeaders({ "Content-Type": "application/json" }),
-          body: JSON.stringify({ enabled: nextEnabled }),
-        });
-        sfx.click();
-        loadAutomations();
-      };
-    });
-    host.querySelectorAll("[data-del-auto]").forEach((btn) => {
-      btn.onclick = async () => {
-        await fetch(`/v1/automations/${btn.dataset.delAuto}`, { method: "DELETE", headers: apiHeaders() });
-        sfx.click();
-        toast("Automation deleted", "ok");
-        loadAutomations();
-      };
-    });
-  }
-
-  /* =========================================================================
-     NEON SYNC AUTHENTICATION (GOOGLE OAUTH 2.0 + EMAIL/PASSWORD + API KEYS)
+     NEON SYNC AUTHENTICATION (GOOGLE OAUTH 2.0 + EMAIL/PASSWORD)
      ========================================================================= */
   function userInitials(name, email) {
     const src = (name || email || "U").trim();
@@ -2911,36 +2133,8 @@
   function switchAccountTab(tab) {
     state.accountTab = tab;
     document.querySelectorAll("[data-atab]").forEach((b) => b.classList.toggle("active", b.dataset.atab === tab));
-    ["profile", "apikeys", "sessions"].forEach((t) => $(`atab-${t}`)?.classList.toggle("hidden", t !== tab));
-    if (tab === "apikeys") loadAccountApiKeys();
+    ["profile", "sessions"].forEach((t) => $(`atab-${t}`)?.classList.toggle("hidden", t !== tab));
     if (tab === "sessions") loadAccountSessionsAndActivity();
-  }
-
-  async function loadAccountApiKeys() {
-    const host = $("acct-apikeys-list");
-    if (!host) return;
-    const res = await fetch("/v1/auth/api-keys");
-    if (!res.ok) return;
-    const keys = await res.json();
-    if (!keys.length) {
-      host.innerHTML = `<div class="muted mono" style="padding:14px;text-align:center;font-size:11.5px;">No personal API keys yet. Generate one above to call Neon Sync API from your backend or CLI.</div>`;
-      return;
-    }
-    host.innerHTML = keys.map((k) => `
-      <div class="acct-row">
-        <div>
-          <div><strong>${esc(k.name)}</strong> <code class="mono" style="font-size:11px;color:var(--accent);">${esc(k.key_prefix)}••••</code></div>
-          <div class="acct-row-meta mono">Scopes: ${esc((k.scopes || []).join(", "))} · Created ${esc(fmtRelativeTime(k.created_at))}${k.last_used_at ? ` · Used ${esc(fmtRelativeTime(k.last_used_at))}` : " · Never used"}</div>
-        </div>
-        <button class="ghost-btn btn-xs mono" data-revoke-key="${esc(k.id)}">Revoke</button>
-      </div>
-    `).join("");
-    host.querySelectorAll("[data-revoke-key]").forEach((btn) => {
-      btn.onclick = async () => {
-        const r = await fetch(`/v1/auth/api-keys/${btn.dataset.revokeKey}`, { method: "DELETE" });
-        if (r.ok) { sfx.click(); toast("API key revoked", "ok"); loadAccountApiKeys(); }
-      };
-    });
   }
 
   async function loadAccountSessionsAndActivity() {
@@ -2995,7 +2189,7 @@
     });
 
     vp.addEventListener("wheel", (e) => {
-      if (e.target.closest(".trace-list") || e.target.closest(".agent-answer-card") || e.target.closest(".note-textarea")) return;
+      if (e.target.closest(".note-textarea")) return;
       e.preventDefault();
       if (e.ctrlKey || e.metaKey) {
         const rect = vp.getBoundingClientRect();
@@ -3077,15 +2271,9 @@
     document.addEventListener("keydown", (e) => {
       if (e.key === "Escape") {
         closePatchMenu();
-        $("upgrade-modal").classList.add("hidden"); $("dev-console-modal").classList.add("hidden");
+        $("upgrade-modal").classList.add("hidden");
         $("auth-modal")?.classList.add("hidden"); $("account-modal")?.classList.add("hidden");
-        $("automations-modal")?.classList.add("hidden");
         $("dock-popover").classList.add("hidden"); state.batchOpen = false;
-      }
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "j") {
-        e.preventDefault();
-        if ($("dev-console-modal").classList.contains("hidden")) openDevConsole("logs");
-        else $("dev-console-modal").classList.add("hidden");
       }
       if ((e.key === "/" || ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k")) &&
           document.activeElement?.tagName !== "INPUT" && document.activeElement?.tagName !== "TEXTAREA") {
@@ -3110,7 +2298,7 @@
           return;
         }
         const l1 = getLevel1Choices(srcNode);
-        const keyMap = { branch_video: "video", branch_audio: "audio", branch_subtitles: "subtitles", branch_image: "image", branch_agent: "agent" };
+        const keyMap = { branch_video: "video", branch_audio: "audio", branch_subtitles: "subtitles", branch_image: "image" };
         const matched = l1.find((c) => c.key === keyMap[act]) || l1[0];
         if (matched) {
           const kids = spawnChoiceChildren(srcNode, [matched], true, true);
@@ -3130,7 +2318,6 @@
     $("batch-input").oninput = () => { const n = $("batch-input").value.split(/\r?\n/).filter((x) => x.trim()).length; $("batch-count").textContent = `${n} link${n === 1 ? "" : "s"}`; };
     $("spawn-batch-btn").onclick = spawnBatchTrees;
 
-    $("intent-mode-toggle").onclick = () => { sfx.click(); state.forceAgent = !state.forceAgent; syncDockModeVisuals(); };
     $("paste-btn").onclick = async () => {
       try { const text = await navigator.clipboard.readText(); if (text) { input.value = text.trim(); syncDockModeVisuals(); input.focus(); } }
       catch (_) { input.focus(); toast("Press ⌘V / Ctrl+V to paste"); }
@@ -3149,11 +2336,9 @@
 
     $("tidy-graph-btn").onclick = tidyGraphLayout;
 
-    // Pro / BYOK Upgrade Modal
+    // Pro Upgrade Modal
     $("tier-pill").onclick = () => openUpgradeModal("");
     $("close-upgrade-modal").onclick = () => $("upgrade-modal").classList.add("hidden");
-    $("tab-pro-key").onclick = () => { sfx.click(); $("tab-pro-key").classList.add("active"); $("tab-byok-key").classList.remove("active"); $("panel-pro-key").classList.remove("hidden"); $("panel-byok-key").classList.add("hidden"); };
-    $("tab-byok-key").onclick = () => { sfx.click(); $("tab-byok-key").classList.add("active"); $("tab-pro-key").classList.remove("active"); $("panel-byok-key").classList.remove("hidden"); $("panel-pro-key").classList.add("hidden"); };
     $("fill-dev-pro-btn").onclick = () => { $("pro-key-input").value = "neon-pro-local"; $("save-pro-key-btn").click(); };
     $("save-pro-key-btn").onclick = async () => {
       state.proKey = $("pro-key-input").value.trim(); sessionStorage.setItem("neon_pro_key", state.proKey);
@@ -3161,13 +2346,8 @@
       if (isPro()) { sfx.complete(); $("upgrade-modal").classList.add("hidden"); toast("Neon Pro unlocked!", "ok"); }
       else toast("Key not recognized (try neon-pro-local)", "err");
     };
-    $("save-byok-key-btn").onclick = async () => {
-      state.byokKey = $("byok-key-input").value.trim(); sessionStorage.setItem("neon_byok_key", state.byokKey);
-      await refreshTier();
-      if (isPro()) { sfx.complete(); $("upgrade-modal").classList.add("hidden"); toast("Gemini BYOK connected!", "ok"); }
-    };
     $("clear-keys-btn").onclick = async () => {
-      state.proKey = ""; state.byokKey = ""; sessionStorage.removeItem("neon_pro_key"); sessionStorage.removeItem("neon_byok_key");
+      state.proKey = ""; sessionStorage.removeItem("neon_pro_key");
       await refreshTier(); $("upgrade-modal").classList.add("hidden"); toast("Reverted to Guest Trial");
     };
 
@@ -3179,117 +2359,9 @@
     syncSfx();
     $("sfx-btn").onclick = () => { state.sfxEnabled = !state.sfxEnabled; localStorage.setItem("neon_sfx", String(state.sfxEnabled)); syncSfx(); if (state.sfxEnabled) sfx.click(); };
 
-    $("status-modal-btn").onclick = () => openDevConsole("status");
-    $("api-modal-btn").onclick = () => openDevConsole("logs");
-    $("close-console-modal").onclick = () => $("dev-console-modal").classList.add("hidden");
-    $("refresh-status-btn").onclick = () => loadPlatformStatus(true);
-
-    document.querySelectorAll(".console-tab[data-ctab]").forEach((b) => {
-      b.onclick = () => { sfx.click(); switchConsoleTab(b.dataset.ctab); };
-    });
-    $("log-search-input").oninput = renderConsoleLogs;
-    document.querySelectorAll("#log-filter-pills [data-lfilter]").forEach((b) => {
-      b.onclick = () => {
-        sfx.click();
-        state.consoleFilter = b.dataset.lfilter;
-        document.querySelectorAll("#log-filter-pills [data-lfilter]").forEach((x) => x.classList.toggle("active", x === b));
-        renderConsoleLogs();
-      };
-    });
-    $("log-pause-btn").onclick = () => {
-      sfx.click();
-      state.consolePaused = !state.consolePaused;
-      $("log-pause-btn").textContent = state.consolePaused ? "Resume" : "Pause";
-      $("console-stream-pill").classList.toggle("paused", state.consolePaused);
-      $("console-stream-label").textContent = state.consolePaused ? "PAUSED" : "LIVE";
-      if (!state.consolePaused) loadConsoleLogs();
-    };
-    $("log-clear-btn").onclick = async () => {
-      sfx.click();
-      await fetch("/v1/logs", { method: "DELETE", headers: apiHeaders() });
-      state.consoleLogs = [];
-      state.selectedLogId = null;
-      renderConsoleLogs();
-      renderLogInspector();
-      toast("Console logs cleared", "ok");
-    };
-    $("log-export-btn").onclick = () => {
-      sfx.click();
-      const blob = new Blob([JSON.stringify(state.consoleLogs, null, 2)], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      triggerBrowserSave(url, `neon-sync-api-logs-${Date.now()}.json`);
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
-      toast("Exported Neon Sync logs JSON", "ok");
-    };
-    document.querySelectorAll("#insp-tabs [data-itab]").forEach((b) => {
-      b.onclick = () => {
-        sfx.click();
-        state.inspectorTab = b.dataset.itab;
-        document.querySelectorAll("#insp-tabs [data-itab]").forEach((x) => x.classList.toggle("active", x === b));
-        renderLogInspector();
-      };
-    });
-    $("insp-copy-reqid").onclick = async () => {
-      await navigator.clipboard.writeText($("insp-copy-reqid").textContent);
-      sfx.click(); toast("Request ID copied", "ok");
-    };
-    $("insp-copy-body").onclick = async () => {
-      await navigator.clipboard.writeText($("insp-code-pre").textContent);
-      sfx.click(); toast("Copied to clipboard", "ok");
-    };
-
-    document.querySelectorAll("#wb-endpoint-list [data-ep]").forEach((b) => {
-      b.onclick = () => { sfx.click(); selectWorkbenchEndpoint(b.dataset.ep); };
-    });
-    document.querySelectorAll("#wb-lang-tabs [data-lang]").forEach((b) => {
-      b.onclick = () => {
-        sfx.click();
-        state.wbLang = b.dataset.lang;
-        document.querySelectorAll("#wb-lang-tabs [data-lang]").forEach((x) => x.classList.toggle("active", x === b));
-        $("wb-snippet-pre").textContent = buildWorkbenchSnippet();
-      };
-    });
-    $("wb-body-editor").oninput = () => { $("wb-snippet-pre").textContent = buildWorkbenchSnippet(); };
-    $("wb-send-btn").onclick = sendWorkbenchRequest;
-    $("wb-copy-snippet").onclick = async () => {
-      await navigator.clipboard.writeText($("wb-snippet-pre").textContent);
-      sfx.click(); toast("Snippet copied", "ok");
-    };
-
     const applyTheme = (t) => { document.documentElement.setAttribute("data-theme", t); localStorage.setItem("neon_sync_theme", t); $("theme-text").textContent = t === "dark" ? "Light" : "Dark"; };
     applyTheme(localStorage.getItem("neon_sync_theme") || "dark");
     $("theme-btn").onclick = () => { sfx.click(); applyTheme((document.documentElement.getAttribute("data-theme") || "dark") === "dark" ? "light" : "dark"); };
-
-    // Automations Studio Wiring
-    $("automations-btn").onclick = () => { sfx.click(); $("automations-modal").classList.remove("hidden"); loadAutomations(); };
-    $("close-auto-modal").onclick = () => $("automations-modal").classList.add("hidden");
-    $("refresh-auto-btn").onclick = () => { sfx.click(); loadAutomations(); };
-    $("auto-create-form").onsubmit = async (e) => {
-      e.preventDefault();
-      const trigRaw = $("auto-trigger-select").value;
-      const isInt = trigRaw.startsWith("interval:");
-      const payload = {
-        name: $("auto-name-input").value.trim(),
-        target_url: $("auto-url-input").value.trim(),
-        action_type: $("auto-action-select").value,
-        trigger_type: isInt ? "interval" : "manual",
-        interval_minutes: isInt ? parseInt(trigRaw.split(":")[1], 10) : null,
-        prompt: $("auto-prompt-input").value.trim() || null,
-        preset_id: $("auto-action-select").value === "extract_preset" ? "best_compatible_mp4" : null,
-        webhook_url: $("auto-webhook-input").value.trim() || null,
-      };
-      const res = await fetch("/v1/automations", {
-        method: "POST",
-        headers: apiHeaders({ "Content-Type": "application/json" }),
-        body: JSON.stringify(payload),
-      });
-      const data = await res.json();
-      if (!res.ok) return toast(data.detail?.message || "Could not create automation", "err");
-      $("auto-create-form").reset();
-      sfx.complete();
-      toast(`Automation "${data.name}" saved!`, "ok");
-      loadAutomations();
-    };
 
     // Auth & Account Modal Wiring
     $("auth-btn").onclick = () => (state.user ? openAccountModal("profile") : openAuthModal("login"));
@@ -3426,28 +2498,6 @@
       toast("Password updated", "ok");
     };
 
-    $("create-apikey-btn").onclick = async () => {
-      const name = $("new-apikey-name").value.trim();
-      if (!name) return toast("Enter a label for your API key", "err");
-      const res = await fetch("/v1/auth/api-keys", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, scopes: ["read", "write", "agent"] }),
-      });
-      if (!res.ok) return toast("Could not create API key", "err");
-      const data = await res.json();
-      $("new-apikey-name").value = "";
-      $("apikey-reveal-secret").textContent = data.secret;
-      $("apikey-reveal-box").classList.remove("hidden");
-      sfx.complete();
-      toast("API key generated — copy it now", "ok");
-      loadAccountApiKeys();
-    };
-    $("copy-new-apikey-btn").onclick = async () => {
-      await navigator.clipboard.writeText($("apikey-reveal-secret").textContent);
-      sfx.click(); toast("API key copied", "ok");
-    };
-
     $("revoke-other-sessions-btn").onclick = async () => {
       const res = await fetch("/v1/auth/sessions/revoke-others", { method: "POST" });
       if (res.ok) {
@@ -3496,8 +2546,7 @@
       window.lucide.createIcons();
     }
     bindAllEvents();
-    connectLogStream();
-    await Promise.all([refreshAuth(), refreshTier(), loadPlatformStatus(false), loadConsoleLogs(), loadAutomations()]);
+    await Promise.all([refreshAuth(), refreshTier(), loadCoreHealth()]);
     await hydrateFromBackend();
 
     // Handle Google OAuth callback query feedback cleanly

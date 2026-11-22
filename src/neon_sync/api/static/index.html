@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Neon Sync — Spatial Media Possibility Engine</title>
+  <title>Neon Sync — Spatial Media Engine</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -22,7 +22,7 @@
       <div class="reticle-corner br"></div>
       <span class="mono reticle-tag">SPATIAL SIGNAL CAPTURE</span>
       <h2>Drop link to spawn its possibility tree</h2>
-      <p>Fast lightweight probe — Watch Live (VLC mode), Video, Audio, Subtitles, Thumbnail, or AI Agent</p>
+      <p>Fast lightweight probe — Watch Live (VLC mode), Video, Audio, Subtitles, or Thumbnail</p>
     </div>
   </div>
 
@@ -35,15 +35,9 @@
         <span class="brand-ver mono">GRAPH</span>
       </a>
 
-      <!-- Live SaaS Fuel Gauge -->
-      <button class="fuel-gauge" id="tier-pill" title="Guest trial credits & Pro / BYOK unlock">
+      <!-- Live Quota Gauge -->
+      <button class="fuel-gauge" id="tier-pill" title="Guest trial credits & Pro unlock">
         <span class="tier-badge mono" id="tier-badge">GUEST</span>
-        <span class="fuel-group">
-          <span class="fuel-label mono">AI</span>
-          <span class="led-strip" id="fuel-ai-leds"></span>
-          <span class="fuel-count mono num" id="fuel-ai-count">3/3</span>
-        </span>
-        <span class="fuel-sep" aria-hidden="true"></span>
         <span class="fuel-group">
           <span class="fuel-label mono">DL</span>
           <span class="led-strip" id="fuel-dl-leds"></span>
@@ -54,11 +48,6 @@
     </div>
 
     <div class="bezel-controls">
-      <button class="hw-btn" id="automations-btn" title="AI Workflows, Scheduled Automations & Signed Webhooks">
-        <i data-lucide="zap" class="ico-sm"></i>
-        <span>Automations</span>
-        <span class="count-chip mono num" id="auto-count-chip">0</span>
-      </button>
       <button class="hw-btn" id="tidy-graph-btn" title="Auto-arrange all nodes cleanly">
         <i data-lucide="layout-grid" class="ico-sm"></i>
         <span>Tidy</span>
@@ -71,15 +60,10 @@
         <span class="led-dot" id="sfx-dot"></span>
         <span id="sfx-text">SFX</span>
       </button>
-      <button class="hw-btn" id="status-modal-btn" title="Neon Sync runtime status & capabilities">
+      <div class="hw-btn status-pill-static" id="status-pill" title="Neon Sync core operational">
         <span class="led-dot live" id="status-led"></span>
         <span class="mono num" id="status-pill-text">Core OK</span>
-      </button>
-      <button class="hw-btn" id="api-modal-btn" title="Open Neon Sync Developer Console (⌘J)">
-        <i data-lucide="terminal" class="ico-sm"></i>
-        <span class="mono">Console</span>
-        <span class="count-chip mono num" id="console-req-chip">0</span>
-      </button>
+      </div>
       <button class="hw-btn" id="theme-btn" title="Switch Obsidian / Ceramic theme">
         <span id="theme-text">Light</span>
       </button>
@@ -125,9 +109,8 @@
     <button class="patch-item" data-patch-action="branch_play"><span class="patch-item-label"><i data-lucide="play" class="ico-sm" style="color:var(--live)"></i> Watch Live (Stream)</span><kbd class="mono">LIVE</kbd></button>
     <button class="patch-item" data-patch-action="branch_video"><span class="patch-item-label"><i data-lucide="film" class="ico-sm accent"></i> Video Paths</span><kbd class="mono">VID</kbd></button>
     <button class="patch-item" data-patch-action="branch_audio"><span class="patch-item-label"><i data-lucide="headphones" class="ico-sm" style="color:var(--violet)"></i> Audio Master</span><kbd class="mono">AUD</kbd></button>
-    <button class="patch-item" data-patch-action="branch_subtitles"><span class="patch-item-label"><i data-lucide="subtitles" class="ico-sm" style="color:var(--info)"></i> Subtitles &amp; Brief</span><kbd class="mono">SUB</kbd></button>
+    <button class="patch-item" data-patch-action="branch_subtitles"><span class="patch-item-label"><i data-lucide="subtitles" class="ico-sm" style="color:var(--info)"></i> Subtitles &amp; Transcript</span><kbd class="mono">SUB</kbd></button>
     <button class="patch-item" data-patch-action="branch_image"><span class="patch-item-label"><i data-lucide="image" class="ico-sm" style="color:var(--warn)"></i> Thumbnail / Image</span><kbd class="mono">IMG</kbd></button>
-    <button class="patch-item" data-patch-action="branch_agent"><span class="patch-item-label"><i data-lucide="sparkles" class="ico-sm" style="color:var(--ok)"></i> Neon AI Agent</span><kbd class="mono">AI</kbd></button>
     <div class="patch-sep"></div>
     <button class="patch-item" data-patch-action="note"><span class="patch-item-label"><i data-lucide="sticky-note" class="ico-sm" style="color:var(--warn)"></i> Attach Studio Note</span><kbd class="mono">NOTE</kbd></button>
   </div>
@@ -152,10 +135,10 @@
     <!-- Telemetry Strip -->
     <div class="dock-telemetry">
       <div class="row-gap">
-        <button class="intent-switch" id="intent-mode-toggle" title="Toggle Link Spawn vs Direct AI Agent command">
+        <span class="intent-switch intent-badge">
           <span class="intent-dot"></span>
           <span class="mono" id="intent-label">SPAWN POSSIBILITIES</span>
-        </button>
+        </span>
         <span class="platform-chip mono hidden" id="platform-tag">LINK</span>
       </div>
       <div class="oscilloscope" id="oscilloscope" aria-hidden="true"></div>
@@ -173,7 +156,7 @@
         type="text"
         class="reactor-input"
         id="url-input"
-        placeholder="Paste any link to spawn its paths — or command: “clip 0:30 to 0:45 https://…”"
+        placeholder="Paste any video, audio, gallery, or live stream link to spawn its paths…"
         autocomplete="off"
         spellcheck="false"
         autofocus
@@ -210,7 +193,7 @@
     </div>
   </div>
 
-  <!-- Modal: SaaS Guest vs Pro / BYOK Unlock Sheet -->
+  <!-- Modal: Guest vs Pro Unlock Sheet -->
   <div class="modal-backdrop hidden" id="upgrade-modal">
     <div class="modal modal-pro">
       <div class="modal-head">
@@ -231,28 +214,24 @@
             <ul class="tier-list">
               <li>Up to <strong>1080p</strong> video (with audio or muted) &amp; 320k MP3</li>
               <li><strong>5 downloads / hour</strong> &amp; unlimited free probing</li>
-              <li><strong>3 AI Agent runs / day</strong> (local planner)</li>
+              <li>Instant zero-download <strong>Watch Live</strong> streaming</li>
               <li>Full infinite canvas, possibility trees &amp; notes</li>
             </ul>
           </div>
           <div class="tier-col tier-col-pro">
             <div class="tier-head">
-              <span class="mono tier-name accent">NEON PRO · AGENT</span>
-              <span class="tier-price">$12 <small>/ mo or BYOK</small></span>
+              <span class="mono tier-name accent">NEON PRO</span>
+              <span class="tier-price">$12 <small>/ mo</small></span>
             </div>
             <ul class="tier-list">
               <li><strong>4K / 2K Ultra-HD</strong> &amp; Lossless <strong>FLAC / WAV</strong></li>
               <li><strong>500 downloads / hour</strong> &amp; 10x Batch queue</li>
-              <li><strong>500 AI Agent runs / day</strong> + Gemini 2.5 synthesis</li>
+              <li>Up to <strong>2 GiB</strong> single media extraction cap</li>
               <li><strong>Dynamic Web Renderer</strong> for JS-driven media pages</li>
             </ul>
           </div>
         </div>
         <div class="unlock-panel">
-          <div class="unlock-tabs">
-            <button class="tac-pill active" id="tab-pro-key">Pro Access Key</button>
-            <button class="tac-pill" id="tab-byok-key">BYOK Gemini API Key</button>
-          </div>
           <div id="panel-pro-key" class="unlock-form">
             <div class="row-gap">
               <input type="password" class="modal-input mono" id="pro-key-input" placeholder="Enter Neon Pro Key (dev: neon-pro-local)" />
@@ -264,268 +243,6 @@
               <button class="link-btn mono hidden" id="clear-keys-btn">Revert to Guest</button>
             </div>
           </div>
-          <div id="panel-byok-key" class="unlock-form hidden">
-            <div class="row-gap">
-              <input type="password" class="modal-input mono" id="byok-key-input" placeholder="AIza… (sessionStorage only)" />
-              <button class="reactor-fire" id="save-byok-key-btn">Connect Gemini</button>
-            </div>
-            <p class="unlock-hint mono">Sent via <code>X-Gemini-Api-Key</code> header for live Gemini 2.5 planning &amp; summaries.</p>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Modal: Neon Sync Professional Developer Console -->
-  <div class="modal-backdrop hidden" id="dev-console-modal">
-    <div class="modal modal-console" role="dialog" aria-label="Neon Sync Developer Console">
-      <div class="console-head">
-        <div class="console-brand-group">
-          <span class="brand-led" aria-hidden="true"></span>
-          <span class="console-title">NEON SYNC</span>
-          <span class="brand-ver mono">DEVELOPER CONSOLE</span>
-          <span class="live-stream-pill mono" id="console-stream-pill">
-            <span class="led-dot live" id="console-stream-dot"></span>
-            <span id="console-stream-label">LIVE</span>
-          </span>
-        </div>
-
-        <div class="console-tabs" role="tablist">
-          <button class="console-tab active" data-ctab="logs" role="tab">
-            <i data-lucide="activity" class="ico-xs"></i>
-            <span>Live Logs</span>
-          </button>
-          <button class="console-tab" data-ctab="requests" role="tab">
-            <i data-lucide="code-2" class="ico-xs"></i>
-            <span>API Requests</span>
-          </button>
-          <button class="console-tab" data-ctab="status" role="tab">
-            <i data-lucide="shield-check" class="ico-xs"></i>
-            <span>System Status</span>
-          </button>
-        </div>
-
-        <div class="row-gap">
-          <a href="/docs" target="_blank" rel="noopener" class="ghost-btn btn-xs mono">OpenAPI ↗</a>
-          <button class="ghost-btn btn-xs" id="close-console-modal">Close</button>
-        </div>
-      </div>
-
-      <!-- TAB 1: LIVE API & PIPELINE LOGS -->
-      <div class="console-panel" id="ctab-logs">
-        <div class="console-kpis">
-          <div class="kpi-card">
-            <span class="kpi-label mono">REQUESTS</span>
-            <span class="kpi-val mono num" id="kpi-total-req">0</span>
-          </div>
-          <div class="kpi-card">
-            <span class="kpi-label mono">SUCCESS RATE</span>
-            <span class="kpi-val mono num ok" id="kpi-success-rate">100%</span>
-          </div>
-          <div class="kpi-card">
-            <span class="kpi-label mono">AVG LATENCY</span>
-            <span class="kpi-val mono num" id="kpi-avg-ms">0 ms</span>
-          </div>
-          <div class="kpi-card">
-            <span class="kpi-label mono">ACTIVE JOBS</span>
-            <span class="kpi-val mono num" id="kpi-active-jobs">0</span>
-          </div>
-          <div class="kpi-card">
-            <span class="kpi-label mono">UPTIME</span>
-            <span class="kpi-val mono num" id="kpi-uptime">0s</span>
-          </div>
-        </div>
-
-        <div class="console-toolbar">
-          <div class="console-search-wrap">
-            <input type="text" id="log-search-input" class="modal-input mono" placeholder="Search req ID, endpoint, event, job ID, message…" />
-          </div>
-          <div class="row-gap" id="log-filter-pills">
-            <button class="tac-pill active" data-lfilter="all">All</button>
-            <button class="tac-pill" data-lfilter="2xx">2xx</button>
-            <button class="tac-pill" data-lfilter="errors">4xx / 5xx</button>
-            <button class="tac-pill" data-lfilter="pipeline">Pipeline</button>
-            <button class="tac-pill" data-lfilter="ai">AI Agent</button>
-          </div>
-          <div class="row-gap">
-            <button class="ghost-btn btn-xs mono" id="log-pause-btn">Pause</button>
-            <button class="ghost-btn btn-xs mono" id="log-export-btn">Export</button>
-            <button class="ghost-btn btn-xs mono" id="log-clear-btn">Clear</button>
-          </div>
-        </div>
-
-        <div class="console-split">
-          <div class="log-table-pane">
-            <div class="log-table-head mono">
-              <span>STATUS</span>
-              <span>METHOD</span>
-              <span>ENDPOINT / EVENT</span>
-              <span>LATENCY</span>
-              <span>TIME</span>
-            </div>
-            <div class="log-rows" id="console-log-rows"></div>
-          </div>
-
-          <div class="log-inspector-pane" id="log-inspector-pane">
-            <div class="inspector-empty mono muted" id="inspector-empty">
-              Select any Neon Sync API request or pipeline event to inspect headers, JSON payloads, and cURL.
-            </div>
-            <div class="inspector-content hidden" id="inspector-content">
-              <div class="inspector-top">
-                <div class="row-gap">
-                  <span class="status-pill mono" id="insp-status">200</span>
-                  <span class="mono insp-endpoint" id="insp-endpoint">POST /v1/probe</span>
-                </div>
-                <button class="ghost-btn btn-xs mono" id="insp-copy-reqid" title="Copy Request ID">ns_req_…</button>
-              </div>
-              <div class="inspector-meta-grid mono" id="insp-meta-grid"></div>
-              <div class="inspector-summary" id="insp-summary"></div>
-              <div class="inspector-subtabs">
-                <div class="row-gap" id="insp-tabs">
-                  <button class="tac-pill active" data-itab="response">Response</button>
-                  <button class="tac-pill" data-itab="request">Request</button>
-                  <button class="tac-pill" data-itab="headers">Headers</button>
-                  <button class="tac-pill" data-itab="curl">cURL</button>
-                </div>
-                <button class="ghost-btn btn-xs mono" id="insp-copy-body">Copy</button>
-              </div>
-              <pre class="code-pre console-code mono" id="insp-code-pre"></pre>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- TAB 2: API REQUEST WORKBENCH & SDK SNIPPETS -->
-      <div class="console-panel hidden" id="ctab-requests">
-        <div class="workbench-grid">
-          <div class="workbench-col">
-            <div class="wb-section-head">
-              <span class="mono strip-label">NEON SYNC ENDPOINT</span>
-              <span class="mono muted" style="font-size:10.5px;">Base URL: <code id="wb-base-url"></code></span>
-            </div>
-            <div class="wb-endpoint-list" id="wb-endpoint-list">
-              <button class="wb-ep-btn active" data-ep="probe"><span class="ep-method post mono">POST</span><span class="mono">/v1/probe</span><span class="muted">Inspect URL</span></button>
-              <button class="wb-ep-btn" data-ep="stream"><span class="ep-method post mono">POST</span><span class="mono">/v1/stream/resolve</span><span class="muted">Live Stream</span></button>
-              <button class="wb-ep-btn" data-ep="jobs"><span class="ep-method post mono">POST</span><span class="mono">/v1/jobs</span><span class="muted">Extract Media</span></button>
-              <button class="wb-ep-btn" data-ep="batch"><span class="ep-method post mono">POST</span><span class="mono">/v1/jobs/batch</span><span class="muted">Batch Queue</span></button>
-              <button class="wb-ep-btn" data-ep="agent"><span class="ep-method post mono">POST</span><span class="mono">/v1/agent/run</span><span class="muted">AI Stream</span></button>
-              <button class="wb-ep-btn" data-ep="formats"><span class="ep-method get mono">GET</span><span class="mono">/v1/formats</span><span class="muted">Catalog</span></button>
-              <button class="wb-ep-btn" data-ep="status"><span class="ep-method get mono">GET</span><span class="mono">/v1/status</span><span class="muted">Platform Status</span></button>
-              <button class="wb-ep-btn" data-ep="logs"><span class="ep-method get mono">GET</span><span class="mono">/v1/logs</span><span class="muted">Telemetry Logs</span></button>
-            </div>
-
-            <div class="wb-section-head" style="margin-top:12px;">
-              <span class="mono strip-label">REQUEST BODY (JSON)</span>
-              <button class="reactor-fire btn-sm" id="wb-send-btn">Send Request</button>
-            </div>
-            <textarea class="wb-editor mono" id="wb-body-editor" spellcheck="false"></textarea>
-
-            <div class="wb-section-head" style="margin-top:10px;">
-              <span class="mono strip-label">LIVE RESPONSE</span>
-              <span class="mono muted" id="wb-resp-meta" style="font-size:10.5px;">Ready</span>
-            </div>
-            <pre class="code-pre console-code wb-resp-pre mono" id="wb-resp-pre">// Click "Send Request" to test Neon Sync API live</pre>
-          </div>
-
-          <div class="workbench-col">
-            <div class="wb-section-head">
-              <div class="row-gap" id="wb-lang-tabs">
-                <button class="tac-pill active" data-lang="curl">cURL</button>
-                <button class="tac-pill" data-lang="js">JavaScript</button>
-                <button class="tac-pill" data-lang="python">Python</button>
-                <button class="tac-pill" data-lang="json">JSON</button>
-              </div>
-              <button class="ghost-btn btn-xs mono" id="wb-copy-snippet">Copy Snippet</button>
-            </div>
-            <pre class="code-pre console-code wb-snippet-pre mono" id="wb-snippet-pre"></pre>
-            <div class="wb-headers-note mono">
-              <div><strong>Standard Neon Sync Response Headers</strong></div>
-              <div><code>X-Request-Id</code> · <code>X-Neon-Sync-Version</code> · <code>X-Powered-By: Neon Sync</code> · <code>X-Response-Time-Ms</code></div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- TAB 3: NEON SYNC RUNTIME STATUS & CAPABILITIES -->
-      <div class="console-panel hidden" id="ctab-status">
-        <div class="status-banner" id="status-banner">
-          <div class="row-gap">
-            <span class="led-dot live" id="status-banner-dot"></span>
-            <div>
-              <div class="status-banner-title" id="status-banner-title">Neon Sync Platform Operational</div>
-              <div class="status-banner-sub mono" id="status-banner-sub">Checking runtime capabilities…</div>
-            </div>
-          </div>
-          <button class="ghost-btn btn-xs mono" id="refresh-status-btn">Refresh Status</button>
-        </div>
-
-        <div class="security-strip mono" id="status-security-strip"></div>
-
-        <div class="cap-grid" id="status-cap-grid"></div>
-
-        <div class="wb-section-head" style="margin-top:4px;">
-          <span class="mono strip-label">GOOGLE &amp; CLOUDFLARE CLOUD STACK</span>
-        </div>
-        <div class="cloud-grid" id="status-cloud-grid"></div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Modal: Neon Sync Automations Studio (Scheduled AI Workflows & Signed Webhooks) -->
-  <div class="modal-backdrop hidden" id="automations-modal">
-    <div class="modal modal-account" role="dialog" aria-label="Neon Sync Automations Studio">
-      <div class="console-head">
-        <div class="console-brand-group">
-          <span class="brand-led" aria-hidden="true"></span>
-          <span class="console-title">NEON SYNC</span>
-          <span class="brand-ver mono">AUTOMATIONS STUDIO</span>
-        </div>
-        <div class="row-gap">
-          <button class="ghost-btn btn-xs mono" id="refresh-auto-btn">Refresh</button>
-          <button class="ghost-btn btn-xs" id="close-auto-modal">Close</button>
-        </div>
-      </div>
-
-      <div class="modal-body acct-panel">
-        <div>
-          <div class="mono strip-label" style="margin-bottom:7px;">ONE-CLICK AI WORKFLOW RECIPES</div>
-          <div class="auto-tpl-grid" id="auto-tpl-grid"></div>
-        </div>
-
-        <form class="acct-card auto-form" id="auto-create-form">
-          <div class="wb-section-head">
-            <span class="mono strip-label">NEW AUTOMATION RULE</span>
-            <span class="mono muted" style="font-size:10px;">SQLite Persistent · HMAC-SHA256 Signed Webhooks</span>
-          </div>
-          <div class="auto-form-grid">
-            <input type="text" class="modal-input" id="auto-name-input" placeholder="Rule name (e.g. Daily Podcast Brief)" required />
-            <input type="url" class="modal-input" id="auto-url-input" placeholder="Target media URL (https://…)" required />
-            <select class="modal-input mono" id="auto-action-select">
-              <option value="agent_prompt">Autonomous AI Agent Workflow</option>
-              <option value="ai_brief">Transcript-Grounded AI Brief</option>
-              <option value="extract_preset">1080p MP4 Archive Preset</option>
-            </select>
-            <select class="modal-input mono" id="auto-trigger-select">
-              <option value="manual">Trigger: Manual / On-Demand</option>
-              <option value="interval:15">Schedule: Every 15 minutes</option>
-              <option value="interval:60">Schedule: Hourly</option>
-              <option value="interval:360">Schedule: Every 6 hours</option>
-              <option value="interval:1440">Schedule: Daily</option>
-            </select>
-          </div>
-          <input type="text" class="modal-input" id="auto-prompt-input" placeholder="AI instruction (e.g. extract 320k mp3 + loudnorm and summarize key takeaways)" />
-          <div class="row-gap">
-            <input type="url" class="modal-input mono" id="auto-webhook-input" placeholder="Optional signed Webhook URL (https://hooks.yourdomain.com/neon-sync)" />
-            <button class="reactor-fire btn-sm" id="auto-create-btn" type="submit">Create Rule</button>
-          </div>
-        </form>
-
-        <div>
-          <div class="wb-section-head" style="margin-bottom:7px;">
-            <span class="mono strip-label">SAVED AUTOMATIONS</span>
-            <span class="mono muted" id="auto-list-count" style="font-size:10.5px;">0 rules</span>
-          </div>
-          <div class="acct-list" id="auto-rules-list"></div>
         </div>
       </div>
     </div>
@@ -544,7 +261,7 @@
       <div class="modal-body auth-body">
         <div class="auth-hero">
           <h3 id="auth-heading">Sign in to Neon Sync</h3>
-          <p class="muted" id="auth-sub">Sync your account, manage personal API keys, and unlock Pro quotas.</p>
+          <p class="muted" id="auth-sub">Sync your account, manage active sessions, and unlock Pro quotas.</p>
         </div>
 
         <div class="auth-error-box hidden" id="auth-error-box"></div>
@@ -593,7 +310,7 @@
     </div>
   </div>
 
-  <!-- Modal: Neon Sync Account Dashboard (Profile, API Keys, Sessions & Security) -->
+  <!-- Modal: Neon Sync Account Dashboard (Profile, Sessions & Security) -->
   <div class="modal-backdrop hidden" id="account-modal">
     <div class="modal modal-account" role="dialog" aria-label="Neon Sync Account Settings">
       <div class="console-head">
@@ -610,7 +327,6 @@
 
         <div class="console-tabs" role="tablist">
           <button class="console-tab active" data-atab="profile" role="tab">Profile</button>
-          <button class="console-tab" data-atab="apikeys" role="tab">API Keys</button>
           <button class="console-tab" data-atab="sessions" role="tab">Sessions &amp; Security</button>
         </div>
 
@@ -659,27 +375,7 @@
         </div>
       </div>
 
-      <!-- Account Tab 2: Developer API Keys -->
-      <div class="modal-body acct-panel hidden" id="atab-apikeys">
-        <div class="acct-card">
-          <div class="mono strip-label">CREATE PERSONAL NEON SYNC API KEY</div>
-          <p class="muted" style="margin:5px 0 9px;font-size:12px;">Use <code>Authorization: Bearer ns_live_…</code> or <code>X-Api-Key</code> to authenticate programmatic requests.</p>
-          <div class="row-gap">
-            <input type="text" class="modal-input" id="new-apikey-name" placeholder="e.g. Production Backend, CLI Script…" />
-            <button class="reactor-fire btn-sm" id="create-apikey-btn">Generate Key</button>
-          </div>
-          <div class="apikey-reveal hidden" id="apikey-reveal-box">
-            <div class="mono" style="font-size:10.5px;color:var(--ok);font-weight:600;">SAVE THIS KEY NOW — IT WILL NOT BE SHOWN AGAIN</div>
-            <div class="row-gap" style="margin-top:6px;">
-              <code class="apikey-secret mono" id="apikey-reveal-secret"></code>
-              <button class="ghost-btn btn-xs mono" id="copy-new-apikey-btn">Copy Key</button>
-            </div>
-          </div>
-        </div>
-        <div class="acct-list" id="acct-apikeys-list"></div>
-      </div>
-
-      <!-- Account Tab 3: Active Sessions & Security Activity -->
+      <!-- Account Tab 2: Active Sessions & Security Activity -->
       <div class="modal-body acct-panel hidden" id="atab-sessions">
         <div class="wb-section-head">
           <span class="mono strip-label">ACTIVE SESSIONS</span>

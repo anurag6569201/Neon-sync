@@ -44,8 +44,8 @@ class ApiKeyPublic(BaseModel):
 
 class ApiKeyCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=64)
-    scopes: list[Literal["read", "write", "agent"]] = Field(
-        default_factory=lambda: ["read", "write", "agent"]
+    scopes: list[Literal["read", "write"]] = Field(
+        default_factory=lambda: ["read", "write"]
     )
 
 
