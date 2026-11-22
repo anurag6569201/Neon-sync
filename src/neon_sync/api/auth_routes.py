@@ -164,13 +164,16 @@ def _raise_auth_error(exc: AuthError, request: Request) -> None:
 
 @auth_router.get("/providers", response_model=AuthProvidersResponse)
 async def get_auth_providers(request: Request) -> AuthProvidersResponse:
-    """Return available Neon Sync sign-in providers and Google OAuth readiness."""
+    """Return available Neon Sync sign-in providers, Google OAuth & Cloudflare Turnstile readiness."""
     c = _container(request)
+    ts_enabled = bool(c.settings.cf_turnstile_site_key and c.settings.cf_turnstile_secret)
     return AuthProvidersResponse(
         google_enabled=c.auth.google_enabled,
         google_client_id=c.settings.google_client_id if c.auth.google_enabled else None,
         google_redirect_uri=c.auth.resolve_google_redirect_uri(_request_origin(request)),
         password_enabled=True,
+        turnstile_enabled=ts_enabled,
+        turnstile_site_key=c.settings.cf_turnstile_site_key if ts_enabled else None,
     )
 
 

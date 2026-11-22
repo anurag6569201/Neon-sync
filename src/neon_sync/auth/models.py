@@ -68,6 +68,8 @@ class AuthProvidersResponse(BaseModel):
     google_client_id: str | None = None
     google_redirect_uri: str
     password_enabled: bool = True
+    turnstile_enabled: bool = False
+    turnstile_site_key: str | None = None
 
 
 class RegisterRequest(BaseModel):

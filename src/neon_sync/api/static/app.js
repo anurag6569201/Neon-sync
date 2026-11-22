@@ -54,6 +54,8 @@
     authProviders: null,
     authMode: "login",
     accountTab: "profile",
+    turnstileToken: "",
+    turnstileWidgetId: null,
   };
 
   try {
@@ -2813,6 +2815,43 @@
     renderAuthBezel();
   }
 
+  function ensureTurnstileWidget() {
+    const wrap = $("turnstile-widget-wrap");
+    if (!wrap) return;
+    const shouldShow = state.authMode === "register" && state.authProviders?.turnstile_enabled && state.authProviders?.turnstile_site_key;
+    wrap.classList.toggle("hidden", !shouldShow);
+    if (!shouldShow) return;
+
+    const renderNow = () => {
+      if (!window.turnstile) return;
+      if (state.turnstileWidgetId !== null) {
+        try { window.turnstile.reset(state.turnstileWidgetId); } catch (_) {}
+        state.turnstileToken = "";
+        return;
+      }
+      wrap.innerHTML = "";
+      state.turnstileWidgetId = window.turnstile.render(wrap, {
+        sitekey: state.authProviders.turnstile_site_key,
+        action: "signup",
+        theme: (document.documentElement.getAttribute("data-theme") || "dark") === "dark" ? "dark" : "light",
+        callback: (tok) => { state.turnstileToken = tok || ""; },
+        "expired-callback": () => { state.turnstileToken = ""; },
+        "error-callback": () => { state.turnstileToken = ""; },
+      });
+    };
+
+    if (window.turnstile) {
+      renderNow();
+    } else if (!document.querySelector('script[src*="challenges.cloudflare.com/turnstile"]')) {
+      const s = document.createElement("script");
+      s.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
+      s.async = true;
+      s.defer = true;
+      s.onload = renderNow;
+      document.head.appendChild(s);
+    }
+  }
+
   function setAuthMode(mode) {
     state.authMode = mode;
     const isReg = mode === "register";
@@ -2823,6 +2862,7 @@
     if ($("auth-submit-btn")) $("auth-submit-btn").textContent = isReg ? "Create Account" : "Sign In";
     if ($("auth-password-input")) $("auth-password-input").autocomplete = isReg ? "new-password" : "current-password";
     $("auth-error-box")?.classList.add("hidden");
+    ensureTurnstileWidget();
   }
 
   function showAuthError(msg) {
@@ -3281,14 +3321,27 @@
       if (isReg) payload.name = $("auth-name-input").value.trim() || payload.email.split("@")[0];
       $("auth-submit-btn").disabled = true;
       try {
+        const hdrs = { "Content-Type": "application/json" };
+        if (isReg && state.authProviders?.turnstile_enabled) {
+          if (!state.turnstileToken) {
+            showAuthError("Complete the verification check before creating your account.");
+            $("auth-submit-btn").disabled = false;
+            return;
+          }
+          hdrs["cf-turnstile-response"] = state.turnstileToken;
+        }
         const res = await fetch(isReg ? "/v1/auth/register" : "/v1/auth/login", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: hdrs,
           body: JSON.stringify(payload),
         });
         const data = await res.json();
         if (!res.ok) {
           showAuthError(data.detail?.message || "Authentication failed");
+          if (isReg && state.turnstileWidgetId !== null && window.turnstile) {
+            try { window.turnstile.reset(state.turnstileWidgetId); } catch (_) {}
+            state.turnstileToken = "";
+          }
           return;
         }
         state.user = data.user;

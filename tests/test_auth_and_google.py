@@ -153,6 +153,8 @@ async def test_google_oauth_pkce_flow_and_id_token_account_linking(tmp_path: Pat
         auth_db_path=tmp_path / "google_auth.sqlite3",
         google_client_id="test-google-client.apps.googleusercontent.com",
         google_client_secret="test-google-secret",
+        google_redirect_uri=None,
+        public_base_url=None,
         min_free_disk_bytes=1024,
     )
 
