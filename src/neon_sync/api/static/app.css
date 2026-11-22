@@ -519,19 +519,39 @@ html, body {
 .cfg-input { width: 100%; padding: 6px 8px; border-radius: 7px; border: 1px solid var(--border-strong); background: var(--surface-inset); color: var(--text); font-family: inherit; font-size: 12px; outline: none; }
 .cfg-input:focus { border-color: var(--accent); }
 
-/* Physical Patch Jacks */
+/* Physical Patch Jacks (4-Way Semantic Compass + Classic Tree) */
 .port { position: absolute; top: 50%; width: 20px; height: 20px; margin-top: -10px; border-radius: 50%; background: var(--surface-inset); border: 2px solid var(--border-strong); display: grid; place-items: center; cursor: crosshair; z-index: 6; transition: transform 0.14s, border-color 0.14s, box-shadow 0.14s; }
 .port::after { content: ""; width: 6.5px; height: 6.5px; border-radius: 50%; background: var(--accent); }
 .port-in { left: -11px; }
 .port-in::after { background: var(--text-muted); }
 .port-out { right: -11px; border-color: var(--accent); }
+
+/* 4-Way Cardinal Source Hub Ports */
+.port-east { right: -11px; left: auto; top: 50%; margin-top: -10px; border-color: var(--accent); }
+.port-east::after { background: var(--accent); }
+.port-west { left: -11px; right: auto; top: 50%; margin-top: -10px; border-color: var(--violet); }
+.port-west::after { background: var(--violet); }
+.port-north { top: -11px; bottom: auto; left: 50%; right: auto; margin-left: -10px; margin-top: 0; border-color: var(--live); }
+.port-north::after { background: var(--live); }
+.port-south { bottom: -11px; top: auto; left: 50%; right: auto; margin-left: -10px; margin-top: 0; border-color: var(--warn); }
+.port-south::after { background: var(--warn); }
+
+/* Directional Child Port Flipping (West / North / South branches) */
+.node.dir-west .port-in { left: auto; right: -11px; top: 50%; margin-top: -10px; }
+.node.dir-west .port-out { right: auto; left: -11px; top: 50%; margin-top: -10px; }
+.node.dir-west .port-tip { right: auto; left: 24px; }
+.node.dir-north .port-in { left: 50%; right: auto; top: auto; bottom: -11px; margin-left: -10px; margin-top: 0; }
+.node.dir-north .port-out { left: 50%; right: auto; top: -11px; bottom: auto; margin-left: -10px; margin-top: 0; }
+.node.dir-south .port-in { left: 50%; right: auto; top: -11px; bottom: auto; margin-left: -10px; margin-top: 0; }
+.node.dir-south .port-out { left: 50%; right: auto; top: auto; bottom: -11px; margin-left: -10px; margin-top: 0; }
+
 .node-result .port-out { border-color: var(--ok); }
 .node-result .port-out::after { background: var(--ok); }
 .node-note .port-out { border-color: var(--warn); }
 .node-note .port-out::after { background: var(--warn); }
 .port:hover { transform: scale(1.28); border-color: var(--accent); box-shadow: 0 0 14px var(--accent-glow); }
 .port-tip { position: absolute; right: 24px; top: 50%; transform: translateY(-50%); white-space: nowrap; font-size: 9px; padding: 3px 7px; border-radius: 5px; background: var(--surface-elev); border: 1px solid var(--border-strong); color: var(--text-secondary); opacity: 0; pointer-events: none; transition: opacity 0.14s; }
-.port-out:hover .port-tip { opacity: 1; }
+.port-out:hover .port-tip, .port-east:hover .port-tip, .port-west:hover .port-tip, .port-north:hover .port-tip, .port-south:hover .port-tip { opacity: 1; }
 
 /* Source & Result Internals */
 .node-thumb { position: relative; width: 100%; aspect-ratio: 16 / 9; border-radius: var(--radius-md); overflow: hidden; background: var(--surface-inset); border: 1px solid var(--border); margin-bottom: 9px; }

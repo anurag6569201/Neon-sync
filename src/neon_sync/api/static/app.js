@@ -20,6 +20,7 @@
     batchOpen: false,
     autoSave: localStorage.getItem("neon_autosave") !== "false",
     sfxEnabled: localStorage.getItem("neon_sfx") !== "false",
+    layoutMode: localStorage.getItem("neon_layout_mode") || "compass", // "compass" (4-way NESW) | "tree" (L->R)
     sse: new Map(),
     autoSavedJobs: new Set(),
     oscActive: false,
@@ -1659,6 +1660,24 @@
     }
   }
 
+  const _NORTH_KEYS = new Set(["watch_live", "web_snapshot", "deep_scan", "retry_probe", "probe_now"]);
+  const _WEST_KEYS = new Set(["audio", "subtitles", "chapters", "web_article", "pl_audio", "record_live_audio", "feed_items", "feed_md"]);
+  const _SOUTH_KEYS = new Set(["image", "web_assets", "studio_tools"]);
+
+  function resolveBranchDir(parentNode, spec) {
+    if (parentNode.type !== "source") return parentNode.branchDir || "east";
+    const key = String(spec?.key || "");
+    if (_NORTH_KEYS.has(key)) return "north";
+    if (_WEST_KEYS.has(key)) return "west";
+    if (_SOUTH_KEYS.has(key)) return "south";
+    return "east";
+  }
+
+  function getEffectiveDir(node) {
+    if (state.layoutMode === "tree") return "east";
+    return node?.branchDir || "east";
+  }
+
   function spawnChoiceChildren(parentNode, specs, autoFocus = true, playSound = true) {
     const rootId = parentNode.type === "source" ? parentNode.id : parentNode.rootSourceId;
     const parentDepth = parentNode.type === "source" ? 0 : (parentNode.depth || 1);
@@ -1673,11 +1692,13 @@
       }
       const srcDur = state.nodes.get(rootId)?.probe?.duration_seconds;
       const defaultPresets = buildTrimPresets(srcDur);
+      const branchDir = resolveBranchDir(parentNode, spec);
       const node = {
         id,
         type: "choice",
         parentId: parentNode.id,
         rootSourceId: rootId,
+        branchDir,
         depth: parentDepth + 1,
         theme: spec.theme || parentNode.theme || "video",
         icon: spec.icon,
@@ -1777,69 +1798,251 @@
     const root = state.nodes.get(rootId);
     if (!root) return;
 
-    const colGap = 128;
-    const rowGap = 20;
-    const subtreeH = new Map();
-    const maxWByDepth = new Map();
-    const v2 = new Set();
+    const hGap = 118;   // Horizontal gap between columns (East / West)
+    const rowGap = 18;  // Vertical gap between siblings in horizontal trees
+    const vGap = 86;    // Vertical gap between rows (North / South)
+    const hSibGap = 24; // Horizontal gap between siblings in vertical trees
 
-    function computeMetrics(nodeId, depth) {
-      if (v2.has(nodeId)) return 0;
-      v2.add(nodeId);
+    const getSize = (nodeId) => {
       const n = state.nodes.get(nodeId);
       const el = document.querySelector(`[data-node-id="${CSS.escape(nodeId)}"]`);
-      const ownH = el ? el.offsetHeight : 64;
-      const ownW = el ? el.offsetWidth : (n?.type === "source" ? 344 : 248);
-      maxWByDepth.set(depth, Math.max(maxWByDepth.get(depth) || 0, ownW));
+      return {
+        w: el ? el.offsetWidth : (n?.type === "source" ? 344 : n?.type === "result" ? 372 : n?.type === "player" ? 420 : 252),
+        h: el ? el.offsetHeight : (n?.type === "source" ? 260 : 62),
+      };
+    };
 
-      const kids = state.edges
+    const getChildren = (nodeId, visited) =>
+      state.edges
         .filter((e) => e.from === nodeId)
         .map((e) => e.to)
-        .filter((cid) => state.nodes.has(cid) && !v2.has(cid));
-      let total = ownH;
-      if (kids.length) {
-        const sum = kids.reduce((acc, cid) => acc + computeMetrics(cid, depth + 1), 0) + rowGap * (kids.length - 1);
-        total = Math.max(ownH, sum);
+        .filter((cid) => state.nodes.has(cid) && state.nodes.get(cid)?.type !== "note" && !visited.has(cid));
+
+    const rootSize = getSize(rootId);
+    const rootCx = root.x + rootSize.w / 2;
+    const rootCy = root.y + rootSize.h / 2;
+
+    // Classic Left-to-Right Tree Mode
+    if (state.layoutMode === "tree") {
+      const infoMap = new Map();
+      const maxWByDepth = new Map([[0, rootSize.w]]);
+      const vis = new Set();
+
+      const measureH = (nodeId, depth) => {
+        if (vis.has(nodeId)) return 0;
+        vis.add(nodeId);
+        const { w, h } = getSize(nodeId);
+        maxWByDepth.set(depth, Math.max(maxWByDepth.get(depth) || 0, w));
+        const kids = getChildren(nodeId, vis);
+        let total = h;
+        if (kids.length) {
+          total = Math.max(h, kids.reduce((a, cid) => a + measureH(cid, depth + 1), 0) + rowGap * (kids.length - 1));
+        }
+        infoMap.set(nodeId, { ownH: h, ownW: w, total, kids, depth });
+        return total;
+      };
+
+      measureH(rootId, 0);
+      const colX = new Map([[0, root.x]]);
+      const maxD = Math.max(0, ...Array.from(maxWByDepth.keys()));
+      for (let d = 0; d < maxD; d++) {
+        colX.set(d + 1, (colX.get(d) || root.x) + (maxWByDepth.get(d) || 252) + hGap);
       }
-      subtreeH.set(nodeId, { ownH, total, kids, depth });
-      return total;
+
+      const placeEast = (nodeId, topY) => {
+        const n = state.nodes.get(nodeId);
+        const info = infoMap.get(nodeId);
+        if (!n || !info) return;
+        if (nodeId !== rootId) {
+          n.x = Math.round(colX.get(info.depth) ?? root.x);
+          n.y = Math.round(topY + (info.total - info.ownH) / 2);
+          const el = document.querySelector(`[data-node-id="${CSS.escape(nodeId)}"]`);
+          if (el) { el.style.left = `${n.x}px`; el.style.top = `${n.y}px`; }
+        }
+        if (!info.kids.length) return;
+        const kidsTotal = info.kids.reduce((s, cid) => s + (infoMap.get(cid)?.total || 64), 0) + rowGap * (info.kids.length - 1);
+        let curY = (n.y + info.ownH / 2) - kidsTotal / 2;
+        for (const cid of info.kids) {
+          const ch = infoMap.get(cid)?.total || 64;
+          placeEast(cid, curY);
+          curY += ch + rowGap;
+        }
+      };
+
+      const rInfo = infoMap.get(rootId);
+      placeEast(rootId, rootCy - (rInfo?.total || 200) / 2);
+      requestAnimationFrame(renderThreads);
+      return;
     }
 
-    computeMetrics(rootId, 0);
-    const rootInfo = subtreeH.get(rootId);
-    const rootCenterY = root.y + (rootInfo ? rootInfo.ownH / 2 : 120);
-
-    // Pre-compute clean non-overlapping X column coordinates using max width at each depth
-    const colX = new Map([[0, root.x]]);
-    const maxDepth = Math.max(0, ...Array.from(maxWByDepth.keys()));
-    for (let d = 0; d < maxDepth; d++) {
-      colX.set(d + 1, (colX.get(d) || root.x) + (maxWByDepth.get(d) || 248) + colGap);
+    // 4-Way Semantic Compass Mode (Zero-Overlap Quadrant Solver)
+    const rootVis = new Set([rootId]);
+    const directKids = getChildren(rootId, rootVis);
+    const eastKids = [];
+    const westKids = [];
+    const northKids = [];
+    const southKids = [];
+    for (const cid of directKids) {
+      const dir = state.nodes.get(cid)?.branchDir || "east";
+      if (dir === "west") westKids.push(cid);
+      else if (dir === "north") northKids.push(cid);
+      else if (dir === "south") southKids.push(cid);
+      else eastKids.push(cid);
     }
 
-    function place(nodeId, topY) {
-      const n = state.nodes.get(nodeId);
-      const info = subtreeH.get(nodeId);
-      if (!n || !info) return;
-      const el = document.querySelector(`[data-node-id="${CSS.escape(nodeId)}"]`);
+    // Helper: lay out a horizontal side ("east" or "west") and return its exact vertical/horizontal bounds
+    const layoutHorizontalSide = (sideKids, isWest) => {
+      if (!sideKids.length) return null;
+      const vis = new Set([rootId]);
+      const infoMap = new Map();
+      const maxWByDepth = new Map();
 
-      if (nodeId !== rootId) {
-        n.x = Math.round(colX.get(info.depth) ?? root.x);
+      const measure = (nodeId, depth) => {
+        if (vis.has(nodeId)) return 0;
+        vis.add(nodeId);
+        const { w, h } = getSize(nodeId);
+        maxWByDepth.set(depth, Math.max(maxWByDepth.get(depth) || 0, w));
+        const kids = getChildren(nodeId, vis);
+        let total = h;
+        if (kids.length) {
+          total = Math.max(h, kids.reduce((a, cid) => a + measure(cid, depth + 1), 0) + rowGap * (kids.length - 1));
+        }
+        infoMap.set(nodeId, { ownH: h, ownW: w, total, kids, depth });
+        return total;
+      };
+
+      const sideTotalH = sideKids.reduce((a, cid) => a + measure(cid, 1), 0) + rowGap * (sideKids.length - 1);
+      const maxD = Math.max(1, ...Array.from(maxWByDepth.keys()));
+      const colPos = new Map();
+      if (!isWest) {
+        colPos.set(1, root.x + rootSize.w + hGap);
+        for (let d = 1; d < maxD; d++) {
+          colPos.set(d + 1, colPos.get(d) + (maxWByDepth.get(d) || 252) + hGap);
+        }
+      } else {
+        // Right-edge X coordinate for each West column so cards align cleanly facing the Source
+        colPos.set(1, root.x - hGap);
+        for (let d = 1; d < maxD; d++) {
+          colPos.set(d + 1, colPos.get(d) - (maxWByDepth.get(d) || 252) - hGap);
+        }
+      }
+
+      const bounds = { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity };
+      const place = (nodeId, topY) => {
+        const n = state.nodes.get(nodeId);
+        const info = infoMap.get(nodeId);
+        if (!n || !info) return;
+        n.x = Math.round(isWest ? (colPos.get(info.depth) - info.ownW) : colPos.get(info.depth));
         n.y = Math.round(topY + (info.total - info.ownH) / 2);
+        const el = document.querySelector(`[data-node-id="${CSS.escape(nodeId)}"]`);
         if (el) { el.style.left = `${n.x}px`; el.style.top = `${n.y}px`; }
-      }
+        bounds.minX = Math.min(bounds.minX, n.x);
+        bounds.maxX = Math.max(bounds.maxX, n.x + info.ownW);
+        bounds.minY = Math.min(bounds.minY, n.y);
+        bounds.maxY = Math.max(bounds.maxY, n.y + info.ownH);
 
-      if (!info.kids.length) return;
-      const kidsTotal = info.kids.reduce((s, cid) => s + (subtreeH.get(cid)?.total || 64), 0) + rowGap * (info.kids.length - 1);
-      const nodeCenterY = n.y + info.ownH / 2;
-      let curY = nodeCenterY - kidsTotal / 2;
-      for (const cid of info.kids) {
-        const ch = subtreeH.get(cid)?.total || 64;
+        if (!info.kids.length) return;
+        const kidsTotal = info.kids.reduce((s, cid) => s + (infoMap.get(cid)?.total || 64), 0) + rowGap * (info.kids.length - 1);
+        let curY = (n.y + info.ownH / 2) - kidsTotal / 2;
+        for (const cid of info.kids) {
+          const ch = infoMap.get(cid)?.total || 64;
+          place(cid, curY);
+          curY += ch + rowGap;
+        }
+      };
+
+      let curY = rootCy - sideTotalH / 2;
+      for (const cid of sideKids) {
+        const ch = infoMap.get(cid)?.total || 64;
         place(cid, curY);
         curY += ch + rowGap;
       }
-    }
+      return bounds;
+    };
 
-    place(rootId, rootCenterY - (rootInfo?.total || 200) / 2);
+    const eastBounds = layoutHorizontalSide(eastKids, false);
+    const westBounds = layoutHorizontalSide(westKids, true);
+
+    // Helper: lay out a vertical side ("north" or "south") with strict anti-collision against East & West!
+    const layoutVerticalSide = (sideKids, isNorth) => {
+      if (!sideKids.length) return null;
+      const vis = new Set([rootId]);
+      const infoMap = new Map();
+      const maxHByDepth = new Map();
+
+      const measure = (nodeId, depth) => {
+        if (vis.has(nodeId)) return 0;
+        vis.add(nodeId);
+        const { w, h } = getSize(nodeId);
+        maxHByDepth.set(depth, Math.max(maxHByDepth.get(depth) || 0, h));
+        const kids = getChildren(nodeId, vis);
+        let total = w;
+        if (kids.length) {
+          total = Math.max(w, kids.reduce((a, cid) => a + measure(cid, depth + 1), 0) + hSibGap * (kids.length - 1));
+        }
+        infoMap.set(nodeId, { ownH: h, ownW: w, total, kids, depth });
+        return total;
+      };
+
+      const sideTotalW = sideKids.reduce((a, cid) => a + measure(cid, 1), 0) + hSibGap * (sideKids.length - 1);
+      const spanLeft = rootCx - sideTotalW / 2;
+      const spanRight = rootCx + sideTotalW / 2;
+      const pad = 28;
+
+      // Guarantee zero collision with East/West subtrees whenever horizontal spans overlap!
+      let baseEdgeY = isNorth ? (root.y - vGap) : (root.y + rootSize.h + vGap);
+      if (eastBounds && spanRight + pad > eastBounds.minX) {
+        baseEdgeY = isNorth
+          ? Math.min(baseEdgeY, eastBounds.minY - vGap)
+          : Math.max(baseEdgeY, eastBounds.maxY + vGap);
+      }
+      if (westBounds && spanLeft - pad < westBounds.maxX) {
+        baseEdgeY = isNorth
+          ? Math.min(baseEdgeY, westBounds.minY - vGap)
+          : Math.max(baseEdgeY, westBounds.maxY + vGap);
+      }
+
+      const maxD = Math.max(1, ...Array.from(maxHByDepth.keys()));
+      const rowPos = new Map();
+      rowPos.set(1, baseEdgeY);
+      for (let d = 1; d < maxD; d++) {
+        rowPos.set(
+          d + 1,
+          isNorth
+            ? (rowPos.get(d) - (maxHByDepth.get(d) || 64) - vGap)
+            : (rowPos.get(d) + (maxHByDepth.get(d) || 64) + vGap),
+        );
+      }
+
+      const place = (nodeId, leftX) => {
+        const n = state.nodes.get(nodeId);
+        const info = infoMap.get(nodeId);
+        if (!n || !info) return;
+        n.x = Math.round(leftX + (info.total - info.ownW) / 2);
+        n.y = Math.round(isNorth ? (rowPos.get(info.depth) - info.ownH) : rowPos.get(info.depth));
+        const el = document.querySelector(`[data-node-id="${CSS.escape(nodeId)}"]`);
+        if (el) { el.style.left = `${n.x}px`; el.style.top = `${n.y}px`; }
+
+        if (!info.kids.length) return;
+        const kidsTotal = info.kids.reduce((s, cid) => s + (infoMap.get(cid)?.total || 252), 0) + hSibGap * (info.kids.length - 1);
+        let curX = (n.x + info.ownW / 2) - kidsTotal / 2;
+        for (const cid of info.kids) {
+          const cw = infoMap.get(cid)?.total || 252;
+          place(cid, curX);
+          curX += cw + hSibGap;
+        }
+      };
+
+      let curX = rootCx - sideTotalW / 2;
+      for (const cid of sideKids) {
+        const cw = infoMap.get(cid)?.total || 252;
+        place(cid, curX);
+        curX += cw + hSibGap;
+      }
+    };
+
+    layoutVerticalSide(northKids, true);
+    layoutVerticalSide(southKids, false);
     requestAnimationFrame(renderThreads);
   }
 
@@ -2028,7 +2231,7 @@
       demo: true,
       url: v.url,
       title: v.title,
-      x: -560,
+      x: state.layoutMode === "compass" ? -172 : -560,
       y: -135,
       probing: false,
       probe: {
@@ -2152,14 +2355,30 @@
     persistWorkspace();
   }
 
-  function bezierPath(x1, y1, x2, y2) {
+  function bezierPath(x1, y1, x2, y2, dir = "east") {
+    if (dir === "north" || dir === "south") {
+      const sign = dir === "south" ? 1 : -1;
+      const dist = Math.max(46, Math.abs(y2 - y1) * 0.48);
+      return `M ${x1} ${y1} C ${x1} ${y1 + sign * dist}, ${x2} ${y2 - sign * dist}, ${x2} ${y2}`;
+    }
+    const sign = dir === "west" ? -1 : 1;
     const dist = Math.max(66, Math.abs(x2 - x1) * 0.46);
-    return `M ${x1} ${y1} C ${x1 + dist} ${y1}, ${x2 - dist} ${y2}, ${x2} ${y2}`;
+    return `M ${x1} ${y1} C ${x1 + sign * dist} ${y1}, ${x2 - sign * dist} ${y2}, ${x2} ${y2}`;
   }
 
-  function bezierMidpoint(x1, y1, x2, y2) {
-    const dist = Math.max(66, Math.abs(x2 - x1) * 0.46);
-    const cx1 = x1 + dist, cy1 = y1, cx2 = x2 - dist, cy2 = y2;
+  function bezierMidpoint(x1, y1, x2, y2, dir = "east") {
+    let cx1, cy1, cx2, cy2;
+    if (dir === "north" || dir === "south") {
+      const sign = dir === "south" ? 1 : -1;
+      const dist = Math.max(46, Math.abs(y2 - y1) * 0.48);
+      cx1 = x1; cy1 = y1 + sign * dist;
+      cx2 = x2; cy2 = y2 - sign * dist;
+    } else {
+      const sign = dir === "west" ? -1 : 1;
+      const dist = Math.max(66, Math.abs(x2 - x1) * 0.46);
+      cx1 = x1 + sign * dist; cy1 = y1;
+      cx2 = x2 - sign * dist; cy2 = y2;
+    }
     return {
       x: 0.125 * x1 + 0.375 * cx1 + 0.375 * cx2 + 0.125 * x2,
       y: 0.125 * y1 + 0.375 * cy1 + 0.375 * cy2 + 0.125 * y2,
@@ -2170,9 +2389,25 @@
     const n = state.nodes.get(nodeId);
     if (!n) return null;
     const el = document.querySelector(`[data-node-id="${CSS.escape(nodeId)}"]`);
-    const w = el ? el.offsetWidth : 248;
+    const w = el ? el.offsetWidth : (n.type === "source" ? 344 : 252);
     const h = el ? el.offsetHeight : 64;
-    return { x: side === "out" ? n.x + w : n.x, y: n.y + h / 2 };
+    if (side === "east") return { x: n.x + w, y: n.y + h / 2 };
+    if (side === "west") return { x: n.x, y: n.y + h / 2 };
+    if (side === "north") return { x: n.x + w / 2, y: n.y };
+    if (side === "south") return { x: n.x + w / 2, y: n.y + h };
+
+    const dir = getEffectiveDir(n);
+    if (side === "out") {
+      if (dir === "west") return { x: n.x, y: n.y + h / 2 };
+      if (dir === "north") return { x: n.x + w / 2, y: n.y };
+      if (dir === "south") return { x: n.x + w / 2, y: n.y + h };
+      return { x: n.x + w, y: n.y + h / 2 };
+    }
+    // side === "in"
+    if (dir === "west") return { x: n.x + w, y: n.y + h / 2 };
+    if (dir === "north") return { x: n.x + w / 2, y: n.y + h };
+    if (dir === "south") return { x: n.x + w / 2, y: n.y };
+    return { x: n.x, y: n.y + h / 2 };
   }
 
   let _threadsRaf = null;
@@ -2189,11 +2424,18 @@
     if (!group) return;
     let html = "";
     for (const e of state.edges) {
-      const p1 = getPortWorldCoords(e.from, "out");
+      const fromN = state.nodes.get(e.from);
+      const toN = state.nodes.get(e.to);
+      if (!fromN || !toN) continue;
+      const dir = (toN.type === "choice" || toN.type === "result" || toN.type === "player")
+        ? getEffectiveDir(toN)
+        : "east";
+      const fromSide = fromN.type === "source" && state.layoutMode === "compass" ? dir : "out";
+      const p1 = getPortWorldCoords(e.from, fromSide);
       const p2 = getPortWorldCoords(e.to, "in");
       if (!p1 || !p2) continue;
-      const d = bezierPath(p1.x, p1.y, p2.x, p2.y);
-      const mid = bezierMidpoint(p1.x, p1.y, p2.x, p2.y);
+      const d = bezierPath(p1.x, p1.y, p2.x, p2.y, dir);
+      const mid = bezierMidpoint(p1.x, p1.y, p2.x, p2.y, dir);
       const text = (e.label || "THREAD").slice(0, 18);
       const pillW = Math.max(44, text.length * 5.7 + 14);
 
@@ -2263,19 +2505,50 @@
 
   function tidyGraphLayout() {
     const roots = Array.from(state.nodes.values()).filter((n) => n.type === "source");
-    let curY = -140;
+    let nextTopY = -140;
+    const baseX = state.layoutMode === "compass" ? -172 : -560;
     for (const r of roots) {
-      r.x = -560;
-      r.y = curY;
+      // Lay out first to measure full 4-way subtree height (including North above root!)
+      r.x = baseX;
+      r.y = nextTopY;
       const el = document.querySelector(`[data-node-id="${CSS.escape(r.id)}"]`);
       if (el) { el.style.left = `${r.x}px`; el.style.top = `${r.y}px`; }
       layoutTreeFromRoot(r.id);
-      curY += 540;
+
+      // Measure actual minY..maxY of this root's entire connected subtree
+      const treeNodes = Array.from(state.nodes.values()).filter((n) => n.id === r.id || n.rootSourceId === r.id);
+      let minY = Infinity, maxY = -Infinity;
+      for (const tn of treeNodes) {
+        const tel = document.querySelector(`[data-node-id="${CSS.escape(tn.id)}"]`);
+        const th = tel ? tel.offsetHeight : 64;
+        minY = Math.min(minY, tn.y);
+        maxY = Math.max(maxY, tn.y + th);
+      }
+      if (Number.isFinite(minY) && minY < nextTopY) {
+        const shiftY = nextTopY - minY;
+        r.y += shiftY;
+        if (el) el.style.top = `${r.y}px`;
+        layoutTreeFromRoot(r.id);
+        maxY += shiftY;
+      }
+      nextTopY = (Number.isFinite(maxY) ? maxY : nextTopY + 420) + 140;
     }
     sfx.click();
     renderThreads();
     persistWorkspace();
     fitAllNodes();
+  }
+
+  function applyLayoutMode(mode) {
+    state.layoutMode = mode === "tree" ? "tree" : "compass";
+    localStorage.setItem("neon_layout_mode", state.layoutMode);
+    const btn = $("layout-mode-btn");
+    const txt = $("layout-mode-text");
+    if (btn) btn.classList.toggle("active", state.layoutMode === "compass");
+    if (txt) txt.textContent = state.layoutMode === "compass" ? "Compass" : "Tree";
+    // Re-render all nodes so directional ports update cleanly, then tidy
+    for (const n of state.nodes.values()) renderNode(n);
+    tidyGraphLayout();
   }
 
   /* ---------- Live Preview Stream Cache & Visual Scrubber Helpers ---------- */
@@ -2673,11 +2946,14 @@
       layer.appendChild(el);
     }
 
+    const dirCls = (node.type === "choice" || node.type === "result" || node.type === "player")
+      ? `dir-${getEffectiveDir(node)}`
+      : "";
     const hasVisualPreview = node.type === "choice" && !!node.panelOpen && ["trim", "frame", "sub_preview", "article_preview", "assets_preview", "image_studio", "playlist_range"].includes(node.inputKind);
     const extraCls = node.type === "choice"
-      ? `theme-${node.theme} ${node.isLeaf ? "is-leaf" : ""} ${node.inputKind && node.panelOpen ? "choice-interactive" : ""} ${hasVisualPreview ? "choice-has-preview" : ""} ${node.expanded || node.panelOpen ? "path-lit" : ""}`
-      : node.type === "player" && node.theater ? "theater"
-      : node.type === "result" && node.job?.status === "completed" ? "is-complete"
+      ? `theme-${node.theme} ${dirCls} ${node.isLeaf ? "is-leaf" : ""} ${node.inputKind && node.panelOpen ? "choice-interactive" : ""} ${hasVisualPreview ? "choice-has-preview" : ""} ${node.expanded || node.panelOpen ? "path-lit" : ""}`
+      : node.type === "player" ? `${dirCls} ${node.theater ? "theater" : ""}`
+      : node.type === "result" ? `${dirCls} ${node.job?.status === "completed" ? "is-complete" : ""}`
       : "";
     el.className = `node node-${node.type} ${extraCls} ${state.selectedNodeId === node.id ? "selected" : ""} ${node.collapsed ? "collapsed" : ""}`;
     el.style.left = `${node.x}px`;
@@ -2978,9 +3254,20 @@
       const statusCls = node.probeError ? "err" : node.probing ? "warn" : "ok";
       const statusTxt = node.probeError ? "error" : node.probing ? "probing" : (p?.content_type || "ready");
 
+      const sourcePorts = state.layoutMode === "compass"
+        ? `
+          <div class="port port-north" data-port="north" data-node="${esc(node.id)}"><span class="port-tip mono">Live &amp; Snapshots</span></div>
+          <div class="port port-east port-out" data-port="east" data-node="${esc(node.id)}"><span class="port-tip mono">Drag to link or spawn</span></div>
+          <div class="port port-south" data-port="south" data-node="${esc(node.id)}"><span class="port-tip mono">Images &amp; Studio</span></div>
+          <div class="port port-west" data-port="west" data-node="${esc(node.id)}"><span class="port-tip mono">Audio &amp; Captions</span></div>
+        `
+        : `
+          <div class="port port-in" data-port="in" data-node="${esc(node.id)}"></div>
+          <div class="port port-out" data-port="out" data-node="${esc(node.id)}"><span class="port-tip mono">Drag to link or spawn path</span></div>
+        `;
+
       inner = `
-        <div class="port port-in" data-port="in" data-node="${esc(node.id)}"></div>
-        <div class="port port-out" data-port="out" data-node="${esc(node.id)}"><span class="port-tip mono">Drag to link or spawn path</span></div>
+        ${sourcePorts}
         <div class="node-head" data-drag-handle="1">
           <span class="node-type-pill mono"><span class="node-type-dot"></span>SOURCE · ${esc(shortHost(node.url).toUpperCase())}</span>
           <div class="node-head-right">
@@ -3813,7 +4100,9 @@
     const saved = state.savedPositions[id];
     const siblings = parentNode ? state.edges.filter((e) => e.from === parentNode.id).length : 0;
     const pos = forcedPos || saved || (parentNode ? pickChildPosition(parentNode, siblings) : pickNewRootPosition());
-    const node = { id, type: "result", jobId: job.job_id, job, x: pos.x, y: pos.y, collapsed: !!saved?.collapsed };
+    const branchDir = parentNode?.branchDir || "east";
+    const rootSourceId = parentNode?.rootSourceId || (parentNode?.type === "source" ? parentNode.id : null);
+    const node = { id, type: "result", jobId: job.job_id, job, branchDir, rootSourceId, x: pos.x, y: pos.y, collapsed: !!saved?.collapsed };
     state.nodes.set(id, node);
     state.resultByJobId.set(job.job_id, id);
     renderNode(node);
@@ -3902,11 +4191,15 @@
     }
     const siblings = state.edges.filter((e) => e.from === parentNode.id).length;
     const pos = pickChildPosition(parentNode, siblings);
+    const playerDir = parentNode.branchDir || (parentNode.type === "source" ? "north" : "east");
+    const playerRootId = parentNode.rootSourceId || (parentNode.type === "source" ? parentNode.id : null);
     const playerNode = {
       id: uid("player"),
       type: "player",
       url,
       title: parentNode.title || url,
+      branchDir: playerDir,
+      rootSourceId: playerRootId,
       playMode: mode,
       loading: true,
       error: null,
@@ -3921,7 +4214,7 @@
     state.nodes.set(playerNode.id, playerNode);
     renderNode(playerNode);
     const edge = addEdge(parentNode.id, playerNode.id, "live", true, mode === "audio" ? "LIVE AUDIO" : "LIVE STREAM");
-    if (parentNode.rootSourceId) layoutTreeFromRoot(parentNode.rootSourceId);
+    if (playerRootId) layoutTreeFromRoot(playerRootId);
     gravity.shockAt(playerNode.x + 260, playerNode.y + 160);
     glideToWorld(playerNode.x + 250, playerNode.y + 150, Math.min(camera.zoom, 0.92));
     sfx.capture();
@@ -4203,6 +4496,17 @@
     $("download-btn").onclick = fireDockCommand;
 
     $("tidy-graph-btn").onclick = tidyGraphLayout;
+    const syncLayoutBtn = () => {
+      if ($("layout-mode-btn")) $("layout-mode-btn").classList.toggle("active", state.layoutMode === "compass");
+      if ($("layout-mode-text")) $("layout-mode-text").textContent = state.layoutMode === "compass" ? "Compass" : "Tree";
+    };
+    syncLayoutBtn();
+    if ($("layout-mode-btn")) {
+      $("layout-mode-btn").onclick = () => {
+        applyLayoutMode(state.layoutMode === "compass" ? "tree" : "compass");
+        toast(state.layoutMode === "compass" ? "4-Way Compass layout active" : "Classic Tree layout active", "ok");
+      };
+    }
 
     const syncAutosave = () => $("autosave-pill").classList.toggle("active", state.autoSave);
     syncAutosave();
