@@ -20,8 +20,6 @@
     batchOpen: false,
     autoSave: localStorage.getItem("neon_autosave") !== "false",
     sfxEnabled: localStorage.getItem("neon_sfx") !== "false",
-    tier: null,
-    proKey: sessionStorage.getItem("neon_pro_key") || "",
     sse: new Map(),
     autoSavedJobs: new Set(),
     oscActive: false,
@@ -34,13 +32,7 @@
     savedPositions: {},
     pendingPatch: null,
     hasDemoGraph: false,
-    // Authentication & Account state
-    user: null,
-    authProviders: null,
-    authMode: "login",
-    accountTab: "profile",
-    turnstileToken: "",
-    turnstileWidgetId: null,
+    spaceHeld: false,
   };
 
   try {
@@ -233,13 +225,21 @@
       const el = document.querySelector(`[data-node-id="${CSS.escape(n.id)}"]`);
       const nw = Math.max(6, (el ? el.offsetWidth : 248) * scale);
       const nh = Math.max(3.5, (el ? el.offsetHeight : 58) * scale);
+      const rx = ox + n.x * scale;
+      const ry = oy + n.y * scale;
       ctx.fillStyle = n.type === "source" ? "#ff4d00"
+        : n.type === "result" ? "#16c47f"
         : n.type === "player" || n.theme === "live" ? "#06b6d4"
         : n.theme === "audio" ? "#a855f7"
         : n.theme === "subtitles" ? "#3b82f6"
         : n.type === "note" || n.theme === "image" ? "#f5b700"
         : "#a1a1aa";
-      ctx.fillRect(ox + n.x * scale, oy + n.y * scale, nw, nh);
+      ctx.fillRect(rx, ry, nw, nh);
+      if (state.selectedNodeId === n.id) {
+        ctx.strokeStyle = "#ffffff";
+        ctx.lineWidth = 1.2;
+        ctx.strokeRect(rx - 0.8, ry - 0.8, nw + 1.6, nh + 1.6);
+      }
     }
 
     const vp = $("viewport").getBoundingClientRect();
@@ -252,12 +252,15 @@
     ctx.strokeRect(ox + tl.x * scale, oy + tl.y * scale, (br.x - tl.x) * scale, (br.y - tl.y) * scale);
   }
 
-  /* ---------- 60fps Infinite Camera-Synced Gravitational Dot Field ---------- */
+  /* ---------- 60fps Infinite Camera-Synced Gravitational Dot & Architectural Grid Field ---------- */
   const gravity = (() => {
     const canvas = $("gravity-field");
-    if (!canvas) return { shockAt: () => {}, pulseAt: () => {} };
+    if (!canvas) return { shockAt: () => {}, pulseAt: () => {}, wake: () => {} };
     const ctx = canvas.getContext("2d");
     let w = 0, h = 0, dpr = 1;
+    let lastCamKey = "";
+    let lastPointerX = -9999, lastPointerY = -9999;
+    let idleFrames = 0;
     const pointer = { x: -9999, y: -9999, active: false };
     const waves = [];
 
@@ -266,24 +269,46 @@
       w = window.innerWidth; h = window.innerHeight;
       canvas.width = w * dpr; canvas.height = h * dpr;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      idleFrames = 0;
     }
     resize();
     window.addEventListener("resize", resize);
 
-    window.addEventListener("pointermove", (e) => {
-      pointer.x = e.clientX; pointer.y = e.clientY; pointer.active = true;
-      const pt = screenToWorld(e.clientX, e.clientY);
+    function updateCoordHud(sx, sy) {
+      const pt = screenToWorld(sx, sy);
       const cr = $("coord-readout");
       if (cr) {
-        const sx = (pt.x >= 0 ? "+" : "-") + String(Math.min(9999, Math.abs(Math.round(pt.x)))).padStart(4, "0");
-        const sy = (pt.y >= 0 ? "+" : "-") + String(Math.min(9999, Math.abs(Math.round(pt.y)))).padStart(4, "0");
-        cr.textContent = `X:${sx} Y:${sy} · ${Math.round(camera.zoom * 100)}%`;
+        const px = (pt.x >= 0 ? "+" : "-") + String(Math.min(9999, Math.abs(Math.round(pt.x)))).padStart(4, "0");
+        const py = (pt.y >= 0 ? "+" : "-") + String(Math.min(9999, Math.abs(Math.round(pt.y)))).padStart(4, "0");
+        const nCount = state.nodes.size;
+        cr.textContent = `X:${px} Y:${py} · ${Math.round(camera.zoom * 100)}% · ${nCount} NODE${nCount === 1 ? "" : "S"}`;
       }
+    }
+
+    window.addEventListener("pointermove", (e) => {
+      pointer.x = e.clientX; pointer.y = e.clientY; pointer.active = true;
+      idleFrames = 0;
+      updateCoordHud(e.clientX, e.clientY);
     });
-    window.addEventListener("pointerleave", () => { pointer.active = false; });
-    function pushWave(sx, sy, kind) { waves.push({ x: sx, y: sy, t: 0, kind }); }
+    window.addEventListener("pointerleave", () => { pointer.active = false; idleFrames = 0; });
+    function pushWave(sx, sy, kind) { waves.push({ x: sx, y: sy, t: 0, kind }); idleFrames = 0; }
 
     function frame() {
+      const camKey = `${camera.x.toFixed(1)}:${camera.y.toFixed(1)}:${camera.zoom.toFixed(3)}:${document.documentElement.getAttribute("data-theme")}`;
+      const moved = camKey !== lastCamKey || pointer.x !== lastPointerX || pointer.y !== lastPointerY || waves.length > 0;
+      if (!moved) {
+        idleFrames++;
+        if (idleFrames > 12) {
+          requestAnimationFrame(frame);
+          return;
+        }
+      } else {
+        idleFrames = 0;
+        lastCamKey = camKey;
+        lastPointerX = pointer.x;
+        lastPointerY = pointer.y;
+      }
+
       ctx.clearRect(0, 0, w, h);
       const isDark = (document.documentElement.getAttribute("data-theme") || "dark") === "dark";
       const baseAlpha = isDark ? 0.16 : 0.14;
@@ -295,9 +320,38 @@
         waves[i].t += 0.03;
         if (waves[i].t >= 1) waves.splice(i, 1);
       }
+
       const step = Math.max(18, 36 * camera.zoom);
       const ox = ((camera.x % step) + step) % step;
       const oy = (((camera.y + 54) % step) + step) % step;
+
+      // Subtle architectural 5x5 major grid crosshairs
+      const majorStep = step * 5;
+      const mox = ((camera.x % majorStep) + majorStep) % majorStep;
+      const moy = (((camera.y + 54) % majorStep) + majorStep) % majorStep;
+      ctx.strokeStyle = `rgba(${dotRgb},${isDark ? 0.08 : 0.09})`;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      for (let mx = mox; mx < w; mx += majorStep) {
+        for (let my = moy; my < h; my += majorStep) {
+          ctx.moveTo(mx - 4, my); ctx.lineTo(mx + 4, my);
+          ctx.moveTo(mx, my - 4); ctx.lineTo(mx, my + 4);
+        }
+      }
+      ctx.stroke();
+
+      // World Origin (0,0) Reticle
+      const originX = camera.x;
+      const originY = camera.y + 54;
+      if (originX > -20 && originX < w + 20 && originY > 34 && originY < h + 20) {
+        ctx.strokeStyle = `rgba(${accentRgb},0.28)`;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(originX, originY, 7, 0, Math.PI * 2);
+        ctx.moveTo(originX - 12, originY); ctx.lineTo(originX + 12, originY);
+        ctx.moveTo(originX, originY - 12); ctx.lineTo(originX, originY + 12);
+        ctx.stroke();
+      }
 
       for (let gx = ox; gx < w; gx += step) {
         for (let gy = oy; gy < h; gy += step) {
@@ -335,6 +389,7 @@
     return {
       shockAt: (wx, wy) => { const s = worldToScreen(wx, wy); pushWave(s.x, s.y, "implode"); },
       pulseAt: (wx, wy) => { const s = worldToScreen(wx, wy); pushWave(s.x, s.y, "complete"); },
+      wake: () => { idleFrames = 0; },
     };
   })();
 
@@ -440,58 +495,9 @@
     return `BEST${muteTag}`;
   }
 
-  /* ---------- Quota Tier & Headers ---------- */
+  /* ---------- Request Headers ---------- */
   function apiHeaders(extra = {}) {
-    const h = { ...extra };
-    if (state.proKey) h["X-Neon-Pro-Key"] = state.proKey;
-    return h;
-  }
-  function isPro() { return state.tier?.tier === "pro"; }
-
-  async function refreshTier() {
-    try {
-      const res = await fetch("/v1/tier", { headers: apiHeaders() });
-      if (!res.ok) return;
-      state.tier = await res.json();
-      renderTierGauge();
-    } catch (_) {}
-  }
-
-  function renderLedStrip(el, remaining, total, isOk) {
-    if (!el) return;
-    const count = Math.min(total, 5);
-    const lit = total > 0 ? Math.round((remaining / total) * count) : 0;
-    el.innerHTML = Array.from({ length: count }, (_, i) =>
-      `<span class="led-seg ${i < lit ? (isOk ? "lit-ok" : "lit") : ""}"></span>`
-    ).join("");
-  }
-
-  function renderTierGauge() {
-    const t = state.tier;
-    if (!t) return;
-    const pro = t.tier === "pro";
-    document.body.classList.toggle("is-pro", pro);
-    $("tier-pill").classList.toggle("is-pro", pro);
-    $("tier-badge").textContent = pro ? "PRO" : "GUEST";
-    $("clear-keys-btn").classList.toggle("hidden", !pro);
-    if (pro) {
-      $("fuel-dl-count").textContent = "∞";
-      renderLedStrip($("fuel-dl-leds"), 5, 5, true);
-      $("tier-cta").textContent = "Pro Active";
-    } else {
-      $("fuel-dl-count").textContent = `${t.downloads_remaining}/${t.downloads_limit_hourly}`;
-      renderLedStrip($("fuel-dl-leds"), t.downloads_remaining, t.downloads_limit_hourly, false);
-      $("tier-cta").textContent = "Pro ↗";
-    }
-  }
-
-  function openUpgradeModal(reasonText = "") {
-    sfx.locked();
-    const box = $("upgrade-reason-box");
-    if (reasonText) { box.textContent = reasonText; box.classList.remove("hidden"); }
-    else box.classList.add("hidden");
-    $("pro-key-input").value = state.proKey;
-    $("upgrade-modal").classList.remove("hidden");
+    return { ...extra };
   }
 
   /* =========================================================================
@@ -524,6 +530,13 @@
     terminal: '<polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/>',
     "chevron-right": '<path d="m9 18 6-6-6-6"/>',
     download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/>',
+    bookmark: '<path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"/>',
+    list: '<line x1="8" x2="21" y1="6" y2="6"/><line x1="8" x2="21" y1="12" y2="12"/><line x1="8" x2="21" y1="18" y2="18"/><line x1="3" x2="3.01" y1="6" y2="6"/><line x1="3" x2="3.01" y1="12" y2="12"/><line x1="3" x2="3.01" y1="18" y2="18"/>',
+    radio: '<path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9"/><path d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5"/><circle cx="12" cy="12" r="2"/><path d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5"/><path d="M19.1 4.9C23 8.8 23 15.1 19.1 19"/>',
+    "refresh-cw": '<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>',
+    compass: '<circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/>',
+    archive: '<rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/>',
+    "external-link": '<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
   };
 
   function iconSvg(name, cls = "ico-sm") {
@@ -538,103 +551,743 @@
   }
 
   /* =========================================================================
-     PURE CASCADING POSSIBILITY TREE SPEC (Every Click Blooms Next Paths!)
+     CONTENT-DRIVEN DYNAMIC ROUTE ENGINE (Zero Guessing — Built From Real Probe!)
      ========================================================================= */
+
+  const _LIVE_VIDEO_EXTS = new Set(["mp4", "webm", "mov", "m4v", "ogv", "m3u8"]);
+  const _LIVE_AUDIO_EXTS = new Set(["m4a", "mp3", "opus", "webm", "ogg", "aac", "wav", "flac"]);
+
+  function _normalizeCodecLabel(raw) {
+    const c = String(raw || "").toLowerCase();
+    if (!c || c === "none") return null;
+    if (c.startsWith("avc") || c.includes("h264") || c.includes("h.264")) return "H.264";
+    if (c.startsWith("hev") || c.startsWith("hvc") || c.includes("h265")) return "HEVC";
+    if (c.startsWith("vp09") || c.startsWith("vp9")) return "VP9";
+    if (c.startsWith("av01") || c === "av1") return "AV1";
+    if (c.startsWith("mp4a") || c.includes("aac")) return "AAC";
+    if (c.includes("opus")) return "Opus";
+    if (c.includes("mp3")) return "MP3";
+    if (c.includes("flac")) return "FLAC";
+    return c.split(".")[0].toUpperCase();
+  }
+
+  function _snapVideoQualityParam(h) {
+    if (!h) return "best";
+    if (h >= 2000) return "2160";
+    if (h >= 1350) return "1440";
+    if (h >= 1000) return "1080";
+    if (h >= 680) return "720";
+    if (h >= 440) return "480";
+    return "360";
+  }
+
+  function _resolutionDisplayTitle(h) {
+    if (h >= 2160) return `4K · ${h}p`;
+    if (h >= 1440) return `2K · ${h}p`;
+    if (h >= 1080) return `${h}p · Full HD`;
+    if (h >= 720) return `${h}p · HD`;
+    if (h >= 480) return `${h}p · SD`;
+    return `${h}p · Compact`;
+  }
+
+  function buildTrimPresets(durationSec) {
+    const d = Number(durationSec || 0);
+    if (!d || d <= 0) {
+      return [
+        { label: "0:00–0:15", start: "0:00", end: "0:15" },
+        { label: "0:00–0:30", start: "0:00", end: "0:30" },
+        { label: "0:30–1:00", start: "0:30", end: "1:00" },
+      ];
+    }
+    if (d <= 15) {
+      const half = Math.max(2, Math.floor(d / 2));
+      return [
+        { label: `0:00–${fmtDuration(half)}`, start: "0:00", end: fmtDuration(half) },
+        { label: `${fmtDuration(half)}–${fmtDuration(d)}`, start: fmtDuration(half), end: fmtDuration(d) },
+      ];
+    }
+    if (d <= 45) {
+      const s15 = fmtDuration(15);
+      const mid = Math.floor(d / 2);
+      return [
+        { label: `0:00–${s15}`, start: "0:00", end: s15 },
+        { label: `${fmtDuration(Math.max(0, mid - 7))}–${fmtDuration(Math.min(d, mid + 8))}`, start: fmtDuration(Math.max(0, mid - 7)), end: fmtDuration(Math.min(d, mid + 8)) },
+        { label: `Last 15s`, start: fmtDuration(Math.max(0, d - 15)), end: fmtDuration(d) },
+      ];
+    }
+    const midStart = Math.max(0, Math.floor(d / 2 - 15));
+    const midEnd = Math.min(Math.floor(d), midStart + 30);
+    return [
+      { label: "0:00–0:15", start: "0:00", end: "0:15" },
+      { label: "0:00–0:30", start: "0:00", end: "0:30" },
+      { label: `Mid 30s`, start: fmtDuration(midStart), end: fmtDuration(midEnd) },
+    ];
+  }
+
+  function analyzeProbe(probe) {
+    if (!probe) {
+      return {
+        ready: false,
+        ct: "unknown",
+        isLive: false,
+        duration: null,
+        videoFormats: [],
+        audioFormats: [],
+        videoTiers: [],
+        hasVideo: false,
+        hasAudio: false,
+        hasSeparateVideoOnly: false,
+        canStreamLive: false,
+        liveMode: "video",
+        audioSummary: null,
+        subtitles: [],
+        chapters: [],
+        items: [],
+        itemCount: 0,
+        thumbnail: null,
+        sourceWidth: null,
+      };
+    }
+
+    const ct = probe.content_type || "unknown";
+    const isLive = Boolean(probe.is_live || ct === "livestream");
+    const duration = probe.duration_seconds || null;
+    const formats = probe.available_formats || [];
+
+    const videoFormats = [];
+    const audioFormats = [];
+    let canStreamVideo = false;
+    let canStreamAudio = false;
+    let maxVideoWidth = 0;
+
+    for (const f of formats) {
+      const mime = (f.mime_type || "").toLowerCase();
+      const ext = (f.container || "").toLowerCase();
+      const proto = (f.protocol || "").toLowerCase();
+      const isHls = proto === "hls" || ext === "m3u8" || mime.includes("mpegurl");
+      const hasV = Boolean(f.has_video || mime.startsWith("video/") || (f.height && !f.has_audio && f.video_codec !== "none"));
+      const hasA = Boolean(f.has_audio || mime.startsWith("audio/") || (ct === "audio" && !hasV));
+
+      if (hasV) {
+        videoFormats.push(f);
+        if (f.width && f.width > maxVideoWidth) maxVideoWidth = f.width;
+      }
+      if (hasA) audioFormats.push(f);
+
+      if (f.direct_media_url && ["https", "http", "hls"].includes(proto)) {
+        if (isHls || (hasV && hasA && (_LIVE_VIDEO_EXTS.has(ext) || mime.startsWith("video/"))) || (!hasV && !hasA && mime.startsWith("video/"))) {
+          canStreamVideo = true;
+        } else if (hasA && !hasV && (_LIVE_AUDIO_EXTS.has(ext) || mime.startsWith("audio/"))) {
+          canStreamAudio = true;
+        }
+      }
+    }
+
+    // Best audio size estimate for muxed size calculation
+    const bestAudioFmt = [...audioFormats].sort((a, b) => (b.audio_bitrate_kbps || 0) - (a.audio_bitrate_kbps || 0) || (b.size_bytes || 0) - (a.size_bytes || 0))[0] || null;
+    const bestAudioSize = bestAudioFmt?.size_bytes || 0;
+
+    // Group REAL detected video tiers by snapped resolution height (zero fake resolutions!)
+    const tierMap = new Map();
+    for (const f of videoFormats) {
+      const rawH = f.height || 0;
+      const qParam = rawH ? _snapVideoQualityParam(rawH) : "best";
+      const key = rawH ? qParam : "best";
+      let entry = tierMap.get(key);
+      if (!entry) {
+        entry = {
+          qualityParam: qParam,
+          height: rawH,
+          maxFps: 0,
+          codecs: new Set(),
+          containers: new Set(),
+          bestSize: null,
+          hasMuxed: false,
+          hasVideoOnly: false,
+          formats: [],
+        };
+        tierMap.set(key, entry);
+      }
+      entry.formats.push(f);
+      if (rawH > entry.height) entry.height = rawH;
+      if (f.fps && f.fps > entry.maxFps) entry.maxFps = f.fps;
+      const cLbl = _normalizeCodecLabel(f.video_codec);
+      if (cLbl) entry.codecs.add(cLbl);
+      if (f.container) entry.containers.add(f.container.toLowerCase());
+      if (f.has_video && f.has_audio) entry.hasMuxed = true;
+      if (f.has_video && !f.has_audio) entry.hasVideoOnly = true;
+      if (f.size_bytes) {
+        const est = f.requires_muxing ? f.size_bytes + bestAudioSize : f.size_bytes;
+        if (!entry.bestSize || est < entry.bestSize) entry.bestSize = est;
+      }
+    }
+
+    const videoTiers = Array.from(tierMap.values()).sort((a, b) => (b.height || 0) - (a.height || 0));
+    const hasVideo = videoFormats.length > 0 || ct === "video" || isLive;
+    const hasAudio = audioFormats.length > 0 || ct === "audio" || (ct === "video" && videoFormats.length === 0);
+    const canStreamLive = isLive || canStreamVideo || canStreamAudio;
+    const liveMode = (!canStreamVideo && canStreamAudio) || ct === "audio" ? "audio" : "video";
+
+    const audioSummary = hasAudio ? {
+      maxBitrateKbps: Math.round(bestAudioFmt?.audio_bitrate_kbps || 0) || null,
+      nativeContainer: bestAudioFmt?.container ? bestAudioFmt.container.toUpperCase() : null,
+      nativeCodec: _normalizeCodecLabel(bestAudioFmt?.audio_codec),
+      nativeSize: bestAudioFmt?.size_bytes || null,
+      formatId: bestAudioFmt?.format_id || null,
+    } : null;
+
+    // Sort subtitles: manual human tracks first, then auto-generated
+    const subtitles = [...(probe.subtitles || [])].sort((a, b) => {
+      if (Boolean(a.is_auto_generated) !== Boolean(b.is_auto_generated)) {
+        return a.is_auto_generated ? 1 : -1;
+      }
+      return String(a.language || "").localeCompare(String(b.language || ""));
+    });
+
+    const chapters = probe.metadata?.chapters || [];
+    const items = probe.items || [];
+    const itemCount = probe.metadata?.item_count_total || items.length;
+    const thumbnail = probe.thumbnail?.url ? probe.thumbnail : null;
+
+    // Source image width (for smart non-upscaling resize options)
+    let sourceWidth = null;
+    if (ct === "image") {
+      sourceWidth = formats[0]?.width || thumbnail?.width || null;
+    } else if (thumbnail?.width) {
+      sourceWidth = thumbnail.width;
+    }
+
+    return {
+      ready: true,
+      ct,
+      isLive,
+      duration,
+      videoFormats,
+      audioFormats,
+      videoTiers,
+      hasVideo,
+      hasAudio,
+      hasSeparateVideoOnly: videoFormats.some((f) => f.has_video && !f.has_audio) || videoFormats.length > 0,
+      canStreamLive,
+      liveMode,
+      audioSummary,
+      subtitles,
+      chapters,
+      items,
+      itemCount,
+      thumbnail,
+      sourceWidth,
+    };
+  }
 
   function getLevel1Choices(sourceNode) {
     const p = sourceNode.probe;
-    const ct = p?.content_type || "video";
-    const hasThumb = !!p?.thumbnail?.url;
-    const fmts = p?.available_formats || [];
-    const maxH = Math.max(0, ...fmts.map((f) => f.height || 0));
-    const subCount = (p?.subtitles || []).length;
 
-    if (ct === "image" || ct === "gallery") {
+    // 1. Probe failed -> show real recovery routes instead of guessing fake video options!
+    if (sourceNode.probeError) {
+      const recovery = [
+        { key: "retry_probe", theme: "video", icon: "refresh-cw", title: "Retry Probe", sub: sourceNode.probeError.slice(0, 48), edgeLabel: "RETRY", isLeaf: true, delta: { _reprobe: true } },
+      ];
+      if (!sourceNode.usedDeepScan) {
+        recovery.push({
+          key: "deep_scan",
+          theme: "live",
+          icon: "compass",
+          title: "Deep Scan Page",
+          sub: "Dynamic Web Renderer for JS media",
+          edgeLabel: "RENDER",
+          isLeaf: true,
+          delta: { _deepScan: true },
+        });
+      }
+      return recovery;
+    }
+
+    // 2. Not probed yet -> prompt real probe
+    if (!p) {
       return [
-        { key: "image", theme: "image", icon: "image", title: ct === "gallery" ? "Gallery Images" : "Image", sub: "Original · WebP · PNG · JPEG", edgeLabel: "IMAGE", nextStep: "image_format", delta: { mode: "image" } },
+        { key: "probe_now", theme: "video", icon: "refresh-cw", title: "Inspect Source", sub: "Discover real streams, formats & tracks", edgeLabel: "PROBE", isLeaf: true, delta: { _reprobe: true } },
       ];
     }
-    if (ct === "audio") {
-      const list = [
-        { key: "watch_live", theme: "live", icon: "play", title: "Listen Live", sub: "Stream instantly · Zero download", edgeLabel: "LIVE PLAY", isLeaf: true, delta: { _livePlay: "audio" } },
-        { key: "audio", theme: "audio", icon: "headphones", title: "Audio", sub: "MP3 · M4A · Opus · FLAC · WAV", edgeLabel: "AUDIO", nextStep: "audio_format", delta: { mode: "audio" } },
+
+    const cap = analyzeProbe(p);
+    const { ct, isLive, videoTiers, hasAudio, canStreamLive, liveMode, audioSummary, subtitles, chapters, items, itemCount, thumbnail } = cap;
+
+    // 3. Direct File / Document / Archive -> ONLY Direct Download with real metadata
+    if (ct === "document" || ct === "archive" || ct === "file") {
+      const mime = p.available_formats?.[0]?.mime_type || ct.toUpperCase();
+      const sizeStr = p.size_bytes ? fmtBytes(p.size_bytes) : "Verified transfer";
+      return [
+        { key: "direct", theme: "video", icon: "file-down", title: "Direct Download", sub: `${mime} · ${sizeStr}`, edgeLabel: "FILE", isLeaf: true, detected: true, delta: { mode: "direct" } },
       ];
-      if (hasThumb) list.push({ key: "image", theme: "image", icon: "image", title: "Cover Art", sub: "Extract & convert thumbnail", edgeLabel: "COVER", nextStep: "image_format", delta: { mode: "image", _useThumbnailUrl: true } });
+    }
+
+    // 4. Single Image -> ONLY real Image format/resize tree
+    if (ct === "image") {
+      const f0 = p.available_formats?.[0];
+      const dims = f0?.width && f0?.height ? `${f0.width}×${f0.height}` : null;
+      const ext = f0?.container ? f0.container.toUpperCase() : "Original";
+      const subParts = [dims, ext, p.size_bytes ? fmtBytes(p.size_bytes) : null].filter(Boolean);
+      return [
+        { key: "image", theme: "image", icon: "image", title: "Image", sub: subParts.length ? subParts.join(" · ") : "Original · WebP · PNG · JPEG", edgeLabel: "IMAGE", detected: true, nextStep: "image_format", delta: { mode: "image" } },
+      ];
+    }
+
+    // 5. Image Gallery -> Real item count, range selection & individual picks
+    if (ct === "gallery") {
+      const list = [
+        {
+          key: "gallery",
+          theme: "image",
+          icon: "archive",
+          title: itemCount ? `Gallery (${itemCount} items)` : "Gallery Archive",
+          sub: "Select range · ZIP / TAR · WebP / PNG / Original",
+          edgeLabel: itemCount ? `${itemCount} IMGS` : "GALLERY",
+          detected: true,
+          nextStep: itemCount > 1 ? "gallery_range" : "image_format",
+          delta: { mode: "image" },
+        },
+      ];
+      if (items.length > 0) {
+        list.push({
+          key: "gallery_items",
+          theme: "image",
+          icon: "layers",
+          title: "Pick Single Image",
+          sub: `Inspect ${Math.min(items.length, 8)} detected photo(s)`,
+          edgeLabel: "BROWSE",
+          detected: true,
+          nextStep: "discovered_items",
+          delta: {},
+        });
+      }
       return list;
     }
-    if (ct === "document" || ct === "archive" || ct === "file") {
-      return [
-        { key: "direct", theme: "video", icon: "file-down", title: "Direct Download", sub: p?.size_bytes ? `${fmtBytes(p.size_bytes)} · Verified` : "Fast verified file", edgeLabel: "FILE", isLeaf: true, delta: { mode: "direct" } },
+
+    // 6. Playlist -> Playlist Video, Playlist Audio, Browse Individual Entries
+    if (ct === "playlist") {
+      const countLbl = itemCount ? `${itemCount} items` : "Playlist";
+      const list = [
+        { key: "pl_video", theme: "video", icon: "film", title: "Playlist Video", sub: `${countLbl} · Pick range & quality`, edgeLabel: "PL VIDEO", detected: true, nextStep: "playlist_range", delta: { mode: "video" } },
+        { key: "pl_audio", theme: "audio", icon: "headphones", title: "Playlist Audio", sub: `${countLbl} · MP3 · M4A · Opus · FLAC`, edgeLabel: "PL AUDIO", detected: true, nextStep: "playlist_range", delta: { mode: "audio" } },
       ];
+      if (items.length > 0) {
+        list.push({
+          key: "pl_items",
+          theme: "subtitles",
+          icon: "list",
+          title: `Browse Items (${items.length})`,
+          sub: "Spawn any single track onto the canvas",
+          edgeLabel: "ITEMS",
+          detected: true,
+          nextStep: "discovered_items",
+          delta: {},
+        });
+      }
+      if (thumbnail) {
+        list.push({ key: "image", theme: "image", icon: "image", title: "Playlist Cover", sub: "Original · WebP · PNG · JPEG", edgeLabel: "COVER", detected: true, nextStep: "image_format", delta: { mode: "image", _useThumbnailUrl: true } });
+      }
+      return list;
     }
 
-    // Video / YouTube / Social / Stream
-    const list = [
-      { key: "watch_live", theme: "live", icon: "play", title: "Watch Live", sub: "Instant network stream · VLC mode", edgeLabel: "LIVE PLAY", isLeaf: true, delta: { _livePlay: "video" } },
-      { key: "video", theme: "video", icon: "film", title: "Video", sub: maxH ? `Up to ${maxH >= 2160 ? "4K" : maxH + "p"} · Audio or Muted` : "With Audio · Muted · Trim Clip", edgeLabel: "VIDEO", nextStep: "video_track", delta: { mode: "video" } },
-      { key: "audio", theme: "audio", icon: "headphones", title: "Audio", sub: "MP3 · M4A · Opus · FLAC · WAV", edgeLabel: "AUDIO", nextStep: "audio_format", delta: { mode: "audio" } },
-      { key: "subtitles", theme: "subtitles", icon: "subtitles", title: "Subtitles", sub: subCount ? `${subCount} track(s) · SRT · VTT · .txt` : "Auto captions · SRT · VTT · .txt", edgeLabel: "CAPTIONS", nextStep: "sub_lang", delta: { mode: "video", extract_subtitles: true, subtitles_only: true } },
-    ];
-    if (hasThumb) {
-      list.push({ key: "image", theme: "image", icon: "image", title: "Thumbnail", sub: "HD Cover · WebP · PNG · JPEG", edgeLabel: "COVER", nextStep: "image_format", delta: { mode: "image", _useThumbnailUrl: true } });
+    // 7. Active Livestream -> Live playback + bounded live capture (no static trim!)
+    if (isLive) {
+      const list = [];
+      if (canStreamLive) {
+        list.push({ key: "watch_live", theme: "live", icon: "radio", title: "Watch Live", sub: "Instant HLS / stream player · Zero download", edgeLabel: "LIVE PLAY", isLeaf: true, detected: true, delta: { _livePlay: liveMode } });
+      }
+      list.push({
+        key: "record_live",
+        theme: "video",
+        icon: "film",
+        title: "Record Live Stream",
+        sub: "Capture bounded clip (1m – 30m)",
+        edgeLabel: "CAPTURE",
+        detected: true,
+        nextStep: "live_duration",
+        delta: { mode: "video", video_container: "mp4" },
+      });
+      if (hasAudio) {
+        list.push({
+          key: "record_live_audio",
+          theme: "audio",
+          icon: "headphones",
+          title: "Record Live Audio",
+          sub: "Bounded MP3 audio capture",
+          edgeLabel: "LIVE AUD",
+          nextStep: "live_duration",
+          delta: { mode: "audio", audio_format: "mp3", audio_bitrate: "192k" },
+        });
+      }
+      if (thumbnail) {
+        list.push({ key: "image", theme: "image", icon: "image", title: "Stream Thumbnail", sub: "HD Cover · WebP · PNG · JPEG", edgeLabel: "COVER", detected: true, nextStep: "image_format", delta: { mode: "image", _useThumbnailUrl: true } });
+      }
+      return list;
     }
+
+    // 8. Pure Audio -> Listen Live (if streamable), Audio Formats, Chapters, Cover Art
+    if (ct === "audio") {
+      const list = [];
+      if (canStreamLive) {
+        list.push({ key: "watch_live", theme: "live", icon: "play", title: "Listen Live", sub: "Stream instantly · Zero download", edgeLabel: "LIVE PLAY", isLeaf: true, detected: true, delta: { _livePlay: "audio" } });
+      }
+      const aBits = [
+        audioSummary?.nativeContainer,
+        audioSummary?.maxBitrateKbps ? `${audioSummary.maxBitrateKbps}kbps` : null,
+        audioSummary?.nativeSize ? fmtBytes(audioSummary.nativeSize) : null,
+      ].filter(Boolean);
+      list.push({
+        key: "audio",
+        theme: "audio",
+        icon: "headphones",
+        title: "Audio",
+        sub: aBits.length ? `Source ${aBits.join(" · ")} · Convert or Master` : "MP3 · M4A · Opus · FLAC · WAV",
+        edgeLabel: "AUDIO",
+        detected: true,
+        nextStep: "audio_format",
+        delta: { mode: "audio" },
+      });
+      if (chapters.length > 0) {
+        list.push({ key: "chapters", theme: "subtitles", icon: "bookmark", title: `Chapters (${chapters.length})`, sub: "Extract any chapter segment directly", edgeLabel: "CHAPTERS", detected: true, nextStep: "chapter_pick", delta: {} });
+      }
+      if (thumbnail) {
+        list.push({ key: "image", theme: "image", icon: "image", title: "Cover Art", sub: "Extract & convert artwork", edgeLabel: "COVER", detected: true, nextStep: "image_format", delta: { mode: "image", _useThumbnailUrl: true } });
+      }
+      return list;
+    }
+
+    // 9. Webpage / Unknown -> Surface real discovered embedded media OR Deep Scan (Dynamic Web Renderer)
+    if (ct === "webpage" || ct === "unknown") {
+      const list = [];
+      if (items.length > 0) {
+        list.push({
+          key: "web_items",
+          theme: "video",
+          icon: "layers",
+          title: `Found Media (${items.length})`,
+          sub: "Embedded video/image assets discovered on page",
+          edgeLabel: `${items.length} FOUND`,
+          detected: true,
+          nextStep: "discovered_items",
+          delta: {},
+        });
+      }
+      if (canStreamLive) {
+        list.push({ key: "watch_live", theme: "live", icon: "play", title: "Watch Live", sub: "Playable stream found on page", edgeLabel: "LIVE PLAY", isLeaf: true, detected: true, delta: { _livePlay: liveMode } });
+      }
+      if (videoTiers.length > 0) {
+        list.push({ key: "video", theme: "video", icon: "film", title: "Video", sub: `${videoTiers.length} detected quality tier(s)`, edgeLabel: "VIDEO", detected: true, nextStep: "video_quality", delta: { mode: "video" } });
+      }
+      if (thumbnail) {
+        list.push({ key: "image", theme: "image", icon: "image", title: "Page Cover Image", sub: "OpenGraph preview image", edgeLabel: "COVER", detected: true, nextStep: "image_format", delta: { mode: "image", _useThumbnailUrl: true } });
+      }
+      if (!p.engine?.used_browser_fallback && !sourceNode.usedDeepScan) {
+        list.push({
+          key: "deep_scan",
+          theme: "live",
+          icon: "compass",
+          title: "Deep Scan Page",
+          sub: "Run Dynamic Web Renderer to sniff JS media",
+          edgeLabel: "RENDER",
+          isLeaf: true,
+          delta: { _deepScan: true },
+        });
+      }
+      if (!list.length) {
+        list.push({ key: "direct", theme: "video", icon: "file-down", title: "Save Direct Resource", sub: "Download raw response file", edgeLabel: "FILE", isLeaf: true, delta: { mode: "direct" } });
+      }
+      return list;
+    }
+
+    // 10. Video (VOD) -> Strictly build ONLY the routes backed by real probe data!
+    const list = [];
+    if (canStreamLive) {
+      list.push({
+        key: "watch_live",
+        theme: "live",
+        icon: "play",
+        title: "Watch Live",
+        sub: "Instant network stream · VLC mode",
+        edgeLabel: "LIVE PLAY",
+        isLeaf: true,
+        detected: true,
+        delta: { _livePlay: liveMode },
+      });
+    }
+
+    const topTier = videoTiers[0];
+    const vidSubParts = [];
+    if (topTier?.height) vidSubParts.push(`Up to ${topTier.height >= 2160 ? "4K" : topTier.height + "p"}`);
+    if (topTier?.maxFps && topTier.maxFps >= 48) vidSubParts.push(`${Math.round(topTier.maxFps)}fps`);
+    if (videoTiers.length > 1) vidSubParts.push(`${videoTiers.length} qualities`);
+    else if (topTier?.bestSize) vidSubParts.push(fmtBytes(topTier.bestSize));
+    if (!hasAudio) vidSubParts.push("Muted source");
+
+    // If video has NO audio track and no trim needed, skip unnecessary track-split step!
+    const needsTrackChoice = hasAudio || (!isLive && (!cap.duration || cap.duration > 3));
+    list.push({
+      key: "video",
+      theme: "video",
+      icon: "film",
+      title: "Video",
+      sub: vidSubParts.length ? vidSubParts.join(" · ") : "Detected video stream",
+      edgeLabel: topTier?.height ? (topTier.height >= 2160 ? "4K VID" : `${topTier.height}p`) : "VIDEO",
+      detected: videoTiers.length > 0,
+      nextStep: needsTrackChoice ? "video_track" : "video_quality",
+      delta: { mode: "video", video_only: !hasAudio },
+    });
+
+    if (hasAudio) {
+      const aBits = [
+        audioSummary?.nativeContainer,
+        audioSummary?.maxBitrateKbps ? `${audioSummary.maxBitrateKbps}k` : null,
+      ].filter(Boolean);
+      list.push({
+        key: "audio",
+        theme: "audio",
+        icon: "headphones",
+        title: "Audio",
+        sub: aBits.length ? `Native ${aBits.join(" ")} · MP3 · M4A · Opus · FLAC` : "MP3 · M4A · Opus · FLAC · WAV",
+        edgeLabel: "AUDIO",
+        detected: cap.audioFormats.length > 0,
+        nextStep: "audio_format",
+        delta: { mode: "audio" },
+      });
+    }
+
+    if (chapters.length > 0) {
+      list.push({
+        key: "chapters",
+        theme: "subtitles",
+        icon: "bookmark",
+        title: `Chapters (${chapters.length})`,
+        sub: "Clip any real chapter as Video or Audio",
+        edgeLabel: "CHAPTERS",
+        detected: true,
+        nextStep: "chapter_pick",
+        delta: {},
+      });
+    }
+
+    if (subtitles.length > 0) {
+      const manualCount = subtitles.filter((s) => !s.is_auto_generated).length;
+      const subSummary = manualCount
+        ? `${manualCount} manual · ${subtitles.length} total track(s)`
+        : `${subtitles.length} auto caption track(s)`;
+      list.push({
+        key: "subtitles",
+        theme: "subtitles",
+        icon: "subtitles",
+        title: `Subtitles (${subtitles.length})`,
+        sub: subSummary,
+        edgeLabel: "CAPTIONS",
+        detected: true,
+        nextStep: "sub_lang",
+        delta: { mode: "video", extract_subtitles: true, subtitles_only: true },
+      });
+    }
+
+    if (thumbnail) {
+      const tDims = thumbnail.width && thumbnail.height ? `${thumbnail.width}×${thumbnail.height} · ` : "";
+      list.push({
+        key: "image",
+        theme: "image",
+        icon: "image",
+        title: "Thumbnail",
+        sub: `${tDims}Original · WebP · PNG · JPEG`,
+        edgeLabel: "COVER",
+        detected: true,
+        nextStep: "image_format",
+        delta: { mode: "image", _useThumbnailUrl: true },
+      });
+    }
+
     return list;
   }
 
   function getNextChoicesFor(choiceNode) {
     const src = state.nodes.get(choiceNode.rootSourceId);
     const probe = src?.probe;
-    const fmts = probe?.available_formats || [];
-    const availH = new Set(fmts.map((f) => f.height).filter(Boolean));
+    const cap = analyzeProbe(probe);
     const step = choiceNode.nextStep;
     const acc = choiceNode.accumulated || {};
 
     if (step === "video_track") {
-      return [
-        { key: "with_audio", theme: "video", icon: "volume-2", title: "Video + Audio", sub: "Full video with stereo sound", edgeLabel: "WITH AUDIO", nextStep: "video_quality", delta: { video_only: false } },
-        { key: "video_only", theme: "video", icon: "volume-x", title: "Video Only", sub: "Muted visual track for B-roll", edgeLabel: "MUTED", nextStep: "video_quality", delta: { video_only: true } },
-        { key: "trim_video", theme: "video", icon: "scissors", title: "Trim Clip Range", sub: "Cut exact start → end seconds", edgeLabel: "CLIP", inputKind: "trim", isLeaf: true, delta: { video_only: false, video_quality: "1080", video_container: "mp4", video_codec: "h264" } },
-      ];
+      const tracks = [];
+      if (cap.hasAudio) {
+        tracks.push({ key: "with_audio", theme: "video", icon: "volume-2", title: "Video + Audio", sub: "Full video with sound track", edgeLabel: "WITH AUDIO", detected: true, nextStep: "video_quality", delta: { video_only: false } });
+      }
+      if (cap.hasSeparateVideoOnly || !cap.hasAudio) {
+        tracks.push({ key: "video_only", theme: "video", icon: "volume-x", title: "Video Only", sub: "Muted visual track for B-roll", edgeLabel: "MUTED", nextStep: "video_quality", delta: { video_only: true } });
+      }
+      if (!cap.isLive && (!cap.duration || cap.duration > 3)) {
+        const bestClipQ = cap.videoTiers.find((t) => t.height <= 1080)?.qualityParam || cap.videoTiers[0]?.qualityParam || "best";
+        tracks.push({
+          key: "trim_video",
+          theme: "video",
+          icon: "scissors",
+          title: "Trim Clip Range",
+          sub: cap.duration ? `Cut exact segment (0:00 – ${fmtDuration(cap.duration)})` : "Cut exact start → end seconds",
+          edgeLabel: "CLIP",
+          inputKind: "trim",
+          isLeaf: true,
+          delta: { video_only: !cap.hasAudio, video_quality: bestClipQ, video_container: "mp4", video_codec: "h264" },
+        });
+      }
+      return tracks;
     }
 
     if (step === "video_quality") {
+      // Dynamically build ONLY the resolutions actually present in this media!
+      if (cap.videoTiers.length > 0) {
+        return cap.videoTiers.slice(0, 6).map((t) => {
+          const details = [];
+          if (t.maxFps && t.maxFps >= 48) details.push(`${Math.round(t.maxFps)}fps`);
+          if (t.codecs.size) details.push(Array.from(t.codecs).slice(0, 2).join(" / "));
+          if (t.bestSize) details.push(`~${fmtBytes(t.bestSize)}`);
+          const icon = t.height >= 2160 ? "zap" : t.height >= 1080 ? "monitor" : t.height >= 720 ? "tv" : "smartphone";
+          const lbl = t.height ? _resolutionDisplayTitle(t.height) : "Best Available";
+          const edgeLbl = t.height >= 2160 ? "4K" : t.height >= 1440 ? "2K" : t.height ? `${t.height}p` : "BEST";
+          return {
+            key: `q_${t.qualityParam}_${t.height || "best"}`,
+            theme: "video",
+            icon,
+            title: lbl,
+            sub: details.length ? details.join(" · ") : "Detected stream",
+            edgeLabel: edgeLbl,
+            detected: true,
+            nextStep: "video_container",
+            delta: { video_quality: t.qualityParam },
+          };
+        });
+      }
+      // Fallback only when probe returned zero format details (e.g., playlist)
       return [
-        { key: "q_2160", theme: "video", icon: "zap", title: "4K · 2160p", sub: "Ultra-HD master stream", edgeLabel: "4K", pro: true, detected: availH.has(2160), nextStep: "video_container", delta: { video_quality: "2160" } },
-        { key: "q_1080", theme: "video", icon: "monitor", title: "1080p · Full HD", sub: "Crisp standard high-def", edgeLabel: "1080p", detected: availH.has(1080), nextStep: "video_container", delta: { video_quality: "1080" } },
-        { key: "q_720", theme: "video", icon: "tv", title: "720p · HD", sub: "Fast download · lighter file", edgeLabel: "720p", detected: availH.has(720), nextStep: "video_container", delta: { video_quality: "720" } },
-        { key: "q_480", theme: "video", icon: "smartphone", title: "480p · Compact", sub: "Mobile friendly & quick", edgeLabel: "480p", detected: availH.has(480), nextStep: "video_container", delta: { video_quality: "480" } },
+        { key: "q_best", theme: "video", icon: "monitor", title: "Best Available", sub: "Highest detected stream up to 1080p", edgeLabel: "BEST", nextStep: "video_container", delta: { video_quality: "1080" } },
+        { key: "q_720", theme: "video", icon: "tv", title: "720p · HD", sub: "Balanced quality & size", edgeLabel: "720p", nextStep: "video_container", delta: { video_quality: "720" } },
+        { key: "q_2160", theme: "video", icon: "zap", title: "4K · 2160p", sub: "Ultra-HD if available", edgeLabel: "4K", nextStep: "video_container", delta: { video_quality: "2160" } },
       ];
     }
 
     if (step === "video_container") {
-      const qLbl = acc.video_quality === "2160" ? "4K" : `${acc.video_quality || "1080"}p`;
+      const qVal = acc.video_quality || "best";
+      const tier = cap.videoTiers.find((t) => t.qualityParam === qVal) || cap.videoTiers[0];
+      const qLbl = qVal === "2160" ? "4K" : qVal === "1440" ? "2K" : qVal === "best" ? "Best" : `${qVal}p`;
       const mLbl = acc.video_only ? "Muted" : "With Audio";
-      return [
-        { key: "c_mp4", theme: "video", icon: "download", title: "MP4 · H.264", sub: `${qLbl} ${mLbl} · Plays everywhere`, edgeLabel: "MP4", isLeaf: true, delta: { video_container: "mp4", video_codec: "h264", remux_faststart: true } },
-        { key: "c_mkv", theme: "video", icon: "download", title: "MKV · Best Codec", sub: `${qLbl} ${mLbl} · Zero re-encode`, edgeLabel: "MKV", isLeaf: true, delta: { video_container: "mkv", video_codec: "auto" } },
-        { key: "c_webm", theme: "video", icon: "download", title: "WebM · VP9/AV1", sub: `${qLbl} ${mLbl} · Smallest size`, edgeLabel: "WEBM", isLeaf: true, delta: { video_container: "webm", video_codec: "vp9" } },
-        { key: "c_subs", theme: "video", icon: "subtitles", title: "MP4 + Embedded Subs", sub: `${qLbl} · Includes captions`, edgeLabel: "MP4+SUBS", isLeaf: true, delta: { video_container: "mp4", video_codec: "h264", extract_subtitles: true, embed_subtitles: true } },
+      const hasH264 = tier?.codecs?.has("H.264");
+      const hasWebmCodec = tier?.codecs?.has("VP9") || tier?.codecs?.has("AV1") || tier?.containers?.has("webm");
+
+      const containers = [
+        {
+          key: "c_mp4",
+          theme: "video",
+          icon: "download",
+          title: "MP4 · H.264",
+          sub: `${qLbl} ${mLbl} · ${hasH264 ? "Native H.264 remux" : "Universal compatibility"}`,
+          edgeLabel: "MP4",
+          detected: Boolean(hasH264 || tier?.containers?.has("mp4")),
+          isLeaf: true,
+          delta: { video_container: "mp4", video_codec: "h264", remux_faststart: true },
+        },
+        {
+          key: "c_mkv",
+          theme: "video",
+          icon: "download",
+          title: "MKV · Native Best",
+          sub: `${qLbl} ${mLbl} · Zero re-encode (${tier?.codecs?.size ? Array.from(tier.codecs)[0] : "source codec"})`,
+          edgeLabel: "MKV",
+          isLeaf: true,
+          delta: { video_container: "mkv", video_codec: "auto" },
+        },
       ];
+      if (hasWebmCodec || !tier) {
+        containers.push({
+          key: "c_webm",
+          theme: "video",
+          icon: "download",
+          title: tier?.codecs?.has("AV1") ? "WebM · AV1 / VP9" : "WebM · VP9",
+          sub: `${qLbl} ${mLbl} · Smallest native stream`,
+          edgeLabel: "WEBM",
+          detected: Boolean(hasWebmCodec),
+          isLeaf: true,
+          delta: { video_container: "webm", video_codec: tier?.codecs?.has("AV1") ? "av1" : "vp9" },
+        });
+      }
+      if (cap.subtitles.length > 0 && !acc.video_only) {
+        const prefSub = cap.subtitles.find((s) => !s.is_auto_generated) || cap.subtitles[0];
+        containers.push({
+          key: "c_subs",
+          theme: "video",
+          icon: "subtitles",
+          title: "MP4 + Embedded Subs",
+          sub: `${qLbl} · Muxes ${(prefSub.language || "en").toUpperCase()} captions`,
+          edgeLabel: "MP4+SUBS",
+          detected: true,
+          isLeaf: true,
+          delta: {
+            video_container: "mp4",
+            video_codec: "h264",
+            extract_subtitles: true,
+            embed_subtitles: true,
+            subtitle_languages: [prefSub.language || "en"],
+            subtitle_mode: prefSub.is_auto_generated ? "include_auto" : "manual_only",
+          },
+        });
+      }
+      return containers;
     }
 
     if (step === "audio_format") {
-      return [
+      const list = [];
+      if (cap.audioSummary?.nativeContainer) {
+        const natDesc = [
+          cap.audioSummary.nativeCodec || cap.audioSummary.nativeContainer,
+          cap.audioSummary.maxBitrateKbps ? `${cap.audioSummary.maxBitrateKbps}kbps` : null,
+          cap.audioSummary.nativeSize ? fmtBytes(cap.audioSummary.nativeSize) : null,
+        ].filter(Boolean).join(" · ");
+        list.push({
+          key: "af_native",
+          theme: "audio",
+          icon: "zap",
+          title: `Native ${cap.audioSummary.nativeContainer}`,
+          sub: `Zero re-encode · ${natDesc}`,
+          edgeLabel: "NATIVE",
+          detected: true,
+          isLeaf: true,
+          delta: { audio_format: "best", audio_bitrate: "auto", embed_metadata: true },
+        });
+      }
+      list.push(
         { key: "af_mp3", theme: "audio", icon: "music", title: "MP3", sub: "Universal stereo compatibility", edgeLabel: "MP3", nextStep: "audio_quality", delta: { audio_format: "mp3" } },
-        { key: "af_m4a", theme: "audio", icon: "disc-3", title: "M4A · AAC", sub: "Native Apple & mobile audio", edgeLabel: "M4A", nextStep: "audio_quality", delta: { audio_format: "m4a" } },
-        { key: "af_opus", theme: "audio", icon: "sliders-horizontal", title: "Opus", sub: "Ultra-clean web compression", edgeLabel: "OPUS", nextStep: "audio_quality", delta: { audio_format: "opus" } },
-        { key: "af_flac", theme: "audio", icon: "gem", title: "FLAC · Lossless", sub: "Bit-perfect studio master", edgeLabel: "FLAC", pro: true, nextStep: "audio_lossless", delta: { audio_format: "flac", audio_bitrate: "auto" } },
-        { key: "af_wav", theme: "audio", icon: "audio-waveform", title: "WAV · Raw PCM", sub: "Uncompressed DAW edit track", edgeLabel: "WAV", pro: true, nextStep: "audio_lossless", delta: { audio_format: "wav", audio_bitrate: "auto" } },
-      ];
+        { key: "af_m4a", theme: "audio", icon: "disc-3", title: "M4A · AAC", sub: "Apple & mobile friendly", edgeLabel: "M4A", nextStep: "audio_quality", delta: { audio_format: "m4a" } },
+        { key: "af_opus", theme: "audio", icon: "sliders-horizontal", title: "Opus", sub: "High-efficiency web audio", edgeLabel: "OPUS", nextStep: "audio_quality", delta: { audio_format: "opus" } },
+        { key: "af_flac", theme: "audio", icon: "gem", title: "FLAC · Lossless", sub: "Bit-perfect studio master", edgeLabel: "FLAC", nextStep: "audio_lossless", delta: { audio_format: "flac", audio_bitrate: "auto" } },
+        { key: "af_wav", theme: "audio", icon: "audio-waveform", title: "WAV · Raw PCM", sub: "Uncompressed DAW track", edgeLabel: "WAV", nextStep: "audio_lossless", delta: { audio_format: "wav", audio_bitrate: "auto" } },
+      );
+      return list;
     }
 
     if (step === "audio_quality") {
       const fmt = (acc.audio_format || "mp3").toUpperCase();
-      return [
-        { key: "aq_320n", theme: "audio", icon: "audio-waveform", title: `320k · Loudnorm`, sub: `${fmt} · EBU R128 leveled volume`, edgeLabel: "320K+NORM", isLeaf: true, delta: { audio_bitrate: "320k", normalize_audio: true, embed_metadata: true } },
-        { key: "aq_320", theme: "audio", icon: "download", title: `320k · Original`, sub: `${fmt} · Maximum bitrate stereo`, edgeLabel: "320K", isLeaf: true, delta: { audio_bitrate: "320k", normalize_audio: false, embed_metadata: true } },
-        { key: "aq_192", theme: "audio", icon: "download", title: `192k · Balanced`, sub: `${fmt} · Fast & compact`, edgeLabel: "192K", isLeaf: true, delta: { audio_bitrate: "192k", normalize_audio: false, embed_metadata: true } },
-        { key: "aq_trim", theme: "audio", icon: "scissors", title: "Trim Audio Range", sub: `Cut exact clip in ${fmt} 320k`, edgeLabel: "TRIM", inputKind: "trim", isLeaf: true, delta: { audio_bitrate: "320k", normalize_audio: true } },
+      const list = [
+        { key: "aq_320n", theme: "audio", icon: "audio-waveform", title: "320k · Loudnorm", sub: `${fmt} · EBU R128 leveled volume`, edgeLabel: "320K+NORM", isLeaf: true, delta: { audio_bitrate: "320k", normalize_audio: true, embed_metadata: true } },
+        { key: "aq_320", theme: "audio", icon: "download", title: "320k · Original", sub: `${fmt} · Maximum bitrate stereo`, edgeLabel: "320K", isLeaf: true, delta: { audio_bitrate: "320k", normalize_audio: false, embed_metadata: true } },
+        { key: "aq_192", theme: "audio", icon: "download", title: "192k · Balanced", sub: `${fmt} · Fast & compact`, edgeLabel: "192K", isLeaf: true, delta: { audio_bitrate: "192k", normalize_audio: false, embed_metadata: true } },
       ];
+      if (!cap.isLive && cap.ct !== "playlist" && (!cap.duration || cap.duration > 3)) {
+        list.push({
+          key: "aq_trim",
+          theme: "audio",
+          icon: "scissors",
+          title: "Trim Audio Range",
+          sub: cap.duration ? `Cut clip in ${fmt} (0:00 – ${fmtDuration(cap.duration)})` : `Cut exact clip in ${fmt} 320k`,
+          edgeLabel: "TRIM",
+          inputKind: "trim",
+          isLeaf: true,
+          delta: { audio_bitrate: "320k", normalize_audio: true },
+        });
+      }
+      return list;
     }
 
     if (step === "audio_lossless") {
@@ -645,25 +1298,52 @@
       ];
     }
 
+    if (step === "chapter_pick") {
+      return cap.chapters.slice(0, 8).map((ch, idx) => ({
+        key: `ch_${idx}`,
+        theme: "subtitles",
+        icon: "bookmark",
+        title: ch.title.slice(0, 28),
+        sub: `${fmtDuration(ch.start_seconds)} → ${fmtDuration(ch.end_seconds)} (${fmtDuration(Math.max(1, ch.end_seconds - ch.start_seconds))})`,
+        edgeLabel: fmtDuration(ch.start_seconds),
+        detected: true,
+        nextStep: "chapter_export",
+        delta: {
+          clip_start_seconds: ch.start_seconds,
+          clip_end_seconds: ch.end_seconds,
+          custom_filename_prefix: ch.title.replace(/[^a-zA-Z0-9_-]+/g, "_").slice(0, 28),
+        },
+      }));
+    }
+
+    if (step === "chapter_export") {
+      const bestClipQ = cap.videoTiers.find((t) => t.height <= 1080)?.qualityParam || "best";
+      const list = [];
+      if (cap.hasVideo) {
+        list.push({ key: "ch_mp4", theme: "video", icon: "film", title: "Extract Chapter MP4", sub: "1080p H.264 video clip", edgeLabel: "MP4", isLeaf: true, delta: { mode: "video", video_quality: bestClipQ, video_container: "mp4", video_codec: "h264", remux_faststart: true } });
+      }
+      if (cap.hasAudio) {
+        list.push({ key: "ch_mp3", theme: "audio", icon: "headphones", title: "Extract Chapter MP3", sub: "320k loudness-normalized audio", edgeLabel: "MP3", isLeaf: true, delta: { mode: "audio", audio_format: "mp3", audio_bitrate: "320k", normalize_audio: true } });
+      }
+      return list;
+    }
+
     if (step === "sub_lang") {
-      const detected = (probe?.subtitles || []).slice(0, 3);
-      const langNodes = detected.length
-        ? detected.map((s) => ({
-            key: `lang_${s.language}`,
-            theme: "subtitles",
-            icon: "globe",
-            title: `${s.language.toUpperCase()} Captions`,
-            sub: s.is_auto_generated ? "Auto-generated track" : "Manual human track",
-            edgeLabel: s.language.toUpperCase(),
-            detected: true,
-            nextStep: "sub_format",
-            delta: { subtitle_languages: [s.language], subtitle_mode: "include_auto" },
-          }))
-        : [
-            { key: "lang_en", theme: "subtitles", icon: "globe", title: "English (EN)", sub: "Manual or auto captions", edgeLabel: "EN", nextStep: "sub_format", delta: { subtitle_languages: ["en"], subtitle_mode: "include_auto" } },
-            { key: "lang_hi", theme: "subtitles", icon: "globe", title: "Hindi (HI)", sub: "Manual or auto captions", edgeLabel: "HI", nextStep: "sub_format", delta: { subtitle_languages: ["hi"], subtitle_mode: "include_auto" } },
-          ];
-      return langNodes;
+      // Strictly real detected caption tracks!
+      return cap.subtitles.slice(0, 6).map((s) => ({
+        key: `lang_${s.language}_${s.is_auto_generated ? "auto" : "man"}`,
+        theme: "subtitles",
+        icon: "globe",
+        title: s.name ? `${s.name} (${s.language.toUpperCase()})` : `${s.language.toUpperCase()} Captions`,
+        sub: s.is_auto_generated ? "Auto-generated track" : "Manual human track",
+        edgeLabel: s.language.toUpperCase(),
+        detected: true,
+        nextStep: "sub_format",
+        delta: {
+          subtitle_languages: [s.language],
+          subtitle_mode: s.is_auto_generated ? "include_auto" : "manual_only",
+        },
+      }));
     }
 
     if (step === "sub_format") {
@@ -674,9 +1354,63 @@
       ];
     }
 
+    if (step === "live_duration") {
+      return [
+        { key: "ld_60", theme: "live", icon: "radio", title: "1 Minute Clip", sub: "Capture next 60s of live stream", edgeLabel: "1 MIN", isLeaf: true, delta: { livestream_max_duration: 60 } },
+        { key: "ld_300", theme: "live", icon: "radio", title: "5 Minutes", sub: "Capture next 5 min segment", edgeLabel: "5 MIN", isLeaf: true, delta: { livestream_max_duration: 300 } },
+        { key: "ld_900", theme: "live", icon: "radio", title: "15 Minutes", sub: "Extended broadcast capture", edgeLabel: "15 MIN", isLeaf: true, delta: { livestream_max_duration: 900 } },
+        { key: "ld_1800", theme: "live", icon: "radio", title: "30 Minutes Max", sub: "Full bounded broadcast capture", edgeLabel: "30 MIN", isLeaf: true, delta: { livestream_max_duration: 1800 } },
+      ];
+    }
+
+    if (step === "playlist_range") {
+      const nextAfter = acc.mode === "audio" ? "audio_format" : "video_quality";
+      const n = cap.itemCount || 10;
+      const list = [];
+      if (n <= 20) {
+        list.push({ key: "pr_all", theme: choiceNode.theme, icon: "list", title: `All ${n} Items`, sub: "Download full playlist", edgeLabel: `1–${n}`, detected: true, nextStep: nextAfter, delta: { playlist_items: `1-${n}` } });
+      }
+      if (n > 5) {
+        list.push({ key: "pr_5", theme: choiceNode.theme, icon: "list", title: "First 5 Items", sub: "Items 1 through 5", edgeLabel: "1–5", nextStep: nextAfter, delta: { playlist_items: "1-5" } });
+      }
+      if (n > 10) {
+        list.push({ key: "pr_10", theme: choiceNode.theme, icon: "list", title: "First 10 Items", sub: "Items 1 through 10", edgeLabel: "1–10", nextStep: nextAfter, delta: { playlist_items: "1-10" } });
+      }
+      list.push({ key: "pr_custom", theme: choiceNode.theme, icon: "sliders-horizontal", title: "Custom Selection", sub: "e.g. 1-3 or 1,4,7", edgeLabel: "RANGE", inputKind: "playlist_range", isLeaf: true, delta: acc.mode === "audio" ? { audio_format: "mp3", audio_bitrate: "320k" } : { video_quality: "1080", video_container: "mp4" } });
+      return list;
+    }
+
+    if (step === "gallery_range") {
+      const n = cap.itemCount || 10;
+      const list = [
+        { key: "gr_all", theme: "image", icon: "archive", title: `All ${Math.min(n, 100)} Images`, sub: "Pack entire gallery into archive", edgeLabel: `1–${Math.min(n, 100)}`, detected: true, nextStep: "image_format", delta: { gallery_range_start: 1, gallery_range_end: Math.min(n, 100) } },
+      ];
+      if (n > 10) {
+        list.push({ key: "gr_10", theme: "image", icon: "layers", title: "First 10 Images", sub: "Quick subset archive", edgeLabel: "1–10", nextStep: "image_format", delta: { gallery_range_start: 1, gallery_range_end: 10 } });
+      }
+      if (n > 25) {
+        list.push({ key: "gr_25", theme: "image", icon: "layers", title: "First 25 Images", sub: "Medium gallery batch", edgeLabel: "1–25", nextStep: "image_format", delta: { gallery_range_start: 1, gallery_range_end: 25 } });
+      }
+      return list;
+    }
+
+    if (step === "discovered_items") {
+      return cap.items.slice(0, 8).map((item, idx) => ({
+        key: `item_${item.index || idx}`,
+        theme: item.content_type === "image" ? "image" : item.content_type === "audio" ? "audio" : "video",
+        icon: item.content_type === "image" ? "image" : item.content_type === "audio" ? "headphones" : "external-link",
+        title: (item.title || `Item #${item.index || idx + 1}`).slice(0, 28),
+        sub: [item.content_type?.toUpperCase(), item.duration_seconds ? fmtDuration(item.duration_seconds) : null, item.width && item.height ? `${item.width}×${item.height}` : null].filter(Boolean).join(" · ") || "Spawn onto canvas",
+        edgeLabel: `#${item.index || idx + 1}`,
+        detected: true,
+        isLeaf: true,
+        delta: { _spawnUrl: item.direct_media_url || item.url },
+      }));
+    }
+
     if (step === "image_format") {
       return [
-        { key: "if_orig", theme: "image", icon: "download", title: "Original HD", sub: "Exact source resolution", edgeLabel: "ORIGINAL", isLeaf: true, delta: { image_format: "original" } },
+        { key: "if_orig", theme: "image", icon: "download", title: "Original HD", sub: "Exact source resolution", edgeLabel: "ORIGINAL", detected: true, isLeaf: true, delta: { image_format: "original" } },
         { key: "if_webp", theme: "image", icon: "zap", title: "WebP", sub: "Ultra-fast modern web image", edgeLabel: "WEBP", nextStep: "image_size", delta: { image_format: "webp", image_quality: 90 } },
         { key: "if_png", theme: "image", icon: "layers", title: "PNG · Lossless", sub: "Crisp lossless pixels", edgeLabel: "PNG", nextStep: "image_size", delta: { image_format: "png", image_quality: 95 } },
         { key: "if_jpg", theme: "image", icon: "camera", title: "JPEG", sub: "Universal photo format", edgeLabel: "JPEG", nextStep: "image_size", delta: { image_format: "jpg", image_quality: 90 } },
@@ -685,12 +1419,22 @@
 
     if (step === "image_size") {
       const fmt = (acc.image_format || "webp").toUpperCase();
-      return [
-        { key: "is_orig", theme: "image", icon: "download", title: `${fmt} · Full Size`, sub: "Keep original dimensions", edgeLabel: "FULL", isLeaf: true, delta: { image_max_width: null } },
-        { key: "is_1920", theme: "image", icon: "monitor", title: `${fmt} · 1920px`, sub: "Full HD width resize", edgeLabel: "1920px", isLeaf: true, delta: { image_max_width: 1920 } },
-        { key: "is_1280", theme: "image", icon: "tv", title: `${fmt} · 1280px`, sub: "Web / Thumbnail HD size", edgeLabel: "1280px", isLeaf: true, delta: { image_max_width: 1280 } },
-        { key: "is_800", theme: "image", icon: "smartphone", title: `${fmt} · 800px`, sub: "Compact social preview", edgeLabel: "800px", isLeaf: true, delta: { image_max_width: 800 } },
+      const maxW = cap.sourceWidth;
+      const list = [
+        { key: "is_orig", theme: "image", icon: "download", title: `${fmt} · Full Size`, sub: maxW ? `Keep original ${maxW}px width` : "Keep original dimensions", edgeLabel: "FULL", detected: true, isLeaf: true, delta: { image_max_width: null } },
       ];
+      // Never offer upscaling wider than the real detected image width!
+      const widths = [
+        { w: 1920, icon: "monitor", sub: "Full HD width resize" },
+        { w: 1280, icon: "tv", sub: "Web / Thumbnail HD size" },
+        { w: 800, icon: "smartphone", sub: "Compact social preview" },
+      ];
+      for (const opt of widths) {
+        if (!maxW || opt.w < maxW) {
+          list.push({ key: `is_${opt.w}`, theme: "image", icon: opt.icon, title: `${fmt} · ${opt.w}px`, sub: opt.sub, edgeLabel: `${opt.w}px`, isLeaf: true, delta: { image_max_width: opt.w } });
+        }
+      }
+      return list;
     }
 
     return [];
@@ -744,6 +1488,8 @@
         spawned.push(state.nodes.get(id));
         return;
       }
+      const srcDur = state.nodes.get(rootId)?.probe?.duration_seconds;
+      const defaultPresets = buildTrimPresets(srcDur);
       const node = {
         id,
         type: "choice",
@@ -754,7 +1500,6 @@
         icon: spec.icon,
         title: spec.title,
         sub: spec.sub,
-        pro: !!spec.pro,
         detected: !!spec.detected,
         isLeaf: !!spec.isLeaf,
         nextStep: spec.nextStep || null,
@@ -763,8 +1508,9 @@
         expanded: false,
         demo: !!parentNode.demo,
         animDelayMs: idx * 32,
-        clipStart: "0:30",
-        clipEnd: "0:45",
+        clipStart: defaultPresets[0]?.start || "0:00",
+        clipEnd: defaultPresets[0]?.end || "0:15",
+        playlistRangeVal: "1-5",
         x: parentNode.x + 360,
         y: parentNode.y,
       };
@@ -790,26 +1536,38 @@
   }
 
   function refreshActiveLineageHighlight(activeNodeId) {
-    // Walk upward from activeNodeId to root Source to light up the chosen chain!
+    // Walk upward from activeNodeId to root Source to light up the chosen chain & subtly dim unselected siblings!
     const litNodes = new Set();
     const litEdges = new Set();
+    const litParents = new Set();
     let cur = activeNodeId;
     while (cur) {
       litNodes.add(cur);
       const inEdge = state.edges.find((e) => e.to === cur && state.nodes.get(e.from)?.type !== "note");
       if (!inEdge) break;
       litEdges.add(inEdge.id);
+      litParents.add(inEdge.from);
       cur = inEdge.from;
     }
+    const activeNode = state.nodes.get(activeNodeId);
+    const rootId = activeNode?.type === "source" ? activeNode.id : activeNode?.rootSourceId;
     for (const n of state.nodes.values()) {
-      if (n.type === "choice") {
+      if (n.type === "choice" && (!rootId || n.rootSourceId === rootId)) {
         const el = document.querySelector(`[data-node-id="${CSS.escape(n.id)}"]`);
-        if (el) el.classList.toggle("path-lit", litNodes.has(n.id));
+        if (el) {
+          const isLit = litNodes.has(n.id);
+          const siblingChosen = litParents.has(n.parentId) && !isLit;
+          el.classList.toggle("path-lit", isLit);
+          el.classList.toggle("path-dimmed", siblingChosen);
+        }
       }
     }
     for (const e of state.edges) {
       const target = state.nodes.get(e.to);
-      if (target?.type === "choice") e.active = litEdges.has(e.id);
+      if (target?.type === "choice" && (!rootId || target.rootSourceId === rootId)) {
+        e.active = litEdges.has(e.id);
+        e.dimmed = litParents.has(e.from) && !e.active;
+      }
     }
     renderThreads();
   }
@@ -874,11 +1632,7 @@
 
   /* ---------- Click Handler for Cascading Choice Nodes ---------- */
   function onChoiceClicked(choiceNode) {
-    if (choiceNode.pro && !isPro()) {
-      return openUpgradeModal(`${choiceNode.title} is a Pro feature (Guest includes up to 1080p & MP3 320k).`);
-    }
-
-    // If leaf node -> execute real download / AI Agent!
+    // If leaf node -> execute real download!
     if (choiceNode.isLeaf && !choiceNode.inputKind) {
       return executeChoiceLeaf(choiceNode);
     }
@@ -913,15 +1667,37 @@
       return launchLivePlayerFromParent(choiceNode, src.url, acc._livePlay);
     }
 
+    // Handle Dynamic Recovery / Re-probe / Deep Scan / Spawn Discovered Item leaves!
+    if (acc._reprobe) {
+      return probeAndBloomLevel1(src, { bypassCache: true });
+    }
+    if (acc._deepScan) {
+      return probeAndBloomLevel1(src, { allowBrowserFallback: true, bypassCache: true });
+    }
+    if (acc._spawnUrl) {
+      const pos = pickChildPosition(choiceNode, 0);
+      const childSrc = spawnSourceWithPossibilities(acc._spawnUrl, pos, true);
+      if (childSrc) addEdge(choiceNode.id, childSrc.id, choiceNode.theme, false, "SPAWNED");
+      return;
+    }
+
     // Handle inline Trim Clip leaf
     if (choiceNode.inputKind === "trim") {
       acc.clip_start_seconds = parseTime(choiceNode.clipStart);
       acc.clip_end_seconds = parseTime(choiceNode.clipEnd);
     }
+    if (choiceNode.inputKind === "playlist_range") {
+      const rVal = (choiceNode.playlistRangeVal || "").trim();
+      if (!rVal) return toast("Enter playlist items (e.g. 1-5 or 1,3,5)", "err");
+      acc.playlist_items = rVal;
+    }
 
     // Build clean DownloadRequest payload
     const targetUrl = acc._useThumbnailUrl && src?.probe?.thumbnail?.url ? src.probe.thumbnail.url : src.url;
     delete acc._useThumbnailUrl;
+    delete acc._reprobe;
+    delete acc._deepScan;
+    delete acc._spawnUrl;
 
     const payload = { url: targetUrl, ...acc };
     if (targetUrl === src?.probe?.thumbnail?.url && src?.title) {
@@ -937,17 +1713,11 @@
         body: JSON.stringify(payload),
       });
       const job = await res.json();
-      if (res.status === 402) {
-        openUpgradeModal(`${job.detail?.message} ${job.detail?.upgrade_hint || ""}`.trim());
-        osc.set(false, "UPGRADE REQUIRED");
-        return;
-      }
       if (!res.ok) {
         toast(job.detail?.message || "Extraction rejected", "err");
         osc.set(false, "CANVAS READY");
         return;
       }
-      refreshTier();
       const resNode = upsertResultNodeForJob(job, choiceNode, null, choiceNode.theme);
       layoutTreeFromRoot(choiceNode.rootSourceId);
       gravity.shockAt(resNode.x + 180, resNode.y + 80);
@@ -1011,12 +1781,12 @@
         thumbnail: { url: v.thumbnail },
         engine: { engine_used: "neon-sync" },
         available_formats: [
-          { format_id: "137", resolution: "1920x1080", height: 1080, fps: 30, container: "mp4", video_codec: "avc1" },
-          { format_id: "136", resolution: "1280x720", height: 720, fps: 30, container: "mp4", video_codec: "avc1" },
-          { format_id: "135", resolution: "854x480", height: 480, fps: 30, container: "mp4", video_codec: "avc1" },
-          { format_id: "140", resolution: "audio only", container: "m4a", audio_codec: "mp4a" },
+          { format_id: "137", resolution: "1920x1080", height: 1080, fps: 30, container: "mp4", mime_type: "video/mp4", video_codec: "avc1", has_video: true, has_audio: false, requires_muxing: true, size_bytes: 34200000 },
+          { format_id: "22", resolution: "1280x720", height: 720, fps: 30, container: "mp4", mime_type: "video/mp4", video_codec: "avc1", audio_codec: "mp4a", has_video: true, has_audio: true, direct_media_url: v.url, protocol: "https", size_bytes: 18900000 },
+          { format_id: "135", resolution: "854x480", height: 480, fps: 30, container: "webm", mime_type: "video/webm", video_codec: "vp09", has_video: true, has_audio: false, requires_muxing: true, size_bytes: 9400000 },
+          { format_id: "140", resolution: "audio only", container: "m4a", mime_type: "audio/mp4", audio_codec: "mp4a", audio_bitrate_kbps: 128, has_video: false, has_audio: true, size_bytes: 4200000 },
         ],
-        subtitles: [{ language: "hi", is_auto_generated: true }, { language: "en", is_auto_generated: true }],
+        subtitles: [{ language: "hi", name: "Hindi", is_auto_generated: true }, { language: "en", name: "English", is_auto_generated: true }],
       },
     };
 
@@ -1043,6 +1813,30 @@
   /* ---------- Spatial Graph Core: Threads & Layout ---------- */
   function syncWorkspaceMeta() {
     drawMinimap();
+    const emptyHud = $("empty-canvas-hud");
+    if (emptyHud) emptyHud.classList.toggle("hidden", state.nodes.size > 0);
+  }
+
+  function clearEntireCanvas() {
+    for (const n of state.nodes.values()) {
+      if (n.type === "player" && n.hls) {
+        try { n.hls.destroy(); } catch (_) {}
+      }
+    }
+    state.nodes.clear();
+    state.edges = [];
+    state.sourceByUrl.clear();
+    state.resultByJobId.clear();
+    state.selectedNodeId = null;
+    state.hasDemoGraph = false;
+    $("sandbox-banner")?.classList.add("hidden");
+    const layer = $("nodes-layer");
+    if (layer) layer.innerHTML = "";
+    renderThreads();
+    syncWorkspaceMeta();
+    persistWorkspace();
+    sfx.click();
+    toast("Canvas cleared", "ok");
   }
 
   function addEdge(fromId, toId, kind = "extract", active = false, label = "", isDemo = false, customLabel = false) {
@@ -1121,6 +1915,15 @@
     return { x: side === "out" ? n.x + w : n.x, y: n.y + h / 2 };
   }
 
+  let _threadsRaf = null;
+  function scheduleRenderThreads() {
+    if (_threadsRaf !== null) return;
+    _threadsRaf = requestAnimationFrame(() => {
+      _threadsRaf = null;
+      renderThreads();
+    });
+  }
+
   function renderThreads() {
     const group = $("threads-group");
     if (!group) return;
@@ -1135,7 +1938,7 @@
       const pillW = Math.max(44, text.length * 5.7 + 14);
 
       html += `
-        <g class="thread-group kind-${esc(e.kind)} ${e.active ? "is-active" : ""}" data-edge-id="${esc(e.id)}">
+        <g class="thread-group kind-${esc(e.kind)} ${e.active ? "is-active" : ""} ${e.dimmed ? "is-dimmed" : ""}" data-edge-id="${esc(e.id)}" data-from="${esc(e.from)}" data-to="${esc(e.to)}">
           <path class="thread-hit" d="${d}" />
           <path class="thread-halo kind-${esc(e.kind)}" d="${d}" />
           <path class="thread-base kind-${esc(e.kind)}" d="${d}" />
@@ -1152,6 +1955,14 @@
       `;
     }
     group.innerHTML = html;
+    group.querySelectorAll(".thread-group").forEach((tg) => {
+      const setLinked = (on) => {
+        document.querySelector(`[data-node-id="${CSS.escape(tg.dataset.from)}"]`)?.classList.toggle("thread-linked", on);
+        document.querySelector(`[data-node-id="${CSS.escape(tg.dataset.to)}"]`)?.classList.toggle("thread-linked", on);
+      };
+      tg.onpointerenter = () => setLinked(true);
+      tg.onpointerleave = () => setLinked(false);
+    });
     group.querySelectorAll("[data-del-edge]").forEach((g) => {
       g.onclick = (ev) => { ev.stopPropagation(); removeEdge(g.dataset.delEdge); };
     });
@@ -1230,7 +2041,9 @@
 
     const extraCls = node.type === "choice"
       ? `theme-${node.theme} ${node.isLeaf ? "is-leaf" : ""} ${node.inputKind ? "choice-interactive" : ""} ${node.expanded ? "path-lit" : ""}`
-      : node.type === "player" && node.theater ? "theater" : "";
+      : node.type === "player" && node.theater ? "theater"
+      : node.type === "result" && node.job?.status === "completed" ? "is-complete"
+      : "";
     el.className = `node node-${node.type} ${extraCls} ${state.selectedNodeId === node.id ? "selected" : ""} ${node.collapsed ? "collapsed" : ""}`;
     el.style.left = `${node.x}px`;
     el.style.top = `${node.y}px`;
@@ -1250,14 +2063,27 @@
       let inlineExtra = "";
 
       if (node.inputKind === "trim") {
+        const srcDur = state.nodes.get(node.rootSourceId)?.probe?.duration_seconds;
+        const presets = buildTrimPresets(srcDur);
         inlineExtra = `
           <div class="choice-inline-body">
+            <div class="trim-presets">
+              ${presets.map((pr) => `<button type="button" class="trim-chip" data-trim-preset="${esc(pr.start)}|${esc(pr.end)}">${esc(pr.label)}</button>`).join("")}
+              ${srcDur ? `<span class="mono muted" style="margin-left:auto;font-size:9.5px;">Total ${esc(fmtDuration(srcDur))}</span>` : ""}
+            </div>
             <div class="cfg-row">
               <input type="text" class="cfg-input mono" data-trim-start value="${esc(node.clipStart)}" placeholder="0:00" />
               <span class="muted">→</span>
               <input type="text" class="cfg-input mono" data-trim-end value="${esc(node.clipEnd)}" placeholder="0:15" />
             </div>
             <button class="reactor-fire btn-sm" data-run-inline-leaf="${esc(node.id)}">${iconSvg("play", "ico-xs")}<span>Extract Clip</span></button>
+          </div>
+        `;
+      } else if (node.inputKind === "playlist_range") {
+        inlineExtra = `
+          <div class="choice-inline-body">
+            <input type="text" class="cfg-input mono" data-pl-range value="${esc(node.playlistRangeVal || "1-5")}" placeholder="e.g. 1-5 or 1,3,7" />
+            <button class="reactor-fire btn-sm" data-run-inline-leaf="${esc(node.id)}">${iconSvg("play", "ico-xs")}<span>Extract Range</span></button>
           </div>
         `;
       }
@@ -1271,7 +2097,6 @@
               <div class="choice-title">
                 ${node.detected ? '<span class="detected-dot" title="Detected in stream"></span>' : ""}
                 <span>${esc(node.title)}</span>
-                ${node.pro ? '<span class="pro-tag mono">PRO</span>' : ""}
               </div>
               <div class="choice-sub mono">${esc(node.sub || "")}</div>
             </div>
@@ -1282,45 +2107,65 @@
       `;
     } else if (node.type === "source") {
       const p = node.probe;
-      const thumbHtml = p?.thumbnail?.url
-        ? `<div class="node-thumb">
-             <img src="${esc(p.thumbnail.url)}" alt="" />
-             ${p.is_live || p.duration_seconds ? `<span class="dur-badge mono num">${p.is_live ? "LIVE" : fmtDuration(p.duration_seconds)}</span>` : ""}
-           </div>` : "";
-      const metaBits = p
-        ? [p.source?.domain, p.author?.name, p.content_type?.toUpperCase(), p.size_bytes ? fmtBytes(p.size_bytes) : null, "Neon Sync"].filter(Boolean)
-        : [shortHost(node.url), node.probing ? "Probing available paths…" : "Ready"];
+      const cap = analyzeProbe(p);
+      const canPlayLive = cap.canStreamLive;
+      const thumbHtml = node.probing && !p?.thumbnail?.url
+        ? `<div class="node-thumb-skeleton mono">PROBING REAL CONTENT…</div>`
+        : p?.thumbnail?.url
+          ? `<div class="node-thumb">
+               <img src="${esc(p.thumbnail.url)}" alt="" />
+               ${canPlayLive ? `<button type="button" class="thumb-play-overlay" data-watch-source="${esc(node.id)}" title="Watch Live (Zero Download)"><span class="thumb-play-circle">${iconSvg("play", "ico-sm")}</span></button>` : ""}
+               ${p.is_live || p.duration_seconds ? `<span class="dur-badge mono num ${p.is_live ? "is-live-badge" : ""}">${p.is_live ? "● LIVE" : fmtDuration(p.duration_seconds)}</span>` : ""}
+             </div>` : "";
+      const metaBits = node.probeError
+        ? [shortHost(node.url), node.probeError]
+        : p
+          ? [p.source?.domain, p.author?.name, p.content_type?.toUpperCase(), p.size_bytes ? fmtBytes(p.size_bytes) : null, "Neon Sync"].filter(Boolean)
+          : [shortHost(node.url), node.probing ? "Inspecting real streams & tracks…" : "Ready"];
       const caps = [];
       if (p) {
-        if ((p.available_formats || []).length) caps.push(`${p.available_formats.length} streams`);
-        if ((p.subtitles || []).length) caps.push(`${p.subtitles.length} captions`);
-        if (p.thumbnail?.url) caps.push("HD Cover");
+        if (cap.videoTiers.length) {
+          const top = cap.videoTiers[0];
+          if (top.height) caps.push(top.height >= 2160 ? "4K UHD" : `${top.height}p`);
+          if (top.maxFps && top.maxFps >= 48) caps.push(`${Math.round(top.maxFps)}fps`);
+          caps.push(`${cap.videoTiers.length} quality tier${cap.videoTiers.length === 1 ? "" : "s"}`);
+        }
+        if (cap.chapters.length) caps.push(`${cap.chapters.length} chapters`);
+        if (cap.subtitles.length) caps.push(`${cap.subtitles.length} captions`);
+        if (cap.itemCount > 1) caps.push(`${cap.itemCount} items`);
+        if (cap.thumbnail) caps.push("Cover");
       }
+      const statusCls = node.probeError ? "err" : node.probing ? "warn" : "ok";
+      const statusTxt = node.probeError ? "error" : node.probing ? "probing" : (p?.content_type || "ready");
 
       inner = `
         <div class="port port-in" data-port="in" data-node="${esc(node.id)}"></div>
-        <div class="port port-out" data-port="out" data-node="${esc(node.id)}"><span class="port-tip mono">Drag to link or add note</span></div>
+        <div class="port port-out" data-port="out" data-node="${esc(node.id)}"><span class="port-tip mono">Drag to link or spawn path</span></div>
         <div class="node-head" data-drag-handle="1">
           <span class="node-type-pill mono"><span class="node-type-dot"></span>SOURCE · ${esc(shortHost(node.url).toUpperCase())}</span>
           <div class="node-head-right">
-            <span class="status-pill mono ${node.probing ? "warn" : "ok"}">${node.probing ? "probing" : "ready"}</span>
-            <button class="node-icon-btn" data-node-collapse="${esc(node.id)}">${node.collapsed ? "▸" : "▾"}</button>
-            <button class="node-icon-btn" data-node-del="${esc(node.id)}">×</button>
+            <span class="status-pill mono ${statusCls}">${esc(statusTxt)}</span>
+            <button class="node-icon-btn" data-copy-url="${esc(node.url)}" title="Copy source URL">⧉</button>
+            <button class="node-icon-btn" data-reprobe="${esc(node.id)}" title="Re-probe source">↻</button>
+            <button class="node-icon-btn" data-node-collapse="${esc(node.id)}" title="Collapse / expand">${node.collapsed ? "▸" : "▾"}</button>
+            <button class="node-icon-btn" data-node-del="${esc(node.id)}" title="Remove node">×</button>
           </div>
         </div>
         <div class="node-body">
           <h3 class="node-title">${esc(p?.title || node.title || node.url)}</h3>
           <div class="node-body-collapsible">
             ${thumbHtml}
-            <div class="node-meta mono">${esc(metaBits.join(" · "))}</div>
+            <div class="node-meta mono" ${node.probeError ? 'style="color:var(--err);"' : ""}>${esc(metaBits.join(" · "))}</div>
             ${caps.length ? `<div class="node-caps">${caps.map((c) => `<span class="cap-tag mono">${esc(c)}</span>`).join("")}</div>` : ""}
-            <div class="source-quick-bar">
-              <button class="watch-pill-btn" data-watch-source="${esc(node.id)}" title="Stream & watch live immediately without downloading">
-                ${iconSvg("play", "ico-xs")}
-                <span>Watch Live</span>
-              </button>
-              <span class="mono muted" style="font-size:9.5px;">ZERO DOWNLOAD · VLC MODE</span>
-            </div>
+            ${canPlayLive ? `
+              <div class="source-quick-bar">
+                <button class="watch-pill-btn" data-watch-source="${esc(node.id)}" title="Stream & watch live immediately without downloading">
+                  ${iconSvg("play", "ico-xs")}
+                  <span>${cap.liveMode === "audio" ? "Listen Live" : "Watch Live"}</span>
+                </button>
+                <span class="mono muted" style="font-size:9.5px;">ZERO DOWNLOAD · VLC MODE</span>
+              </div>
+            ` : ""}
           </div>
         </div>
       `;
@@ -1494,42 +2339,76 @@
       el.classList.add("selected");
     };
 
-    // Drag handle (also allow dragging choice nodes if pointer moves >6px, else click blooms!)
+    // Drag handle (also allow dragging choice nodes if pointer moves >5px, else click blooms!)
     const dragTarget = el.querySelector("[data-drag-handle]") || (node.type === "choice" ? el.querySelector(".choice-card") : null);
     if (dragTarget) {
       dragTarget.onpointerdown = (e) => {
+        if (state.spaceHeld) return;
         if (e.target.closest("button") || e.target.closest("input") || e.target.closest(".port")) return;
         e.stopPropagation();
         const sx = e.clientX, sy = e.clientY, ox = node.x, oy = node.y;
         let moved = false;
         const onMove = (mv) => {
-          if (Math.hypot(mv.clientX - sx, mv.clientY - sy) > 5) moved = true;
+          if (!moved && Math.hypot(mv.clientX - sx, mv.clientY - sy) > 5) {
+            moved = true;
+            el.classList.add("dragging");
+          }
           if (!moved) return;
           node.x = ox + (mv.clientX - sx) / camera.zoom;
           node.y = oy + (mv.clientY - sy) / camera.zoom;
           el.style.left = `${node.x}px`;
           el.style.top = `${node.y}px`;
-          renderThreads();
+          scheduleRenderThreads();
         };
         const onUp = () => {
           window.removeEventListener("pointermove", onMove);
           window.removeEventListener("pointerup", onUp);
+          el.classList.remove("dragging");
           if (!moved && node.type === "choice" && !node.inputKind) {
             onChoiceClicked(node);
-          } else if (moved && !node.demo) {
-            persistWorkspace();
+          } else if (moved) {
+            renderThreads();
+            if (!node.demo) persistWorkspace();
           }
         };
         window.addEventListener("pointermove", onMove);
         window.addEventListener("pointerup", onUp);
       };
+
+      // Double-click node header -> smoothly glide & focus camera on this node
+      if (node.type !== "choice") {
+        dragTarget.ondblclick = (e) => {
+          if (e.target.closest("button")) return;
+          e.stopPropagation();
+          sfx.click();
+          glideToWorld(node.x + el.offsetWidth / 2, node.y + el.offsetHeight / 2, Math.max(camera.zoom, 1));
+        };
+      }
     }
 
-    // Inline inputs on Trim nodes
+    // Inline inputs & quick presets on Trim nodes
     const tStart = el.querySelector("[data-trim-start]");
     if (tStart) { tStart.onpointerdown = (e) => e.stopPropagation(); tStart.oninput = () => { node.clipStart = tStart.value; }; }
     const tEnd = el.querySelector("[data-trim-end]");
     if (tEnd) { tEnd.onpointerdown = (e) => e.stopPropagation(); tEnd.oninput = () => { node.clipEnd = tEnd.value; }; }
+    el.querySelectorAll("[data-trim-preset]").forEach((btn) => {
+      btn.onpointerdown = (e) => e.stopPropagation();
+      btn.onclick = (e) => {
+        e.stopPropagation();
+        const [s, en] = btn.dataset.trimPreset.split("|");
+        node.clipStart = s;
+        node.clipEnd = en;
+        if (tStart) tStart.value = s;
+        if (tEnd) tEnd.value = en;
+        sfx.click();
+      };
+    });
+    const plRange = el.querySelector("[data-pl-range]");
+    if (plRange) {
+      plRange.onpointerdown = (e) => e.stopPropagation();
+      plRange.oninput = () => { node.playlistRangeVal = plRange.value; };
+      plRange.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); executeChoiceLeaf(node); } };
+    }
     el.querySelector("[data-run-inline-leaf]")?.addEventListener("click", (e) => { e.stopPropagation(); executeChoiceLeaf(node); });
 
     // Magnetic Patch Cable Dragging from Output Jack
@@ -1584,10 +2463,25 @@
     }
 
     // Standard buttons
-    el.querySelector("[data-watch-source]")?.addEventListener("click", (e) => {
+    el.querySelectorAll("[data-watch-source]").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        promoteDemoTreeToReal();
+        const cap = analyzeProbe(node.probe);
+        launchLivePlayerFromParent(node, node.url, cap.liveMode || "video");
+      });
+    });
+    el.querySelector("[data-copy-url]")?.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      await navigator.clipboard.writeText(e.currentTarget.dataset.copyUrl);
+      sfx.click();
+      toast("Source URL copied", "ok");
+    });
+    el.querySelector("[data-reprobe]")?.addEventListener("click", (e) => {
       e.stopPropagation();
       promoteDemoTreeToReal();
-      launchLivePlayerFromParent(node, node.url, "video");
+      sfx.click();
+      probeAndBloomLevel1(node, { bypassCache: true });
     });
     el.querySelector("[data-player-theater]")?.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -1670,12 +2564,55 @@
     }
   }
 
-  /* ---------- Patch Context Menu ---------- */
+  /* ---------- Dynamic Content-Aware Patch Context Menu ---------- */
+  const _THEME_COLOR = {
+    video: "var(--accent)",
+    audio: "var(--violet)",
+    subtitles: "var(--info)",
+    image: "var(--warn)",
+    live: "var(--live)",
+  };
+
   function openPatchMenu(fromNodeId, sx, sy, wx, wy) {
     state.pendingPatch = { fromNodeId, wx, wy };
     const menu = $("patch-menu");
+    const fromNode = state.nodes.get(fromNodeId);
+    const srcNode = fromNode ? resolveSourceNodeFor(fromNode.id) : null;
+    const dynamicRoutes = srcNode ? getLevel1Choices(srcNode) : [];
+
+    let html = `<div class="patch-menu-head mono">${srcNode ? `SPAWN REAL PATH (${dynamicRoutes.length})` : "CANVAS ACTION"}</div>`;
+    for (const r of dynamicRoutes) {
+      const col = _THEME_COLOR[r.theme] || "var(--accent)";
+      html += `<button class="patch-item" data-patch-key="${esc(r.key)}"><span class="patch-item-label"><span style="color:${col};display:inline-flex;">${iconSvg(r.icon, "ico-sm")}</span><span>${esc(r.title)}</span></span><kbd class="mono">${esc((r.edgeLabel || r.key).slice(0, 9))}</kbd></button>`;
+    }
+    if (dynamicRoutes.length) html += `<div class="patch-sep"></div>`;
+    html += `<button class="patch-item" data-patch-action="note"><span class="patch-item-label"><span style="color:var(--warn);display:inline-flex;">${iconSvg("file-text", "ico-sm")}</span><span>Attach Studio Note</span></span><kbd class="mono">NOTE</kbd></button>`;
+    menu.innerHTML = html;
+
+    menu.querySelectorAll("[data-patch-key]").forEach((btn) => {
+      btn.onclick = () => {
+        const pending = state.pendingPatch;
+        closePatchMenu();
+        if (!pending || !srcNode) return;
+        const matched = getLevel1Choices(srcNode).find((c) => c.key === btn.dataset.patchKey);
+        if (!matched) return;
+        if (matched.delta?._livePlay) {
+          promoteDemoTreeToReal();
+          launchLivePlayerFromParent(srcNode, srcNode.url, matched.delta._livePlay);
+          return;
+        }
+        const kids = spawnChoiceChildren(srcNode, [matched], true, true);
+        if (kids[0]) onChoiceClicked(kids[0]);
+      };
+    });
+    menu.querySelector('[data-patch-action="note"]')?.addEventListener("click", () => {
+      const pending = state.pendingPatch;
+      closePatchMenu();
+      if (pending && fromNode) spawnNoteNode(pending.wx, pending.wy - 50, "", fromNode.id);
+    });
+
     menu.style.left = `${Math.min(window.innerWidth - 280, Math.max(12, sx))}px`;
-    menu.style.top = `${Math.min(window.innerHeight - 280, Math.max(64, sy))}px`;
+    menu.style.top = `${Math.min(window.innerHeight - 320, Math.max(64, sy))}px`;
     menu.classList.remove("hidden");
   }
   function closePatchMenu() { $("patch-menu").classList.add("hidden"); state.pendingPatch = null; }
@@ -1711,23 +2648,50 @@
     return node;
   }
 
-  async function probeAndBloomLevel1(node) {
-    osc.set(true, "PROBING AVAILABLE PATHS…");
+  async function probeAndBloomLevel1(node, { allowBrowserFallback = false, bypassCache = false } = {}) {
+    // Prune any previous non-result choice branches belonging to this source before re-blooming!
+    const existingChildren = state.edges.filter((e) => e.from === node.id).map((e) => e.to);
+    for (const cid of existingChildren) pruneChoiceSubtree(cid);
+
+    node.probing = true;
+    node.probeError = null;
+    if (allowBrowserFallback) node.usedDeepScan = true;
+    renderNode(node);
+    osc.set(true, allowBrowserFallback ? "DEEP SCANNING PAGE…" : "PROBING REAL CONTENT…");
+
     try {
       const res = await fetch("/v1/probe", {
         method: "POST",
         headers: apiHeaders({ "Content-Type": "application/json" }),
-        body: JSON.stringify({ url: node.url }),
+        body: JSON.stringify({
+          url: node.url,
+          include_subtitles: true,
+          allow_browser_fallback: allowBrowserFallback,
+          bypass_cache: bypassCache,
+        }),
       });
       const data = await res.json();
-      if (res.status === 402) { openUpgradeModal(data.detail?.message); node.probing = false; renderNode(node); return; }
-      if (res.ok) { node.probe = data; node.title = data.title; }
-    } catch (_) {}
+      if (res.ok) {
+        node.probe = data;
+        node.title = data.title || node.url;
+        node.probeError = null;
+      } else {
+        node.probeError = data.detail?.message || `Probe failed (HTTP ${res.status})`;
+      }
+    } catch (err) {
+      node.probeError = `Network error: ${err.message}`;
+    }
+
     node.probing = false;
     renderNode(node);
-    // Bloom Level 1 paths cleanly (Watch Live, Video, Audio, Subtitles, Thumbnail)
-    spawnChoiceChildren(node, getLevel1Choices(node), true, true);
-    osc.set(false, "CLICK ANY PATH TO EXPLORE");
+    const routes = getLevel1Choices(node);
+    spawnChoiceChildren(node, routes, true, true);
+    osc.set(
+      false,
+      node.probeError
+        ? "PROBE ISSUE · CHOOSE RECOVERY"
+        : `${routes.length} REAL ROUTE${routes.length === 1 ? "" : "S"} DETECTED`,
+    );
   }
 
   function spawnNoteNode(wx, wy, text = "", linkFromId = null, customId = null) {
@@ -1978,201 +2942,6 @@
     } catch (_) {}
   }
 
-  /* =========================================================================
-     NEON SYNC AUTHENTICATION (GOOGLE OAUTH 2.0 + EMAIL/PASSWORD)
-     ========================================================================= */
-  function userInitials(name, email) {
-    const src = (name || email || "U").trim();
-    const parts = src.split(/\s+/).filter(Boolean);
-    return parts.length >= 2 ? (parts[0][0] + parts[1][0]).toUpperCase() : src.slice(0, 2).toUpperCase();
-  }
-
-  function renderAvatarInto(el, user) {
-    if (!el || !user) return;
-    if (user.avatar_url) {
-      el.innerHTML = `<img src="${esc(user.avatar_url)}" alt="${esc(user.name)}" referrerpolicy="no-referrer" />`;
-    } else {
-      el.textContent = userInitials(user.name, user.email);
-    }
-  }
-
-  function renderAuthBezel() {
-    const btn = $("auth-btn");
-    const av = $("auth-btn-avatar");
-    const ico = $("auth-btn-icon");
-    const lbl = $("auth-btn-label");
-    if (!btn) return;
-    if (state.user) {
-      btn.classList.add("signed-in");
-      if (av) { av.classList.remove("hidden"); renderAvatarInto(av, state.user); }
-      if (ico) ico.classList.add("hidden");
-      if (lbl) lbl.textContent = (state.user.name || state.user.email).split(" ")[0].slice(0, 14);
-    } else {
-      btn.classList.remove("signed-in");
-      if (av) av.classList.add("hidden");
-      if (ico) ico.classList.remove("hidden");
-      if (lbl) lbl.textContent = "Sign In";
-    }
-  }
-
-  async function refreshAuth() {
-    try {
-      const [meRes, provRes] = await Promise.all([
-        fetch("/v1/auth/me", { headers: apiHeaders() }),
-        fetch("/v1/auth/providers"),
-      ]);
-      if (meRes.ok) {
-        const me = await meRes.json();
-        state.user = me.authenticated ? me.user : null;
-      }
-      if (provRes.ok) {
-        state.authProviders = await provRes.json();
-        const tag = $("google-status-tag");
-        if (tag) {
-          tag.textContent = state.authProviders.google_enabled ? "Ready" : "Setup .env";
-          tag.classList.toggle("ready", !!state.authProviders.google_enabled);
-        }
-      }
-    } catch (_) {}
-    renderAuthBezel();
-  }
-
-  function ensureTurnstileWidget() {
-    const wrap = $("turnstile-widget-wrap");
-    if (!wrap) return;
-    const shouldShow = state.authMode === "register" && state.authProviders?.turnstile_enabled && state.authProviders?.turnstile_site_key;
-    wrap.classList.toggle("hidden", !shouldShow);
-    if (!shouldShow) return;
-
-    const renderNow = () => {
-      if (!window.turnstile) return;
-      if (state.turnstileWidgetId !== null) {
-        try { window.turnstile.reset(state.turnstileWidgetId); } catch (_) {}
-        state.turnstileToken = "";
-        return;
-      }
-      wrap.innerHTML = "";
-      state.turnstileWidgetId = window.turnstile.render(wrap, {
-        sitekey: state.authProviders.turnstile_site_key,
-        action: "signup",
-        theme: (document.documentElement.getAttribute("data-theme") || "dark") === "dark" ? "dark" : "light",
-        callback: (tok) => { state.turnstileToken = tok || ""; },
-        "expired-callback": () => { state.turnstileToken = ""; },
-        "error-callback": () => { state.turnstileToken = ""; },
-      });
-    };
-
-    if (window.turnstile) {
-      renderNow();
-    } else if (!document.querySelector('script[src*="challenges.cloudflare.com/turnstile"]')) {
-      const s = document.createElement("script");
-      s.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
-      s.async = true;
-      s.defer = true;
-      s.onload = renderNow;
-      document.head.appendChild(s);
-    }
-  }
-
-  function setAuthMode(mode) {
-    state.authMode = mode;
-    const isReg = mode === "register";
-    $("auth-tab-login")?.classList.toggle("active", !isReg);
-    $("auth-tab-register")?.classList.toggle("active", isReg);
-    $("auth-name-wrap")?.classList.toggle("hidden", !isReg);
-    if ($("auth-heading")) $("auth-heading").textContent = isReg ? "Create your Neon Sync account" : "Sign in to Neon Sync";
-    if ($("auth-submit-btn")) $("auth-submit-btn").textContent = isReg ? "Create Account" : "Sign In";
-    if ($("auth-password-input")) $("auth-password-input").autocomplete = isReg ? "new-password" : "current-password";
-    $("auth-error-box")?.classList.add("hidden");
-    ensureTurnstileWidget();
-  }
-
-  function showAuthError(msg) {
-    const box = $("auth-error-box");
-    if (!box) return;
-    box.textContent = msg;
-    box.classList.remove("hidden");
-  }
-
-  function openAuthModal(mode = "login") {
-    sfx.click();
-    setAuthMode(mode);
-    $("google-setup-box")?.classList.add("hidden");
-    $("auth-modal")?.classList.remove("hidden");
-    $("auth-email-input")?.focus();
-  }
-
-  async function openAccountModal(tab = "profile") {
-    sfx.click();
-    if (!state.user) return openAuthModal("login");
-    $("account-modal")?.classList.remove("hidden");
-    renderAccountHeader();
-    switchAccountTab(tab);
-  }
-
-  function renderAccountHeader() {
-    const u = state.user;
-    if (!u) return;
-    renderAvatarInto($("acct-avatar"), u);
-    if ($("acct-name")) $("acct-name").textContent = u.name;
-    if ($("acct-email")) $("acct-email").textContent = u.email + (u.email_verified ? " · verified" : "");
-    if ($("acct-tier-pill")) {
-      $("acct-tier-pill").textContent = u.tier.toUpperCase();
-      $("acct-tier-pill").className = `status-pill mono ${u.tier === "pro" ? "ok" : ""}`;
-    }
-    if ($("acct-name-input")) $("acct-name-input").value = u.name || "";
-    const provHost = $("acct-providers-badges");
-    if (provHost) {
-      const list = u.providers || [];
-      provHost.innerHTML = list.length
-        ? list.map((p) => `<span class="status-pill mono ok">${esc(p === "google" ? "Google Connected" : "Email & Password")}</span>`).join("")
-        : `<span class="muted mono" style="font-size:11px;">Standard account</span>`;
-    }
-  }
-
-  function switchAccountTab(tab) {
-    state.accountTab = tab;
-    document.querySelectorAll("[data-atab]").forEach((b) => b.classList.toggle("active", b.dataset.atab === tab));
-    ["profile", "sessions"].forEach((t) => $(`atab-${t}`)?.classList.toggle("hidden", t !== tab));
-    if (tab === "sessions") loadAccountSessionsAndActivity();
-  }
-
-  async function loadAccountSessionsAndActivity() {
-    const [sRes, aRes] = await Promise.all([fetch("/v1/auth/sessions"), fetch("/v1/auth/activity?limit=15")]);
-    if (sRes.ok && $("acct-sessions-list")) {
-      const sessions = await sRes.json();
-      $("acct-sessions-list").innerHTML = sessions.map((s) => `
-        <div class="acct-row">
-          <div>
-            <div class="row-gap">
-              <strong>${esc((s.user_agent || "Browser Session").slice(0, 56))}</strong>
-              ${s.is_current ? '<span class="status-pill mono ok">Current</span>' : ""}
-            </div>
-            <div class="acct-row-meta mono">IP ${esc(s.ip_address || "local")} · Active ${esc(fmtRelativeTime(s.last_seen_at))} · Created ${esc(fmtRelativeTime(s.created_at))}</div>
-          </div>
-          ${s.is_current ? "" : `<button class="ghost-btn btn-xs mono" data-revoke-sess="${esc(s.id)}">Revoke</button>`}
-        </div>
-      `).join("");
-      $("acct-sessions-list").querySelectorAll("[data-revoke-sess]").forEach((btn) => {
-        btn.onclick = async () => {
-          const r = await fetch(`/v1/auth/sessions/${btn.dataset.revokeSess}`, { method: "DELETE" });
-          if (r.ok) { sfx.click(); toast("Session signed out", "ok"); loadAccountSessionsAndActivity(); }
-        };
-      });
-    }
-    if (aRes.ok && $("acct-activity-list")) {
-      const events = await aRes.json();
-      $("acct-activity-list").innerHTML = events.map((ev) => `
-        <div class="acct-row">
-          <div>
-            <div><span class="status-pill mono">${esc(ev.event)}</span> <span>${esc(ev.detail || "")}</span></div>
-            <div class="acct-row-meta mono">IP ${esc(ev.ip_address || "local")} · ${esc(fmtRelativeTime(ev.created_at))}</div>
-          </div>
-        </div>
-      `).join("") || `<div class="muted mono" style="padding:10px;font-size:11px;">No activity recorded yet.</div>`;
-    }
-  }
-
   /* ---------- Viewport, Minimap & Event Wiring ---------- */
   function bindCanvasNavigation() {
     const vp = $("viewport");
@@ -2180,11 +2949,16 @@
 
     vp.addEventListener("pointerdown", (e) => {
       closePatchMenu();
-      if (e.target.closest(".node") || e.target.closest("button")) return;
-      vp.classList.add("panning");
+      if (!state.spaceHeld && (e.target.closest(".node") || e.target.closest("button") || e.target.closest(".empty-hud-card"))) return;
+      if (!state.spaceHeld) {
+        state.selectedNodeId = null;
+        document.querySelectorAll(".node.selected").forEach((x) => x.classList.remove("selected"));
+        drawMinimap();
+      }
+      vp.classList.add(state.spaceHeld ? "space-pan" : "panning");
       const sx = e.clientX, sy = e.clientY, ox = camera.x, oy = camera.y;
       const onMove = (mv) => { camera.x = ox + (mv.clientX - sx); camera.y = oy + (mv.clientY - sy); applyCamera(); };
-      const onUp = () => { vp.classList.remove("panning"); window.removeEventListener("pointermove", onMove); window.removeEventListener("pointerup", onUp); };
+      const onUp = () => { vp.classList.remove("panning", "space-pan"); window.removeEventListener("pointermove", onMove); window.removeEventListener("pointerup", onUp); };
       window.addEventListener("pointermove", onMove); window.addEventListener("pointerup", onUp);
     });
 
@@ -2204,7 +2978,7 @@
     }, { passive: false });
 
     vp.addEventListener("dblclick", (e) => {
-      if (e.target.closest(".node") || e.target.closest("button") || e.target.closest(".thread-pill")) return;
+      if (e.target.closest(".node") || e.target.closest("button") || e.target.closest(".thread-pill") || e.target.closest(".empty-hud-card")) return;
       const wPos = screenToWorld(e.clientX, e.clientY);
       spawnNoteNode(wPos.x - 135, wPos.y - 60, "");
     });
@@ -2234,6 +3008,11 @@
     $("zoom-reset-btn").onclick = () => { sfx.click(); camera.zoom = 1; applyCamera(); };
     $("fit-all-btn").onclick = () => { sfx.click(); fitAllNodes(); };
     $("add-note-btn").onclick = () => { const c = getViewportCenterWorld(); spawnNoteNode(c.x - 135, c.y - 60, ""); };
+    $("clear-canvas-btn").onclick = () => clearEntireCanvas();
+    $("shortcuts-btn").onclick = () => { sfx.click(); $("shortcuts-modal")?.classList.toggle("hidden"); };
+    $("close-shortcuts-modal").onclick = () => $("shortcuts-modal")?.classList.add("hidden");
+    $("empty-focus-btn").onclick = () => { sfx.click(); $("url-input")?.focus(); };
+    $("empty-demo-btn").onclick = () => { sfx.click(); spawnDefaultShowcase(); };
   }
 
   function bindAllEvents() {
@@ -2269,42 +3048,51 @@
     });
 
     document.addEventListener("keydown", (e) => {
+      const typing = document.activeElement?.tagName === "INPUT" || document.activeElement?.tagName === "TEXTAREA";
       if (e.key === "Escape") {
         closePatchMenu();
-        $("upgrade-modal").classList.add("hidden");
-        $("auth-modal")?.classList.add("hidden"); $("account-modal")?.classList.add("hidden");
-        $("dock-popover").classList.add("hidden"); state.batchOpen = false;
+        $("shortcuts-modal")?.classList.add("hidden");
+        $("dock-popover").classList.add("hidden");
+        state.batchOpen = false;
+        return;
       }
-      if ((e.key === "/" || ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k")) &&
-          document.activeElement?.tagName !== "INPUT" && document.activeElement?.tagName !== "TEXTAREA") {
+      if (typing) return;
+
+      if (e.code === "Space" && !state.spaceHeld) {
+        e.preventDefault();
+        state.spaceHeld = true;
+        $("viewport")?.classList.add("space-ready");
+        return;
+      }
+      if (e.key === "/" || ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k")) {
         e.preventDefault(); sfx.click(); input.focus();
+      } else if (e.key === "?") {
+        e.preventDefault(); sfx.click(); $("shortcuts-modal")?.classList.toggle("hidden");
+      } else if (e.key.toLowerCase() === "f" && !e.metaKey && !e.ctrlKey) {
+        e.preventDefault(); sfx.click(); fitAllNodes();
+      } else if (e.key === "0" && !e.metaKey && !e.ctrlKey) {
+        e.preventDefault(); sfx.click(); camera.zoom = 1; applyCamera();
+      } else if ((e.key === "+" || e.key === "=") && !e.metaKey && !e.ctrlKey) {
+        e.preventDefault(); sfx.click(); camera.zoom = Math.min(2, camera.zoom * 1.18); applyCamera();
+      } else if (e.key === "-" && !e.metaKey && !e.ctrlKey) {
+        e.preventDefault(); sfx.click(); camera.zoom = Math.max(0.3, camera.zoom / 1.18); applyCamera();
+      } else if (e.key.toLowerCase() === "t" && !e.metaKey && !e.ctrlKey) {
+        e.preventDefault(); tidyGraphLayout();
+      } else if (e.key.toLowerCase() === "n" && !e.metaKey && !e.ctrlKey) {
+        e.preventDefault(); const c = getViewportCenterWorld(); spawnNoteNode(c.x - 135, c.y - 60, "");
+      } else if ((e.key === "Backspace" || e.key === "Delete") && state.selectedNodeId) {
+        e.preventDefault();
+        const delId = state.selectedNodeId;
+        state.selectedNodeId = null;
+        removeNode(delId);
       }
     });
 
-    document.querySelectorAll("[data-patch-action]").forEach((btn) => {
-      btn.onclick = () => {
-        const pending = state.pendingPatch;
-        closePatchMenu();
-        if (!pending) return;
-        const act = btn.dataset.patchAction;
-        const fromNode = state.nodes.get(pending.fromNodeId);
-        if (!fromNode) return;
-        if (act === "note") { spawnNoteNode(pending.wx, pending.wy - 50, "", fromNode.id); return; }
-        const srcNode = resolveSourceNodeFor(fromNode.id);
-        if (!srcNode) return toast("Drag from a Source or Path node first", "err");
-        if (act === "branch_play") {
-          promoteDemoTreeToReal();
-          launchLivePlayerFromParent(srcNode, srcNode.url, "video");
-          return;
-        }
-        const l1 = getLevel1Choices(srcNode);
-        const keyMap = { branch_video: "video", branch_audio: "audio", branch_subtitles: "subtitles", branch_image: "image" };
-        const matched = l1.find((c) => c.key === keyMap[act]) || l1[0];
-        if (matched) {
-          const kids = spawnChoiceChildren(srcNode, [matched], true, true);
-          if (kids[0]) onChoiceClicked(kids[0]);
-        }
-      };
+    document.addEventListener("keyup", (e) => {
+      if (e.code === "Space" && state.spaceHeld) {
+        state.spaceHeld = false;
+        $("viewport")?.classList.remove("space-ready", "space-pan");
+      }
     });
 
     if ($("clear-sandbox-btn")) $("clear-sandbox-btn").onclick = () => { sfx.click(); clearDemoGraph(); };
@@ -2336,21 +3124,6 @@
 
     $("tidy-graph-btn").onclick = tidyGraphLayout;
 
-    // Pro Upgrade Modal
-    $("tier-pill").onclick = () => openUpgradeModal("");
-    $("close-upgrade-modal").onclick = () => $("upgrade-modal").classList.add("hidden");
-    $("fill-dev-pro-btn").onclick = () => { $("pro-key-input").value = "neon-pro-local"; $("save-pro-key-btn").click(); };
-    $("save-pro-key-btn").onclick = async () => {
-      state.proKey = $("pro-key-input").value.trim(); sessionStorage.setItem("neon_pro_key", state.proKey);
-      await refreshTier();
-      if (isPro()) { sfx.complete(); $("upgrade-modal").classList.add("hidden"); toast("Neon Pro unlocked!", "ok"); }
-      else toast("Key not recognized (try neon-pro-local)", "err");
-    };
-    $("clear-keys-btn").onclick = async () => {
-      state.proKey = ""; sessionStorage.removeItem("neon_pro_key");
-      await refreshTier(); $("upgrade-modal").classList.add("hidden"); toast("Reverted to Guest Trial");
-    };
-
     const syncAutosave = () => $("autosave-pill").classList.toggle("active", state.autoSave);
     syncAutosave();
     $("autosave-pill").onclick = () => { state.autoSave = !state.autoSave; localStorage.setItem("neon_autosave", String(state.autoSave)); syncAutosave(); sfx.click(); };
@@ -2359,154 +3132,9 @@
     syncSfx();
     $("sfx-btn").onclick = () => { state.sfxEnabled = !state.sfxEnabled; localStorage.setItem("neon_sfx", String(state.sfxEnabled)); syncSfx(); if (state.sfxEnabled) sfx.click(); };
 
-    const applyTheme = (t) => { document.documentElement.setAttribute("data-theme", t); localStorage.setItem("neon_sync_theme", t); $("theme-text").textContent = t === "dark" ? "Light" : "Dark"; };
+    const applyTheme = (t) => { document.documentElement.setAttribute("data-theme", t); localStorage.setItem("neon_sync_theme", t); $("theme-text").textContent = t === "dark" ? "Light" : "Dark"; gravity.wake(); };
     applyTheme(localStorage.getItem("neon_sync_theme") || "dark");
     $("theme-btn").onclick = () => { sfx.click(); applyTheme((document.documentElement.getAttribute("data-theme") || "dark") === "dark" ? "light" : "dark"); };
-
-    // Auth & Account Modal Wiring
-    $("auth-btn").onclick = () => (state.user ? openAccountModal("profile") : openAuthModal("login"));
-    $("close-auth-modal").onclick = () => $("auth-modal").classList.add("hidden");
-    $("close-account-modal").onclick = () => $("account-modal").classList.add("hidden");
-    $("auth-tab-login").onclick = () => { sfx.click(); setAuthMode("login"); };
-    $("auth-tab-register").onclick = () => { sfx.click(); setAuthMode("register"); };
-
-    $("google-signin-btn").onclick = () => {
-      sfx.click();
-      if (state.authProviders?.google_enabled) {
-        window.location.href = "/v1/auth/google/start?next=/";
-        return;
-      }
-      const cb = state.authProviders?.google_redirect_uri || `${window.location.origin}/v1/auth/google/callback`;
-      $("google-setup-pre").textContent =
-        `# Authorized Redirect URI in Google Cloud Console:\n${cb}\n\n# Add to .env:\nNEON_SYNC_GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com\nNEON_SYNC_GOOGLE_CLIENT_SECRET=your-client-secret`;
-      $("google-setup-box").classList.remove("hidden");
-    };
-
-    $("auth-form").onsubmit = async (e) => {
-      e.preventDefault();
-      $("auth-error-box").classList.add("hidden");
-      const isReg = state.authMode === "register";
-      const payload = {
-        email: $("auth-email-input").value.trim(),
-        password: $("auth-password-input").value,
-      };
-      if (isReg) payload.name = $("auth-name-input").value.trim() || payload.email.split("@")[0];
-      $("auth-submit-btn").disabled = true;
-      try {
-        const hdrs = { "Content-Type": "application/json" };
-        if (isReg && state.authProviders?.turnstile_enabled) {
-          if (!state.turnstileToken) {
-            showAuthError("Complete the verification check before creating your account.");
-            $("auth-submit-btn").disabled = false;
-            return;
-          }
-          hdrs["cf-turnstile-response"] = state.turnstileToken;
-        }
-        const res = await fetch(isReg ? "/v1/auth/register" : "/v1/auth/login", {
-          method: "POST",
-          headers: hdrs,
-          body: JSON.stringify(payload),
-        });
-        const data = await res.json();
-        if (!res.ok) {
-          showAuthError(data.detail?.message || "Authentication failed");
-          if (isReg && state.turnstileWidgetId !== null && window.turnstile) {
-            try { window.turnstile.reset(state.turnstileWidgetId); } catch (_) {}
-            state.turnstileToken = "";
-          }
-          return;
-        }
-        state.user = data.user;
-        $("auth-password-input").value = "";
-        $("auth-modal").classList.add("hidden");
-        renderAuthBezel();
-        await refreshTier();
-        sfx.complete();
-        toast(isReg ? `Welcome to Neon Sync, ${state.user.name}!` : `Signed in as ${state.user.name}`, "ok");
-      } catch (err) {
-        showAuthError(err.message);
-      } finally {
-        $("auth-submit-btn").disabled = false;
-      }
-    };
-
-    document.querySelectorAll("[data-atab]").forEach((b) => {
-      b.onclick = () => { sfx.click(); switchAccountTab(b.dataset.atab); };
-    });
-
-    $("acct-signout-btn").onclick = async () => {
-      await fetch("/v1/auth/logout", { method: "POST" });
-      state.user = null;
-      $("account-modal").classList.add("hidden");
-      renderAuthBezel();
-      await refreshTier();
-      sfx.click();
-      toast("Signed out", "ok");
-    };
-
-    $("acct-save-profile-btn").onclick = async () => {
-      const name = $("acct-name-input").value.trim();
-      if (!name) return toast("Display name cannot be empty", "err");
-      const res = await fetch("/v1/auth/me", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name }),
-      });
-      if (res.ok) {
-        state.user = await res.json();
-        renderAuthBezel();
-        renderAccountHeader();
-        sfx.complete();
-        toast("Profile updated", "ok");
-      }
-    };
-
-    $("acct-upgrade-btn").onclick = async () => {
-      const pro_key = $("acct-pro-key-input").value.trim();
-      if (!pro_key) return toast("Enter a Pro key", "err");
-      const res = await fetch("/v1/auth/upgrade", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pro_key }),
-      });
-      const data = await res.json();
-      if (!res.ok) return toast(data.detail?.message || "Invalid key", "err");
-      state.user = data;
-      $("acct-pro-key-input").value = "";
-      renderAccountHeader();
-      await refreshTier();
-      sfx.complete();
-      toast("Account upgraded to Neon Pro!", "ok");
-    };
-
-    $("acct-save-pw-btn").onclick = async () => {
-      const new_password = $("acct-new-pw").value;
-      const current_password = $("acct-cur-pw").value || null;
-      if (new_password.length < 8) return toast("Password must be at least 8 characters", "err");
-      const res = await fetch("/v1/auth/password", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ current_password, new_password }),
-      });
-      const data = await res.json();
-      if (!res.ok) return toast(data.detail?.message || "Could not update password", "err");
-      state.user = data;
-      $("acct-cur-pw").value = "";
-      $("acct-new-pw").value = "";
-      renderAccountHeader();
-      sfx.complete();
-      toast("Password updated", "ok");
-    };
-
-    $("revoke-other-sessions-btn").onclick = async () => {
-      const res = await fetch("/v1/auth/sessions/revoke-others", { method: "POST" });
-      if (res.ok) {
-        const d = await res.json();
-        sfx.click();
-        toast(`Signed out ${d.revoked_count || 0} other session(s)`, "ok");
-        loadAccountSessionsAndActivity();
-      }
-    };
   }
 
   /* ---------- Hydrate History Drawer & Launch Cascading Possibility Tree ---------- */
@@ -2546,18 +3174,7 @@
       window.lucide.createIcons();
     }
     bindAllEvents();
-    await Promise.all([refreshAuth(), refreshTier(), loadCoreHealth()]);
+    await loadCoreHealth();
     await hydrateFromBackend();
-
-    // Handle Google OAuth callback query feedback cleanly
-    const params = new URLSearchParams(window.location.search);
-    if (params.get("auth") === "google_ok") {
-      if (state.user) toast(`Signed in with Google as ${state.user.name}`, "ok");
-      window.history.replaceState({}, "", window.location.pathname);
-    } else if (params.get("auth_error")) {
-      openAuthModal("login");
-      showAuthError(`Google Sign-In did not complete (${params.get("auth_error")}).`);
-      window.history.replaceState({}, "", window.location.pathname);
-    }
   })();
 })();

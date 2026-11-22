@@ -141,7 +141,6 @@ async def test_public_api_zero_leak_headers_and_hidden_dev_surfaces(
         storage_dir=tmp_path / "storage",
         allow_private_addresses=True,
         min_free_disk_bytes=1024,
-        pro_api_keys="neon-pro-secret-9999",
     )
     app = create_app(settings)
 
@@ -149,7 +148,7 @@ async def test_public_api_zero_leak_headers_and_hidden_dev_surfaces(
         transport=httpx.ASGITransport(app=app),
         base_url="http://testserver",
     ) as client:
-        # 1. Developer console, OpenAPI docs, internal engine list, AI agent & automations are NOT exposed
+        # 1. Developer console, OpenAPI docs, internal engine list, AI agent, auth & tier paywalls are NOT exposed
         for hidden_path in (
             "/docs",
             "/redoc",
@@ -159,11 +158,17 @@ async def test_public_api_zero_leak_headers_and_hidden_dev_surfaces(
             "/v1/logs",
             "/v1/logs/stream",
             "/v1/automations",
+            "/v1/auth/me",
+            "/v1/auth/providers",
+            "/v1/auth/google/start",
+            "/v1/tier",
         ):
             assert (await client.get(hidden_path)).status_code == 404, f"Expected 404 for {hidden_path}"
         assert (await client.post("/v1/agent/run", json={"prompt": "test"})).status_code == 404
+        assert (await client.post("/v1/auth/login", json={"email": "a@b.c", "password": "secret"})).status_code == 404
+        assert (await client.post("/v1/auth/register", json={"email": "a@b.c", "password": "secret"})).status_code == 404
 
-        # 2. Web UI static assets keep Spatial Graph UI with zero third-party engine leaks & no dev console/AI
+        # 2. Web UI static assets keep Spatial Graph UI with zero third-party engine leaks & no dev console/AI/auth
         html = await client.get("/")
         js = await client.get("/static/app.js")
         assert html.status_code == 200 and js.status_code == 200
@@ -171,6 +176,11 @@ async def test_public_api_zero_leak_headers_and_hidden_dev_surfaces(
         _assert_zero_engine_leak(js.text, context="app.js")
         assert "dev-console-modal" not in html.text
         assert "automations-modal" not in html.text
+        assert "auth-modal" not in html.text
+        assert "account-modal" not in html.text
+        assert "upgrade-modal" not in html.text
+        assert "google-signin-btn" not in html.text
+        assert "tier-pill" not in html.text
         assert "gravity-field" in html.text
         assert "threads-svg" in html.text
 
@@ -184,10 +194,9 @@ async def test_public_api_zero_leak_headers_and_hidden_dev_surfaces(
         assert "server" not in health.headers
         _assert_zero_engine_leak(health.text, context="/v1/health")
 
-        # 4. Probe & Job responses have zero engine leakage
+        # 4. Probe & Job responses work completely free with zero auth/paywall headers & zero engine leakage
         probe = await client.post(
             "/v1/probe",
-            headers={"X-Neon-Pro-Key": "neon-pro-secret-9999"},
             json={"url": sample_pdf_url},
         )
         assert probe.status_code == 200
@@ -196,7 +205,6 @@ async def test_public_api_zero_leak_headers_and_hidden_dev_surfaces(
 
         job_resp = await client.post(
             "/v1/jobs",
-            headers={"X-Neon-Pro-Key": "neon-pro-secret-9999"},
             json={"url": sample_pdf_url},
         )
         assert job_resp.status_code == 202

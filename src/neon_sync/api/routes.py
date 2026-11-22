@@ -20,18 +20,13 @@ from neon_sync.models import (
     ProbeRequest,
     get_format_catalog,
 )
-from neon_sync.pipeline import (
-    RateLimitExceededError,
-    TierEntitlements,
-    TierLimitError,
-)
+from neon_sync.pipeline import RateLimitExceededError
 from neon_sync.security import (
     UrlValidationError,
     build_content_disposition,
     validate_and_canonicalize_url,
 )
 
-from .auth_routes import resolve_request_auth
 from .branding import (
     brand_error_detail,
     brand_job_record,
@@ -55,37 +50,12 @@ def _request_id(request: Request) -> str | None:
 
 
 def _client_key(request: Request) -> str:
-    auth_ctx = resolve_request_auth(request)
-    if auth_ctx.user is not None:
-        return f"user:{auth_ctx.user.id}"
     forwarded = request.headers.get("x-forwarded-for")
     if forwarded:
         return forwarded.split(",")[0].strip()
     if request.client:
         return request.client.host
     return "unknown"
-
-
-def _tier_context(request: Request) -> tuple[str | None, str | None]:
-    pro_key = request.headers.get("x-neon-pro-key")
-    auth_ctx = resolve_request_auth(request)
-    account_tier = auth_ctx.user.tier if auth_ctx.user is not None else None
-    return (
-        pro_key.strip() if pro_key else None,
-        account_tier,
-    )
-
-
-def _raise_tier_limit(exc: TierLimitError, request: Request) -> None:
-    raise HTTPException(
-        status_code=status.HTTP_402_PAYMENT_REQUIRED,
-        detail=brand_error_detail(
-            exc.code,
-            exc.message,
-            upgrade_hint=exc.upgrade_hint,
-            request_id=_request_id(request),
-        ),
-    ) from exc
 
 
 def _error_status_code(code: ErrorCode) -> int:
@@ -128,39 +98,11 @@ async def list_format_catalog() -> FormatCatalog:
     return get_format_catalog()
 
 
-@router.get("/tier", response_model=TierEntitlements, tags=["account"])
-async def get_tier_entitlements(request: Request) -> TierEntitlements:
-    """Return current Guest trial balance or Pro entitlements for this client."""
-    c = _container(request)
-    pro_key, account_tier = _tier_context(request)
-    return c.tier_manager.get_entitlements(
-        _client_key(request),
-        pro_key=pro_key,
-        account_tier=account_tier,
-    )
-
-
 @router.post("/probe", response_model=NormalizedMediaOutput, tags=["extraction"])
 async def probe_url(body: ProbeRequest, request: Request) -> NormalizedMediaOutput:
     """Inspect a URL and return normalized media metadata, streams, subtitles & thumbnails."""
     c = _container(request)
     client_key = _client_key(request)
-    pro_key, account_tier = _tier_context(request)
-    if body.allow_browser_fallback and c.settings.enforce_saas_tiers:
-        ent = c.tier_manager.get_entitlements(
-            client_key,
-            pro_key=pro_key,
-            account_tier=account_tier,
-        )
-        if not ent.allow_browser_fallback:
-            _raise_tier_limit(
-                TierLimitError(
-                    "ERR_PRO_FEATURE_REQUIRED",
-                    "Dynamic Web Renderer probe is a Pro feature.",
-                    upgrade_hint="Unlock Pro to enable JS-rendered media discovery.",
-                ),
-                request,
-            )
     try:
         c.probe_limiter.check_and_consume(client_key)
     except RateLimitExceededError as exc:
@@ -208,7 +150,6 @@ async def create_job(body: DownloadRequest, request: Request) -> JobRecord:
     """Queue an asynchronous Neon Sync media extraction & mastering job."""
     c = _container(request)
     client_key = _client_key(request)
-    pro_key, account_tier = _tier_context(request)
 
     try:
         validate_and_canonicalize_url(
@@ -225,16 +166,6 @@ async def create_job(body: DownloadRequest, request: Request) -> JobRecord:
                 request_id=_request_id(request),
             ),
         ) from exc
-
-    try:
-        c.tier_manager.check_and_consume_download(
-            client_key,
-            body,
-            pro_key=pro_key,
-            account_tier=account_tier,
-        )
-    except TierLimitError as exc:
-        _raise_tier_limit(exc, request)
 
     try:
         c.download_limiter.check_and_consume(client_key)
@@ -263,7 +194,6 @@ async def create_batch_jobs(body: BatchDownloadRequest, request: Request) -> lis
     """Validate and enqueue up to 10 URLs sharing the same Neon Sync extraction settings."""
     c = _container(request)
     client_key = _client_key(request)
-    pro_key, account_tier = _tier_context(request)
 
     cleaned_urls: list[str] = []
     for raw_url in body.urls:
@@ -297,34 +227,10 @@ async def create_batch_jobs(body: BatchDownloadRequest, request: Request) -> lis
             ),
         )
 
-    ent = c.tier_manager.get_entitlements(
-        client_key,
-        pro_key=pro_key,
-        account_tier=account_tier,
-    )
-    if c.settings.enforce_saas_tiers and len(cleaned_urls) > ent.max_batch_urls:
-        _raise_tier_limit(
-            TierLimitError(
-                "ERR_PRO_FEATURE_REQUIRED",
-                f"Guest batch queue supports up to {ent.max_batch_urls} URLs at once (Pro supports up to 10).",
-                upgrade_hint="Unlock Pro for 10x concurrent batch downloads.",
-            ),
-            request,
-        )
-
     shared = body.model_dump(exclude={"urls"})
     records: list[JobRecord] = []
     for url in cleaned_urls:
         dl_req = DownloadRequest(url=url, **shared)
-        try:
-            c.tier_manager.check_and_consume_download(
-                client_key,
-                dl_req,
-                pro_key=pro_key,
-                account_tier=account_tier,
-            )
-        except TierLimitError as exc:
-            _raise_tier_limit(exc, request)
         try:
             c.download_limiter.check_and_consume(client_key)
         except RateLimitExceededError as exc:

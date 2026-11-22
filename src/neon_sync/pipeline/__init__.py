@@ -11,8 +11,11 @@ from .storage import (
     StoredArtifact,
     build_storage,
 )
-from .tiers import TierEntitlements, TierLimitError, TierManager
-from .transcripts import normalize_subtitle_to_transcript
+from .transcripts import (
+    convert_json3_to_vtt,
+    convert_vtt_to_srt,
+    normalize_subtitle_to_transcript,
+)
 
 __all__ = [
     "ArtifactStorage",
@@ -26,10 +29,9 @@ __all__ = [
     "SQLiteJobStore",
     "SlidingWindowRateLimiter",
     "StoredArtifact",
-    "TierEntitlements",
-    "TierLimitError",
-    "TierManager",
     "UrlRouter",
     "build_storage",
+    "convert_json3_to_vtt",
+    "convert_vtt_to_srt",
     "normalize_subtitle_to_transcript",
 ]

@@ -127,6 +127,9 @@ async def test_web_ui_served_at_root_with_sqlite_backing(tmp_path: Path):
         assert "dev-console-modal" not in resp.text
         assert "automations-modal" not in resp.text
         assert "history-drawer" not in resp.text
+        assert "auth-modal" not in resp.text
+        assert "account-modal" not in resp.text
+        assert "upgrade-modal" not in resp.text
         assert "/static/app.css" in resp.text
         assert "/static/app.js" in resp.text
 
@@ -139,6 +142,7 @@ async def test_web_ui_served_at_root_with_sqlite_backing(tmp_path: Path):
         assert "/v1/probe" in js.text
         assert "/v1/jobs" in js.text
         assert "/v1/stream/resolve" in js.text
-        assert "/v1/tier" in js.text
+        assert "/v1/tier" not in js.text
+        assert "/v1/auth/" not in js.text
         assert "/v1/agent/run" not in js.text
         assert "/v1/logs" not in js.text

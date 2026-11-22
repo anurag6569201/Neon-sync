@@ -30,7 +30,6 @@ from neon_sync.adapters import (
     StreamlinkAdapter,
     YtDlpAdapter,
 )
-from neon_sync.auth import AuthDatabase, AuthService
 from neon_sync.config import Settings, get_settings
 from neon_sync.pipeline import (
     ArtifactStorage,
@@ -41,12 +40,10 @@ from neon_sync.pipeline import (
     LocalArtifactStorage,
     SlidingWindowRateLimiter,
     SQLiteJobStore,
-    TierManager,
     build_storage,
 )
 from neon_sync.registry import EngineRegistry
 
-from .auth_routes import auth_router
 from .branding import sanitize_public_text
 from .routes import router as v1_router
 from .stream_routes import LiveStreamRegistry, stream_router
@@ -84,11 +81,8 @@ class AppContainer:
     registry: EngineRegistry
     storage: ArtifactStorage
     job_store: JobStore
-    auth_db: AuthDatabase
-    auth: AuthService
     orchestrator: ExtractionOrchestrator
     job_manager: JobManager
-    tier_manager: TierManager
     stream_registry: LiveStreamRegistry
     probe_limiter: SlidingWindowRateLimiter
     download_limiter: SlidingWindowRateLimiter
@@ -165,17 +159,13 @@ def create_app(
     settings: Settings | None = None,
     *,
     registry: EngineRegistry | None = None,
-    auth_service: AuthService | None = None,
 ) -> FastAPI:
     cfg = settings or get_settings()
     reg = registry or build_default_registry(cfg)
     storage = build_storage(cfg)
     job_store: JobStore = SQLiteJobStore(cfg.job_db_path) if cfg.job_db_path else InMemoryJobStore()
-    auth_db = auth_service.db if auth_service is not None else AuthDatabase(cfg.auth_db_path)
-    auth = auth_service or AuthService(cfg, auth_db)
     orchestrator = ExtractionOrchestrator(cfg, reg, storage)
     job_manager = JobManager(cfg, orchestrator, store=job_store)
-    tier_manager = TierManager(cfg)
     stream_registry = LiveStreamRegistry()
 
     container = AppContainer(
@@ -183,11 +173,8 @@ def create_app(
         registry=reg,
         storage=storage,
         job_store=job_store,
-        auth_db=auth_db,
-        auth=auth,
         orchestrator=orchestrator,
         job_manager=job_manager,
-        tier_manager=tier_manager,
         stream_registry=stream_registry,
         probe_limiter=SlidingWindowRateLimiter(cfg.rate_limit_probes_per_minute, 60.0),
         download_limiter=SlidingWindowRateLimiter(cfg.rate_limit_downloads_per_hour, 3600.0),
@@ -204,7 +191,6 @@ def create_app(
             job_store.close()
         if isinstance(storage, LocalArtifactStorage):
             storage.close()
-        auth_db.close()
 
     # Disable public OpenAPI/Swagger/ReDoc schemas so internal API definitions stay hidden
     app = FastAPI(
@@ -219,7 +205,6 @@ def create_app(
     app.state.container = container
     app.add_middleware(NeonSyncWhiteLabelMiddleware)
     app.include_router(v1_router, prefix="/v1")
-    app.include_router(auth_router, prefix="/v1")
     app.include_router(stream_router, prefix="/v1")
     if _STATIC_DIR.is_dir():
         app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")

@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 
 from neon_sync.adapters import AdapterError
 from neon_sync.models import ContentType, ErrorCode, FormatInfo, ProbeRequest, ProtocolType
-from neon_sync.pipeline import RateLimitExceededError
+from neon_sync.pipeline import RateLimitExceededError, convert_json3_to_vtt
 from neon_sync.security import (
     UrlValidationError,
     build_content_disposition,
@@ -28,7 +28,6 @@ from neon_sync.security import (
     validate_and_canonicalize_url,
 )
 
-from .auth_routes import resolve_request_auth
 from .branding import brand_error_detail, sanitize_public_text
 
 if TYPE_CHECKING:
@@ -198,9 +197,6 @@ def _request_id(request: Request) -> str | None:
 
 
 def _client_key(request: Request) -> str:
-    auth_ctx = resolve_request_auth(request)
-    if auth_ctx.user is not None:
-        return f"user:{auth_ctx.user.id}"
     forwarded = request.headers.get("x-forwarded-for")
     if forwarded:
         return forwarded.split(",")[0].strip()
@@ -761,6 +757,8 @@ async def stream_subtitle_track(sub_id: str, request: Request) -> Response:
             resp = await client.get(sub.target_url, headers={"User-Agent": "Mozilla/5.0"})
             resp.raise_for_status()
             body = resp.text
+            if body.lstrip().startswith("{"):
+                body = convert_json3_to_vtt(body) or body
     except httpx.HTTPError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,

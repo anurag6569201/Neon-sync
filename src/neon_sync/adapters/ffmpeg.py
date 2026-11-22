@@ -214,19 +214,10 @@ class FfmpegAdapter(PostProcessorAdapter):
         ]
         if end_seconds is not None and end_seconds > start_seconds:
             argv.extend(["-to", f"{end_seconds:.3f}"])
-        argv.extend(
-            [
-                "-i",
-                str(input_path),
-                "-c",
-                "copy",
-                "-movflags",
-                "+faststart",
-                "-fs",
-                str(max_output_bytes),
-                str(output_path),
-            ]
-        )
+        argv.extend(["-i", str(input_path), "-c", "copy"])
+        if output_path.suffix.lower() in {".mp4", ".mov", ".m4a", ".m4v"}:
+            argv.extend(["-movflags", "+faststart"])
+        argv.extend(["-fs", str(max_output_bytes), str(output_path)])
         return argv
 
     def build_thumbnail_argv(self, input_path: Path, output_path: Path) -> list[str]:

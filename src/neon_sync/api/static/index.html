@@ -34,17 +34,6 @@
         <span class="brand-name">NEON SYNC</span>
         <span class="brand-ver mono">GRAPH</span>
       </a>
-
-      <!-- Live Quota Gauge -->
-      <button class="fuel-gauge" id="tier-pill" title="Guest trial credits & Pro unlock">
-        <span class="tier-badge mono" id="tier-badge">GUEST</span>
-        <span class="fuel-group">
-          <span class="fuel-label mono">DL</span>
-          <span class="led-strip" id="fuel-dl-leds"></span>
-          <span class="fuel-count mono num" id="fuel-dl-count">5/5</span>
-        </span>
-        <span class="unlock-cta mono" id="tier-cta">Pro ↗</span>
-      </button>
     </div>
 
     <div class="bezel-controls">
@@ -67,16 +56,25 @@
       <button class="hw-btn" id="theme-btn" title="Switch Obsidian / Ceramic theme">
         <span id="theme-text">Light</span>
       </button>
-      <button class="hw-btn auth-pill-btn" id="auth-btn" title="Sign in with Google or Email / Manage Account">
-        <span class="auth-avatar hidden" id="auth-btn-avatar"></span>
-        <i data-lucide="user" class="ico-sm" id="auth-btn-icon"></i>
-        <span id="auth-btn-label">Sign In</span>
-      </button>
     </div>
   </header>
 
+
   <!-- INFINITE SPATIAL WORKBENCH VIEWPORT -->
   <main id="viewport" class="viewport" tabindex="0">
+    <!-- Spatial Empty Canvas State -->
+    <div class="empty-canvas-hud hidden" id="empty-canvas-hud">
+      <div class="empty-hud-card">
+        <div class="empty-hud-badge mono">SPATIAL CANVAS READY</div>
+        <h2>Drop or paste any link to bloom its paths</h2>
+        <p>Press <kbd class="mono">⌘V</kbd> anywhere, drag a URL onto the canvas, or explore an interactive example tree.</p>
+        <div class="empty-hud-actions">
+          <button class="reactor-fire btn-sm" id="empty-focus-btn">Paste a Link</button>
+          <button class="ghost-btn btn-sm" id="empty-demo-btn">Load Demo Tree</button>
+        </div>
+      </div>
+    </div>
+
     <!-- World Transform Plane (Pan + Zoom) -->
     <div id="world" class="world">
       <!-- Live Animated Bezier Signal Threads Layer -->
@@ -103,17 +101,8 @@
     </div>
   </main>
 
-  <!-- Context Patch-Action Menu (Drag Cable to Empty Canvas) -->
-  <div id="patch-menu" class="patch-menu hidden">
-    <div class="patch-menu-head mono">SPAWN NEW PATH</div>
-    <button class="patch-item" data-patch-action="branch_play"><span class="patch-item-label"><i data-lucide="play" class="ico-sm" style="color:var(--live)"></i> Watch Live (Stream)</span><kbd class="mono">LIVE</kbd></button>
-    <button class="patch-item" data-patch-action="branch_video"><span class="patch-item-label"><i data-lucide="film" class="ico-sm accent"></i> Video Paths</span><kbd class="mono">VID</kbd></button>
-    <button class="patch-item" data-patch-action="branch_audio"><span class="patch-item-label"><i data-lucide="headphones" class="ico-sm" style="color:var(--violet)"></i> Audio Master</span><kbd class="mono">AUD</kbd></button>
-    <button class="patch-item" data-patch-action="branch_subtitles"><span class="patch-item-label"><i data-lucide="subtitles" class="ico-sm" style="color:var(--info)"></i> Subtitles &amp; Transcript</span><kbd class="mono">SUB</kbd></button>
-    <button class="patch-item" data-patch-action="branch_image"><span class="patch-item-label"><i data-lucide="image" class="ico-sm" style="color:var(--warn)"></i> Thumbnail / Image</span><kbd class="mono">IMG</kbd></button>
-    <div class="patch-sep"></div>
-    <button class="patch-item" data-patch-action="note"><span class="patch-item-label"><i data-lucide="sticky-note" class="ico-sm" style="color:var(--warn)"></i> Attach Studio Note</span><kbd class="mono">NOTE</kbd></button>
-  </div>
+  <!-- Dynamic Content-Aware Patch-Action Menu (Drag Cable to Empty Canvas) -->
+  <div id="patch-menu" class="patch-menu hidden"></div>
 
   <!-- CLEAN FLOATING BOTTOM SPAWN DOCK -->
   <section class="reactor-dock" id="reactor-shell">
@@ -183,209 +172,44 @@
       <span class="minimap-tag mono">MAP</span>
     </div>
     <div class="cam-controls">
-      <button class="cam-btn mono" id="add-note-btn" title="Drop a studio note on the canvas">+ Note</button>
+      <button class="cam-btn mono" id="add-note-btn" title="Drop a studio note on the canvas (N)">+ Note</button>
       <span class="cam-sep"></span>
-      <button class="cam-btn mono" id="zoom-out-btn" title="Zoom out">−</button>
-      <button class="cam-btn mono num" id="zoom-reset-btn" title="Reset zoom to 100%">100%</button>
-      <button class="cam-btn mono" id="zoom-in-btn" title="Zoom in">+</button>
+      <button class="cam-btn mono" id="zoom-out-btn" title="Zoom out (-)">−</button>
+      <button class="cam-btn mono num" id="zoom-reset-btn" title="Reset zoom to 100% (0)">100%</button>
+      <button class="cam-btn mono" id="zoom-in-btn" title="Zoom in (+)">+</button>
       <span class="cam-sep"></span>
-      <button class="cam-btn mono" id="fit-all-btn" title="Fit entire media graph in view">Fit</button>
+      <button class="cam-btn mono" id="fit-all-btn" title="Fit entire media graph in view (F)">Fit</button>
+      <button class="cam-btn mono" id="clear-canvas-btn" title="Clear all nodes from canvas">Clear</button>
+      <span class="cam-sep"></span>
+      <button class="cam-btn mono" id="shortcuts-btn" title="Keyboard & canvas shortcuts (?)">?</button>
     </div>
   </div>
 
-  <!-- Modal: Guest vs Pro Unlock Sheet -->
-  <div class="modal-backdrop hidden" id="upgrade-modal">
-    <div class="modal modal-pro">
-      <div class="modal-head">
-        <div class="row-gap">
-          <span class="pro-spark mono">PRO</span>
-          <span>Neon Sync Plans &amp; Instant Unlock</span>
-        </div>
-        <button class="ghost-btn btn-xs" id="close-upgrade-modal">Close</button>
-      </div>
-      <div class="modal-body">
-        <div class="upgrade-banner hidden" id="upgrade-reason-box"></div>
-        <div class="tier-grid">
-          <div class="tier-col">
-            <div class="tier-head">
-              <span class="mono tier-name">GUEST TRIAL</span>
-              <span class="tier-price">$0 <small>/ zero signup</small></span>
-            </div>
-            <ul class="tier-list">
-              <li>Up to <strong>1080p</strong> video (with audio or muted) &amp; 320k MP3</li>
-              <li><strong>5 downloads / hour</strong> &amp; unlimited free probing</li>
-              <li>Instant zero-download <strong>Watch Live</strong> streaming</li>
-              <li>Full infinite canvas, possibility trees &amp; notes</li>
-            </ul>
-          </div>
-          <div class="tier-col tier-col-pro">
-            <div class="tier-head">
-              <span class="mono tier-name accent">NEON PRO</span>
-              <span class="tier-price">$12 <small>/ mo</small></span>
-            </div>
-            <ul class="tier-list">
-              <li><strong>4K / 2K Ultra-HD</strong> &amp; Lossless <strong>FLAC / WAV</strong></li>
-              <li><strong>500 downloads / hour</strong> &amp; 10x Batch queue</li>
-              <li>Up to <strong>2 GiB</strong> single media extraction cap</li>
-              <li><strong>Dynamic Web Renderer</strong> for JS-driven media pages</li>
-            </ul>
-          </div>
-        </div>
-        <div class="unlock-panel">
-          <div id="panel-pro-key" class="unlock-form">
-            <div class="row-gap">
-              <input type="password" class="modal-input mono" id="pro-key-input" placeholder="Enter Neon Pro Key (dev: neon-pro-local)" />
-              <button class="reactor-fire" id="save-pro-key-btn">Activate Pro</button>
-            </div>
-            <div class="unlock-hint mono">
-              <span>Testing locally?</span>
-              <button class="link-btn mono" id="fill-dev-pro-btn">Use dev key (neon-pro-local)</button>
-              <button class="link-btn mono hidden" id="clear-keys-btn">Revert to Guest</button>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Modal: Neon Sync Authentication (Google Sign-In + Email/Password) -->
-  <div class="modal-backdrop hidden" id="auth-modal">
-    <div class="modal modal-auth" role="dialog" aria-label="Sign in to Neon Sync">
+  <!-- Modal: Spatial Canvas Keyboard & Interaction Shortcuts -->
+  <div class="modal-backdrop hidden" id="shortcuts-modal">
+    <div class="modal modal-shortcuts" role="dialog" aria-label="Spatial Canvas Shortcuts">
       <div class="modal-head">
         <div class="row-gap">
           <span class="brand-led" aria-hidden="true"></span>
-          <span>Neon Sync Account</span>
+          <span>Spatial Canvas Controls</span>
         </div>
-        <button class="ghost-btn btn-xs" id="close-auth-modal">Close</button>
+        <button class="ghost-btn btn-xs" id="close-shortcuts-modal">Close</button>
       </div>
-      <div class="modal-body auth-body">
-        <div class="auth-hero">
-          <h3 id="auth-heading">Sign in to Neon Sync</h3>
-          <p class="muted" id="auth-sub">Sync your account, manage active sessions, and unlock Pro quotas.</p>
+      <div class="modal-body">
+        <div class="shortcut-grid">
+          <div class="shortcut-row"><span>Paste &amp; spawn link anywhere</span><kbd class="mono">⌘V / Ctrl+V</kbd></div>
+          <div class="shortcut-row"><span>Focus spawn dock</span><kbd class="mono">/ or ⌘K</kbd></div>
+          <div class="shortcut-row"><span>Pan canvas anywhere</span><kbd class="mono">Space + Drag</kbd></div>
+          <div class="shortcut-row"><span>Zoom towards pointer</span><kbd class="mono">⌘ + Scroll</kbd></div>
+          <div class="shortcut-row"><span>Fit entire graph</span><kbd class="mono">F</kbd></div>
+          <div class="shortcut-row"><span>Reset zoom to 100%</span><kbd class="mono">0</kbd></div>
+          <div class="shortcut-row"><span>Auto-tidy graph layout</span><kbd class="mono">T</kbd></div>
+          <div class="shortcut-row"><span>Drop studio note</span><kbd class="mono">N / Dbl-Click</kbd></div>
+          <div class="shortcut-row"><span>Focus single node</span><kbd class="mono">Dbl-Click Header</kbd></div>
+          <div class="shortcut-row"><span>Delete selected node</span><kbd class="mono">Backspace / Del</kbd></div>
+          <div class="shortcut-row"><span>Wire or spawn path</span><kbd class="mono">Drag Output Jack</kbd></div>
+          <div class="shortcut-row"><span>Rename thread label</span><kbd class="mono">Dbl-Click Pill</kbd></div>
         </div>
-
-        <div class="auth-error-box hidden" id="auth-error-box"></div>
-
-        <button class="google-signin-btn" id="google-signin-btn" type="button">
-          <svg class="google-g-ico" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-            <path fill="#4285F4" d="M23.49 12.27c0-.79-.07-1.54-.2-2.27H12v4.3h6.44a5.5 5.5 0 0 1-2.39 3.61v3h3.87c2.26-2.08 3.57-5.15 3.57-8.64z"/>
-            <path fill="#34A853" d="M12 24c3.24 0 5.95-1.07 7.93-2.91l-3.87-3c-1.07.72-2.45 1.15-4.06 1.15-3.12 0-5.77-2.11-6.72-4.95H1.28v3.1A12 12 0 0 0 12 24z"/>
-            <path fill="#FBBC05" d="M5.28 14.29A7.2 7.2 0 0 1 4.9 12c0-.79.14-1.56.38-2.29v-3.1H1.28A12 12 0 0 0 0 12c0 1.94.46 3.77 1.28 5.39l4-3.1z"/>
-            <path fill="#EA4335" d="M12 4.76c1.76 0 3.34.61 4.58 1.79l3.44-3.44C17.95 1.19 15.24 0 12 0A12 12 0 0 0 1.28 6.61l4 3.1c.95-2.84 3.6-4.95 6.72-4.95z"/>
-          </svg>
-          <span>Continue with Google</span>
-          <span class="google-status-tag mono" id="google-status-tag">OAuth 2.0</span>
-        </button>
-
-        <div class="google-setup-box hidden mono" id="google-setup-box">
-          <div class="setup-box-title">Configure Google OAuth in <code>.env</code></div>
-          <div class="setup-box-desc">Add your Google Cloud OAuth 2.0 Web Client credentials and restart Neon Sync:</div>
-          <pre class="code-pre" id="google-setup-pre"></pre>
-        </div>
-
-        <div class="auth-divider mono"><span>OR WITH EMAIL</span></div>
-
-        <div class="unlock-tabs">
-          <button class="tac-pill active" id="auth-tab-login" type="button">Sign In</button>
-          <button class="tac-pill" id="auth-tab-register" type="button">Create Account</button>
-        </div>
-
-        <form id="auth-form" class="auth-form">
-          <div class="auth-field hidden" id="auth-name-wrap">
-            <label class="mono strip-label" for="auth-name-input">DISPLAY NAME</label>
-            <input type="text" class="modal-input" id="auth-name-input" placeholder="Anurag Singh" autocomplete="name" />
-          </div>
-          <div class="auth-field">
-            <label class="mono strip-label" for="auth-email-input">EMAIL ADDRESS</label>
-            <input type="email" class="modal-input" id="auth-email-input" placeholder="you@company.com" autocomplete="email" required />
-          </div>
-          <div class="auth-field">
-            <label class="mono strip-label" for="auth-password-input">PASSWORD</label>
-            <input type="password" class="modal-input" id="auth-password-input" placeholder="Minimum 8 characters" autocomplete="current-password" required />
-          </div>
-          <div id="turnstile-widget-wrap" class="hidden" style="display:flex;justify-content:center;padding:2px 0;"></div>
-          <button class="reactor-fire auth-submit-btn" id="auth-submit-btn" type="submit">Sign In</button>
-        </form>
-      </div>
-    </div>
-  </div>
-
-  <!-- Modal: Neon Sync Account Dashboard (Profile, Sessions & Security) -->
-  <div class="modal-backdrop hidden" id="account-modal">
-    <div class="modal modal-account" role="dialog" aria-label="Neon Sync Account Settings">
-      <div class="console-head">
-        <div class="row-gap">
-          <span class="account-avatar-lg" id="acct-avatar"></span>
-          <div>
-            <div class="row-gap">
-              <strong id="acct-name">User</strong>
-              <span class="status-pill mono" id="acct-tier-pill">FREE</span>
-            </div>
-            <div class="mono muted" id="acct-email" style="font-size:11px;">user@example.com</div>
-          </div>
-        </div>
-
-        <div class="console-tabs" role="tablist">
-          <button class="console-tab active" data-atab="profile" role="tab">Profile</button>
-          <button class="console-tab" data-atab="sessions" role="tab">Sessions &amp; Security</button>
-        </div>
-
-        <div class="row-gap">
-          <button class="ghost-btn btn-xs" id="acct-signout-btn">Sign Out</button>
-          <button class="ghost-btn btn-xs" id="close-account-modal">Close</button>
-        </div>
-      </div>
-
-      <!-- Account Tab 1: Profile & Plan -->
-      <div class="modal-body acct-panel" id="atab-profile">
-        <div class="acct-grid">
-          <div class="acct-card">
-            <div class="mono strip-label">PROFILE DETAILS</div>
-            <div class="auth-field" style="margin-top:8px;">
-              <label class="mono strip-label" for="acct-name-input">DISPLAY NAME</label>
-              <div class="row-gap">
-                <input type="text" class="modal-input" id="acct-name-input" />
-                <button class="reactor-fire btn-sm" id="acct-save-profile-btn">Save</button>
-              </div>
-            </div>
-            <div class="acct-providers-row">
-              <span class="mono strip-label">CONNECTED PROVIDERS</span>
-              <div class="row-gap" id="acct-providers-badges" style="margin-top:5px;"></div>
-            </div>
-          </div>
-
-          <div class="acct-card">
-            <div class="mono strip-label">ACCOUNT PLAN &amp; PASSWORD</div>
-            <div class="auth-field" style="margin-top:8px;">
-              <label class="mono strip-label" for="acct-pro-key-input">REDEEM NEON PRO KEY</label>
-              <div class="row-gap">
-                <input type="password" class="modal-input mono" id="acct-pro-key-input" placeholder="neon-pro-local" />
-                <button class="ghost-btn btn-sm" id="acct-upgrade-btn">Upgrade</button>
-              </div>
-            </div>
-            <div class="auth-field" style="margin-top:10px;">
-              <label class="mono strip-label">UPDATE / SET PASSWORD</label>
-              <input type="password" class="modal-input" id="acct-cur-pw" placeholder="Current password (leave blank if Google-only)" />
-              <div class="row-gap" style="margin-top:6px;">
-                <input type="password" class="modal-input" id="acct-new-pw" placeholder="New password (min 8 chars)" />
-                <button class="ghost-btn btn-sm" id="acct-save-pw-btn">Set</button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Account Tab 2: Active Sessions & Security Activity -->
-      <div class="modal-body acct-panel hidden" id="atab-sessions">
-        <div class="wb-section-head">
-          <span class="mono strip-label">ACTIVE SESSIONS</span>
-          <button class="ghost-btn btn-xs mono" id="revoke-other-sessions-btn">Sign Out Other Devices</button>
-        </div>
-        <div class="acct-list" id="acct-sessions-list"></div>
-        <div class="wb-section-head" style="margin-top:14px;">
-          <span class="mono strip-label">RECENT SECURITY ACTIVITY</span>
-        </div>
-        <div class="acct-list" id="acct-activity-list"></div>
       </div>
     </div>
   </div>

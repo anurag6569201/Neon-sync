@@ -55,16 +55,8 @@ class Settings(BaseSettings):
     browser_max_contexts: int = 2
     browser_recycle_after_jobs: int = 50
 
-    # Persistent job store, authentication DB, and S3 / Cloudflare R2 storage
+    # Persistent job store and S3 / Cloudflare R2 storage
     job_db_path: Path | None = None
-    auth_db_path: Path = Field(default=Path("./data/auth.sqlite3"))
-    auth_session_ttl_seconds: int = 7 * 24 * 3600  # 7 days
-    auth_cookie_name: str = "neon_sync_session"
-    auth_cookie_secure: bool = False  # Automatically enforced in production / HTTPS
-    google_client_id: str | None = None
-    google_client_secret: str | None = None
-    google_redirect_uri: str | None = None
-    public_base_url: str | None = None
     s3_bucket: str | None = None
     s3_endpoint_url: str | None = None
     s3_region: str = "auto"
@@ -84,14 +76,6 @@ class Settings(BaseSettings):
     rate_limit_probes_per_minute: int = 30
     rate_limit_downloads_per_hour: int = 20
     probe_cache_ttl_seconds: int = 300  # 5 minutes
-
-    # SaaS Tiers (Guest try-without-signup vs Pro)
-    enforce_saas_tiers: bool = True
-    guest_downloads_per_hour: int = 5
-    guest_max_video_height: int = 1080
-    guest_max_job_bytes: int = 500 * 1024 * 1024  # 500 MiB for guest
-    guest_max_batch_urls: int = 3
-    pro_api_keys: str = "neon-pro-local"  # Comma-separated Pro API keys for local/SaaS testing
 
     # Engine binary overrides (auto-discovered via PATH when None)
     ytdlp_bin: str = "yt-dlp"

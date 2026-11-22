@@ -13,6 +13,7 @@ import json
 import mimetypes
 import re
 import time
+import zipfile
 from datetime import UTC, datetime
 
 from neon_sync.config import Settings
@@ -100,6 +101,34 @@ _OUTDATED_HINTS = (
 )
 
 _PROGRESS_PREFIX = "__NEON_PROGRESS__:"
+
+_SUB_EXT_PRIORITY: dict[str, int] = {
+    "vtt": 0,
+    "srt": 1,
+    "srv3": 2,
+    "ttml": 3,
+    "ass": 4,
+    "json3": 5,
+}
+
+_SIDECAR_EXTS: frozenset[str] = frozenset(
+    {
+        ".vtt",
+        ".srt",
+        ".ass",
+        ".lrc",
+        ".ttml",
+        ".srv3",
+        ".json3",
+        ".jpg",
+        ".jpeg",
+        ".webp",
+        ".png",
+        ".json",
+        ".txt",
+        ".description",
+    }
+)
 
 
 def classify_ytdlp_error(stderr: str, engine_id: str = "yt-dlp") -> AdapterError:
@@ -239,10 +268,11 @@ def normalize_ytdlp_json(
                 if not isinstance(variants, list) or not variants:
                     continue
                 fmts = sorted({str(v.get("ext")) for v in variants if isinstance(v, dict) and v.get("ext")})
-                first_url = next(
-                    (v.get("url") for v in variants if isinstance(v, dict) and v.get("url")),
-                    None,
+                url_variants = [v for v in variants if isinstance(v, dict) and v.get("url")]
+                url_variants.sort(
+                    key=lambda v: _SUB_EXT_PRIORITY.get(str(v.get("ext") or "").lower(), 99)
                 )
+                first_url = url_variants[0].get("url") if url_variants else None
                 first_name = next(
                     (v.get("name") for v in variants if isinstance(v, dict) and v.get("name")),
                     None,
@@ -508,7 +538,16 @@ class YtDlpAdapter(ExtractorAdapter):
             argv.append("--write-subs")
             if plan.subtitle_mode in {"prefer_manual", "include_auto"}:
                 argv.append("--write-auto-subs")
-            argv.extend(["--sub-langs", langs, "--sub-format", f"{plan.subtitle_format}/best"])
+            argv.extend(
+                [
+                    "--sub-langs",
+                    langs,
+                    "--sub-format",
+                    f"{plan.subtitle_format}/best",
+                    "--sleep-subtitles",
+                    "2",
+                ]
+            )
         else:
             selector = build_ytdlp_format_selector(
                 mode=plan.mode,
@@ -521,13 +560,32 @@ class YtDlpAdapter(ExtractorAdapter):
             )
             argv.extend(["-f", selector])
 
+            # Server-side section clipping avoids downloading full multi-GB videos just to trim a clip
+            if plan.clip_start_seconds is not None:
+                start_tok = f"{max(0.0, plan.clip_start_seconds):.3f}"
+                if plan.clip_end_seconds is not None and plan.clip_end_seconds > plan.clip_start_seconds:
+                    end_tok = f"{plan.clip_end_seconds:.3f}"
+                else:
+                    end_tok = "inf"
+                argv.extend(["--download-sections", f"*{start_tok}-{end_tok}"])
+                if plan.mode != "audio":
+                    argv.append("--force-keyframes-at-cuts")
+            elif plan.livestream_max_duration is not None:
+                argv.extend(["--download-sections", f"*0-{plan.livestream_max_duration}"])
+
             if plan.mode == "audio":
-                if plan.audio_format and plan.audio_format != "best":
+                # If normalize_audio is requested, skip yt-dlp's lossy transcode so FFmpeg
+                # performs a single clean loudnorm + encode pass without double-transcoding.
+                if plan.audio_format and plan.audio_format != "best" and not plan.normalize_audio:
                     argv.extend(["-x", "--audio-format", plan.audio_format])
                     if plan.audio_bitrate != "auto":
                         argv.extend(["--audio-quality", plan.audio_bitrate.upper()])
             elif plan.video_container != "auto":
-                argv.extend(["--merge-output-format", plan.video_container])
+                if plan.video_only:
+                    # --merge-output-format is ignored for single-stream muted video; use --remux-video
+                    argv.extend(["--remux-video", plan.video_container])
+                else:
+                    argv.extend(["--merge-output-format", plan.video_container])
 
             if plan.playlist_items:
                 argv.extend(["--playlist-items", plan.playlist_items])
@@ -537,7 +595,16 @@ class YtDlpAdapter(ExtractorAdapter):
                 argv.append("--write-subs")
                 if plan.subtitle_mode in {"prefer_manual", "include_auto"}:
                     argv.append("--write-auto-subs")
-                argv.extend(["--sub-langs", langs, "--sub-format", f"{plan.subtitle_format}/best"])
+                argv.extend(
+                    [
+                        "--sub-langs",
+                        langs,
+                        "--sub-format",
+                        f"{plan.subtitle_format}/best",
+                        "--sleep-subtitles",
+                        "2",
+                    ]
+                )
                 if plan.embed_subtitles and plan.mode != "audio":
                     argv.append("--embed-subs")
 
@@ -672,23 +739,59 @@ class YtDlpAdapter(ExtractorAdapter):
                 engine_id=self.id,
             )
 
-        primary = files[0]
-        size = primary.stat().st_size
-        magic_mime, is_exec = detect_magic_mime(primary)
-        if is_exec:
-            primary.unlink(missing_ok=True)
-            raise AdapterError(
-                ErrorCode.ERR_VALIDATION_FAILED,
-                f"Blocked dangerous executable file ({magic_mime}).",
-                engine_id=self.id,
+        if plan.subtitles_only:
+            media_files = files
+            sidecar_files: list = []
+        else:
+            media_files = [p for p in files if p.suffix.lower() not in _SIDECAR_EXTS]
+            sidecar_files = [p for p in files if p.suffix.lower() in _SIDECAR_EXTS]
+            if not media_files:
+                media_files = files
+                sidecar_files = []
+
+        # Validate magic MIME on all downloaded media files before returning or archiving
+        checked_mimes: dict = {}
+        for mf in media_files:
+            magic_mime, is_exec = detect_magic_mime(mf)
+            if is_exec:
+                mf.unlink(missing_ok=True)
+                raise AdapterError(
+                    ErrorCode.ERR_VALIDATION_FAILED,
+                    f"Blocked dangerous executable file ({magic_mime}).",
+                    engine_id=self.id,
+                )
+            checked_mimes[mf] = magic_mime
+
+        # Package multi-item playlist downloads into a single lossless ZIP archive so items 2..N are never dropped
+        if not plan.subtitles_only and len(media_files) > 1:
+            zip_path = plan.output_dir / "playlist_archive.zip"
+            seen_names: set[str] = set()
+            with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_STORED) as zf:
+                for idx, mf in enumerate(media_files, start=1):
+                    arcname = sanitize_filename(mf.name, fallback=f"item_{idx}{mf.suffix}")
+                    if arcname in seen_names:
+                        arcname = f"{idx:03d}_{arcname}"
+                    seen_names.add(arcname)
+                    zf.write(mf, arcname=arcname)
+            return DownloadArtifact(
+                local_path=zip_path,
+                filename="playlist_archive.zip",
+                mime_type="application/zip",
+                size_bytes=zip_path.stat().st_size,
+                extra_files=sidecar_files,
             )
+
+        primary = media_files[0]
+        size = primary.stat().st_size
+        magic_mime = checked_mimes.get(primary)
+        extra_files = media_files[1:] + sidecar_files
 
         return DownloadArtifact(
             local_path=primary,
             filename=sanitize_filename(primary.name),
             mime_type=magic_mime or mimetypes.guess_type(primary.name)[0] or "application/octet-stream",
             size_bytes=size,
-            extra_files=files[1:],
+            extra_files=extra_files,
         )
 
     async def health_check(self) -> HealthReport:

@@ -3,12 +3,21 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import shutil
 import time
 import uuid
 from pathlib import Path
 
-from neon_sync.adapters import AdapterError, FfmpegAdapter, ProgressCallback, UrlContext
+import httpx
+
+from neon_sync.adapters import (
+    AdapterError,
+    DownloadArtifact,
+    FfmpegAdapter,
+    ProgressCallback,
+    UrlContext,
+)
 from neon_sync.config import Settings
 from neon_sync.models import (
     ContentType,
@@ -38,7 +47,13 @@ from neon_sync.security import (
 
 from .router import UrlRouter
 from .storage import ArtifactStorage
-from .transcripts import normalize_subtitle_to_transcript
+from .transcripts import (
+    convert_json3_to_vtt,
+    convert_vtt_to_srt,
+    normalize_subtitle_to_transcript,
+)
+
+_SRT_TS_RE = re.compile(r"(\d{2}:\d{2}:\d{2}),(\d{3})")
 
 
 class ExtractionOrchestrator:
@@ -120,6 +135,157 @@ class ExtractionOrchestrator:
         if hasattr(res, "__await__"):
             await res
 
+    async def _try_fetch_subtitle_direct(
+        self,
+        result: NormalizedMediaOutput,
+        request: DownloadRequest,
+        scratch_job_dir: Path,
+        *,
+        cancel_token: CancellationToken | None = None,
+    ) -> DownloadArtifact | None:
+        """Fast-path direct subtitle download using signed track URLs from the probe result.
+
+        Avoids re-scraping YouTube/video platforms via a second subprocess (the main cause of
+        timedtext HTTP 429 rate-limits when extracting captions-only). Always enforces SSRF
+        validation, egress proxy routing, exponential retry backoff on 429/5xx, and local
+        JSON3/VTT/SRT conversion. Returns None on any miss/error to seamlessly fall back.
+        """
+        if not request.subtitles_only or not result.subtitles:
+            return None
+
+        req_langs = [lang.strip().lower() for lang in (request.subtitle_languages or ["en"]) if lang.strip()]
+        if not req_langs:
+            req_langs = ["en"]
+
+        # Filter by subtitle_mode (manual_only vs prefer_manual / include_auto)
+        candidates = [
+            t
+            for t in result.subtitles
+            if t.url and (request.subtitle_mode != "manual_only" or not t.is_auto_generated)
+        ]
+        if not candidates:
+            return None
+
+        # Match requested languages in priority order: manual exact -> manual prefix -> auto exact -> auto prefix
+        chosen = None
+        for want_auto in (False, True):
+            if want_auto and request.subtitle_mode == "manual_only":
+                continue
+            pool = [t for t in candidates if t.is_auto_generated == want_auto]
+            for req_lang in req_langs:
+                exact = next((t for t in pool if t.language.lower() == req_lang), None)
+                if exact is not None:
+                    chosen = exact
+                    break
+                prefix = next(
+                    (
+                        t
+                        for t in pool
+                        if t.language.lower().startswith(f"{req_lang}-")
+                        or t.language.lower().startswith(f"{req_lang}_")
+                    ),
+                    None,
+                )
+                if prefix is not None:
+                    chosen = prefix
+                    break
+            if chosen is not None:
+                break
+
+        if chosen is None or not chosen.url:
+            return None
+
+        try:
+            validated_sub = validate_and_canonicalize_url(
+                chosen.url,
+                allow_private=self._settings.allow_private_addresses,
+                max_length=self._settings.max_url_length,
+            )
+        except UrlValidationError:
+            return None
+
+        client_kwargs: dict = {
+            "timeout": httpx.Timeout(15.0),
+            "follow_redirects": True,
+            "max_redirects": 4,
+            "headers": {
+                "User-Agent": (
+                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+                ),
+                "Accept": "text/vtt,text/plain,application/json,*/*;q=0.8",
+            },
+        }
+        if self._settings.egress_proxy_url:
+            client_kwargs["proxy"] = self._settings.egress_proxy_url
+
+        raw_text: str | None = None
+        backoffs = (1.0, 2.5)
+        try:
+            async with httpx.AsyncClient(**client_kwargs) as client:
+                for attempt in range(3):
+                    if cancel_token is not None and cancel_token.is_cancelled:
+                        return None
+                    resp = await client.get(validated_sub.canonical_url)
+                    if resp.status_code == 200 and resp.content:
+                        raw_text = resp.text
+                        break
+                    if resp.status_code in {429, 500, 502, 503, 504} and attempt < len(backoffs):
+                        retry_after = resp.headers.get("retry-after", "").strip()
+                        delay = backoffs[attempt]
+                        if retry_after.isdigit():
+                            delay = min(5.0, max(0.5, float(retry_after)))
+                        await asyncio.sleep(delay)
+                        continue
+                    return None
+        except (httpx.HTTPError, OSError, ValueError):
+            return None
+
+        if not raw_text or not raw_text.strip():
+            return None
+        head = raw_text.lstrip()[:32].lower()
+        if head.startswith(("<!doctype", "<html")):
+            return None
+
+        # Normalize JSON3 / VTT / SRT into the requested subtitle format locally (zero extra network hits)
+        text = raw_text
+        if text.lstrip().startswith("{"):
+            text = convert_json3_to_vtt(text)
+
+        target_fmt = (request.subtitle_format or "vtt").lower()
+        if target_fmt == "srt":
+            if text.lstrip().startswith("WEBVTT"):
+                text = convert_vtt_to_srt(text)
+            target_ext = "srt"
+            mime = "application/x-subrip; charset=utf-8"
+        elif target_fmt == "ass":
+            target_ext = "ass" if "[Script Info]" in text else "vtt"
+            mime = "text/plain; charset=utf-8" if target_ext == "ass" else "text/vtt; charset=utf-8"
+        else:
+            if not text.lstrip().startswith("WEBVTT") and "-->" in text:
+                text = "WEBVTT\n\n" + _SRT_TS_RE.sub(r"\1.\2", text)
+            target_ext = "vtt"
+            mime = "text/vtt; charset=utf-8"
+
+        if not text.strip():
+            return None
+
+        stem = sanitize_filename(
+            result.source.external_id or result.title or "subtitles",
+            fallback="subtitles",
+            max_len=80,
+        )
+        lang_tag = sanitize_filename(chosen.language, fallback="sub", max_len=24)
+        out_path = scratch_job_dir / f"{stem}.{lang_tag}.{target_ext}"
+        out_path.write_text(text, encoding="utf-8")
+
+        return DownloadArtifact(
+            local_path=out_path,
+            filename=out_path.name,
+            mime_type=mime,
+            size_bytes=out_path.stat().st_size,
+        )
+
     async def execute_download(
         self,
         job_id: str,
@@ -199,11 +365,31 @@ class ExtractionOrchestrator:
                     head_content_length=chosen_fmt.size_bytes,
                 )
 
-        # Pre-flight size quota check if known
-        if result.size_bytes is not None and result.size_bytes > self._settings.max_job_bytes:
+        # Pre-flight size quota check if known.
+        # Do NOT reject lightweight partial extractions (subtitles, audio-only, clips, lower quality,
+        # or explicitly selected smaller formats) simply because the full-length 4K master exceeds quota.
+        is_partial_extraction = (
+            request.subtitles_only
+            or request.mode == "audio"
+            or request.clip_start_seconds is not None
+            or request.video_quality != "best"
+        )
+        preflight_size = result.size_bytes
+        if request.format_id and result.available_formats:
+            selected_fmt = next(
+                (f for f in result.available_formats if f.format_id == request.format_id),
+                None,
+            )
+            preflight_size = selected_fmt.size_bytes if selected_fmt is not None else None
+
+        if (
+            not is_partial_extraction
+            and preflight_size is not None
+            and preflight_size > self._settings.max_job_bytes
+        ):
             raise AdapterError(
                 ErrorCode.ERR_QUOTA_EXCEEDED,
-                f"Content size ({result.size_bytes} bytes) exceeds max job quota ({self._settings.max_job_bytes} bytes).",
+                f"Content size ({preflight_size} bytes) exceeds max job quota ({self._settings.max_job_bytes} bytes).",
                 engine_id="orchestrator",
             )
 
@@ -276,11 +462,28 @@ class ExtractionOrchestrator:
                 timeout_seconds=self._settings.download_timeout_seconds,
             )
 
-            artifact = await downloader.download(
-                ctx,
-                plan,
-                progress_cb=progress_cb,
-                cancel_token=cancel_token,
+            artifact: DownloadArtifact | None = None
+            if request.subtitles_only:
+                artifact = await self._try_fetch_subtitle_direct(
+                    result,
+                    request,
+                    scratch_job_dir,
+                    cancel_token=cancel_token,
+                )
+
+            if artifact is None:
+                artifact = await downloader.download(
+                    ctx,
+                    plan,
+                    progress_cb=progress_cb,
+                    cancel_token=cancel_token,
+                )
+
+            # yt-dlp applies --download-sections natively; avoid double-clipping with FFmpeg
+            already_clipped = (
+                downloader.id == "yt-dlp"
+                and request.clip_start_seconds is not None
+                and not request.subtitles_only
             )
 
             # Stage 9: Zero-egress FFmpeg validation & advanced post-processing
@@ -288,9 +491,11 @@ class ExtractionOrchestrator:
             final_filename = artifact.filename
             final_mime = artifact.mime_type or "application/octet-stream"
             ffmpeg = self._registry.get_postprocessor("ffmpeg")
+            is_archive_output = final_path.suffix.lower() in {".zip", ".tar"}
 
             if (
                 not request.subtitles_only
+                and not is_archive_output
                 and isinstance(ffmpeg, FfmpegAdapter)
                 and ffmpeg.manifest().installation_status == "installed"
             ):
@@ -329,68 +534,72 @@ class ExtractionOrchestrator:
                     final_filename = f"{Path(final_filename).stem}.{target_fmt}"
                     final_mime = "image/jpeg" if target_fmt == "jpg" else f"image/{target_fmt}"
                     result.engine.post_processor = f"ffmpeg-{ffmpeg.manifest().version}"
-                elif request.clip_start_seconds is not None and result.content_type in {
-                    ContentType.VIDEO,
-                    ContentType.AUDIO,
-                }:
-                    clipped_path = scratch_job_dir / f"clipped{final_path.suffix}"
-                    final_path = await ffmpeg.clip_media(
-                        final_path,
-                        clipped_path,
-                        start_seconds=request.clip_start_seconds,
-                        end_seconds=request.clip_end_seconds,
-                        max_output_bytes=self._settings.max_job_bytes,
-                        cancel_token=cancel_token,
-                    )
-                    result.engine.post_processor = f"ffmpeg-{ffmpeg.manifest().version}"
-                elif request.mode == "audio" and (
-                    request.normalize_audio
-                    or (
-                        request.audio_format
-                        and request.audio_format != "best"
-                        and final_path.suffix.lstrip(".").lower() != request.audio_format
-                    )
-                ):
-                    target_af = (
-                        request.audio_format
-                        if (request.audio_format and request.audio_format != "best")
-                        else (final_path.suffix.lstrip(".").lower() or "mp3")
-                    )
-                    audio_path = scratch_job_dir / f"{Path(final_filename).stem}_norm.{target_af}"
-                    final_path = await ffmpeg.extract_audio(
-                        final_path,
-                        audio_path,
-                        audio_format=target_af,
-                        audio_bitrate=request.audio_bitrate,
-                        normalize_audio=request.normalize_audio,
-                        max_output_bytes=self._settings.max_job_bytes,
-                        cancel_token=cancel_token,
-                    )
-                    final_filename = f"{Path(final_filename).stem}.{target_af}"
-                    final_mime = f"audio/{target_af}"
-                    result.engine.post_processor = f"ffmpeg-{ffmpeg.manifest().version}"
-                elif (
-                    request.remux_faststart
-                    and result.content_type == ContentType.VIDEO
-                    and final_path.suffix.lower() in {".mp4", ".mov"}
-                ):
-                    fast_path = scratch_job_dir / f"{Path(final_filename).stem}_fast{final_path.suffix}"
-                    try:
-                        final_path = await ffmpeg.remux_faststart(
+                else:
+                    # Run clipping and audio normalization/conversion sequentially (not mutually exclusive)
+                    if (
+                        request.clip_start_seconds is not None
+                        and not already_clipped
+                        and result.content_type in {ContentType.VIDEO, ContentType.AUDIO}
+                    ):
+                        clipped_path = scratch_job_dir / f"clipped{final_path.suffix}"
+                        final_path = await ffmpeg.clip_media(
                             final_path,
-                            fast_path,
+                            clipped_path,
+                            start_seconds=request.clip_start_seconds,
+                            end_seconds=request.clip_end_seconds,
                             max_output_bytes=self._settings.max_job_bytes,
                             cancel_token=cancel_token,
                         )
                         result.engine.post_processor = f"ffmpeg-{ffmpeg.manifest().version}"
-                    except AdapterError as exc:
-                        result.warnings.append(
-                            WarningInfo(
-                                code="WARN_FASTSTART_SKIPPED",
-                                message=exc.message,
-                                engine="ffmpeg",
-                            )
+
+                    if request.mode == "audio" and (
+                        request.normalize_audio
+                        or (
+                            request.audio_format
+                            and request.audio_format != "best"
+                            and final_path.suffix.lstrip(".").lower() != request.audio_format
                         )
+                    ):
+                        target_af = (
+                            request.audio_format
+                            if (request.audio_format and request.audio_format != "best")
+                            else (final_path.suffix.lstrip(".").lower() or "mp3")
+                        )
+                        audio_path = scratch_job_dir / f"{Path(final_filename).stem}_norm.{target_af}"
+                        final_path = await ffmpeg.extract_audio(
+                            final_path,
+                            audio_path,
+                            audio_format=target_af,
+                            audio_bitrate=request.audio_bitrate,
+                            normalize_audio=request.normalize_audio,
+                            max_output_bytes=self._settings.max_job_bytes,
+                            cancel_token=cancel_token,
+                        )
+                        final_filename = f"{Path(final_filename).stem}.{target_af}"
+                        final_mime = f"audio/{target_af}"
+                        result.engine.post_processor = f"ffmpeg-{ffmpeg.manifest().version}"
+                    elif (
+                        request.remux_faststart
+                        and result.content_type == ContentType.VIDEO
+                        and final_path.suffix.lower() in {".mp4", ".mov"}
+                    ):
+                        fast_path = scratch_job_dir / f"{Path(final_filename).stem}_fast{final_path.suffix}"
+                        try:
+                            final_path = await ffmpeg.remux_faststart(
+                                final_path,
+                                fast_path,
+                                max_output_bytes=self._settings.max_job_bytes,
+                                cancel_token=cancel_token,
+                            )
+                            result.engine.post_processor = f"ffmpeg-{ffmpeg.manifest().version}"
+                        except AdapterError as exc:
+                            result.warnings.append(
+                                WarningInfo(
+                                    code="WARN_FASTSTART_SKIPPED",
+                                    message=exc.message,
+                                    engine="ffmpeg",
+                                )
+                            )
 
                 if result.content_type in {ContentType.VIDEO, ContentType.AUDIO}:
                     try:
