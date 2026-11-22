@@ -21,6 +21,8 @@ ImageFormat = Literal["original", "jpg", "png", "webp", "avif"]
 GalleryArchiveFormat = Literal["zip", "tar"]
 SubtitleMode = Literal["prefer_manual", "manual_only", "include_auto"]
 SubtitleFormat = Literal["vtt", "srt", "ass"]
+WebpageFormat = Literal["markdown", "text", "assets_zip", "screenshot_png", "pdf"]
+VideoOutputAction = Literal["gif", "webp_anim", "contact_sheet", "keyframe"]
 
 
 class PresetDefinition(BaseModel):
@@ -141,6 +143,7 @@ def get_format_catalog() -> FormatCatalog:
             ChoiceOption(id="video", label="Video"),
             ChoiceOption(id="audio", label="Audio Only"),
             ChoiceOption(id="image", label="Image / Gallery"),
+            ChoiceOption(id="webpage", label="Webpage / Article / Snapshot"),
             ChoiceOption(id="direct", label="Direct File"),
         ],
         video_qualities=[
@@ -326,6 +329,17 @@ class AdvancedProcessingOptions(BaseModel):
     clip_end_seconds: float | None = Field(default=None, ge=0)
     playlist_items: str | None = Field(default=None, max_length=64, pattern=r"^[0-9,\-: ]+$")
     livestream_max_duration: int | None = Field(default=None, ge=5, le=7200)
+
+    # Creative Studio & Compression (FFmpeg / Pillow)
+    video_output_action: VideoOutputAction | None = None
+    gif_fps: int = Field(default=12, ge=4, le=30)
+    gif_width: int = Field(default=640, ge=160, le=1280)
+    keyframe_seconds: float | None = Field(default=None, ge=0)
+    target_size_mb: float | None = Field(default=None, ge=1.0, le=500.0)
+    strip_metadata: bool = False
+
+    # Webpage Reader, Asset Pack & Snapshot
+    webpage_format: WebpageFormat | None = None
 
     # Naming
     custom_filename_prefix: str = Field(default="", max_length=64)

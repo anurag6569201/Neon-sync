@@ -160,6 +160,7 @@ class FfmpegAdapter(PostProcessorAdapter):
         image_format: str = "webp",
         quality: int = 90,
         max_width: int | None = None,
+        strip_metadata: bool = False,
     ) -> list[str]:
         """Build zero-egress FFmpeg image format conversion & aspect-preserving resize argv."""
         argv = [
@@ -175,6 +176,8 @@ class FfmpegAdapter(PostProcessorAdapter):
         ]
         if max_width is not None and max_width > 0:
             argv.extend(["-vf", f"scale='min({max_width},iw)':-2"])
+        if strip_metadata:
+            argv.extend(["-map_metadata", "-1"])
 
         q = max(1, min(100, quality))
         if image_format == "webp":
@@ -237,6 +240,188 @@ class FfmpegAdapter(PostProcessorAdapter):
             "1",
             "-vf",
             "scale=640:-2",
+            str(output_path),
+        ]
+
+    def build_gif_argv(
+        self,
+        input_path: Path,
+        output_path: Path,
+        *,
+        fps: int = 12,
+        width: int = 640,
+        max_output_bytes: int,
+    ) -> list[str]:
+        """Build zero-egress high-quality 2-stage palettegen+paletteuse GIF argv."""
+        vf = (
+            f"fps={max(4, min(30, fps))},scale='min({max(160, min(1280, width))},iw)':-1:flags=lanczos,"
+            "split[s0][s1];[s0]palettegen=stats_mode=diff[p];"
+            "[s1][p]paletteuse=dither=bayer:bayer_scale=3"
+        )
+        return [
+            self._ffmpeg(),
+            "-y",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-protocol_whitelist",
+            "file,pipe",
+            "-i",
+            str(input_path),
+            "-vf",
+            vf,
+            "-loop",
+            "0",
+            "-fs",
+            str(max_output_bytes),
+            str(output_path),
+        ]
+
+    def build_animated_webp_argv(
+        self,
+        input_path: Path,
+        output_path: Path,
+        *,
+        fps: int = 12,
+        width: int = 640,
+        quality: int = 78,
+        max_output_bytes: int,
+    ) -> list[str]:
+        """Build zero-egress animated WebP argv."""
+        vf = f"fps={max(4, min(30, fps))},scale='min({max(160, min(1280, width))},iw)':-1:flags=lanczos"
+        return [
+            self._ffmpeg(),
+            "-y",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-protocol_whitelist",
+            "file,pipe",
+            "-i",
+            str(input_path),
+            "-vf",
+            vf,
+            "-c:v",
+            "libwebp",
+            "-lossless",
+            "0",
+            "-compression_level",
+            "4",
+            "-q:v",
+            str(max(10, min(100, quality))),
+            "-loop",
+            "0",
+            "-an",
+            "-fs",
+            str(max_output_bytes),
+            str(output_path),
+        ]
+
+    def build_contact_sheet_argv(
+        self,
+        input_path: Path,
+        output_path: Path,
+        *,
+        duration_seconds: float | None = None,
+        cols: int = 4,
+        rows: int = 3,
+        tile_width: int = 320,
+    ) -> list[str]:
+        """Build zero-egress evenly-spaced 4x3 video thumbnail contact sheet argv."""
+        total_tiles = max(1, cols * rows)
+        dur = max(float(duration_seconds or 12.0), 1.0)
+        sample_fps = max(0.01, min(10.0, total_tiles / dur))
+        vf = (
+            f"fps={sample_fps:.4f},scale={tile_width}:-2:flags=lanczos,"
+            f"tile={cols}x{rows}:padding=6:margin=8:color=0x111114"
+        )
+        return [
+            self._ffmpeg(),
+            "-y",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-protocol_whitelist",
+            "file,pipe",
+            "-i",
+            str(input_path),
+            "-vf",
+            vf,
+            "-frames:v",
+            "1",
+            str(output_path),
+        ]
+
+    def build_keyframe_argv(
+        self,
+        input_path: Path,
+        output_path: Path,
+        *,
+        timestamp_seconds: float = 2.0,
+    ) -> list[str]:
+        """Build zero-egress single full-resolution PNG keyframe extraction argv."""
+        return [
+            self._ffmpeg(),
+            "-y",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-protocol_whitelist",
+            "file,pipe",
+            "-ss",
+            f"{max(0.0, timestamp_seconds):.3f}",
+            "-i",
+            str(input_path),
+            "-frames:v",
+            "1",
+            str(output_path),
+        ]
+
+    def build_target_size_argv(
+        self,
+        input_path: Path,
+        output_path: Path,
+        *,
+        target_size_mb: float,
+        duration_seconds: float | None,
+        max_output_bytes: int,
+    ) -> list[str]:
+        """Build zero-egress H.264 MP4 compression argv targeting a maximum MB budget."""
+        dur = max(float(duration_seconds or 30.0), 1.0)
+        total_kbps = (target_size_mb * 8192.0 * 0.90) / dur
+        audio_kbps = 96 if total_kbps >= 320 else 64
+        video_kbps = max(120, int(total_kbps - audio_kbps))
+        cap_bytes = min(max_output_bytes, int(target_size_mb * 1024 * 1024))
+        return [
+            self._ffmpeg(),
+            "-y",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-protocol_whitelist",
+            "file,pipe",
+            "-i",
+            str(input_path),
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-b:v",
+            f"{video_kbps}k",
+            "-maxrate",
+            f"{int(video_kbps * 1.25)}k",
+            "-bufsize",
+            f"{video_kbps * 2}k",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-b:a",
+            f"{audio_kbps}k",
+            "-movflags",
+            "+faststart",
+            "-fs",
+            str(cap_bytes),
             str(output_path),
         ]
 
@@ -323,10 +508,10 @@ class FfmpegAdapter(PostProcessorAdapter):
         image_format: str = "webp",
         quality: int = 90,
         max_width: int | None = None,
+        strip_metadata: bool = False,
         cancel_token: CancellationToken | None = None,
     ) -> Path:
-        """Convert & resize image using Pillow when available (supports WebP/JPG/PNG reliably),
-        falling back to zero-egress FFmpeg."""
+        """Convert, resize, and/or strip EXIF metadata using Pillow (falling back to FFmpeg)."""
         try:
             from PIL import Image, ImageOps
         except ImportError:
@@ -345,6 +530,7 @@ class FfmpegAdapter(PostProcessorAdapter):
                         img = img.resize((max_width, new_h), Image.Resampling.LANCZOS)
 
                     fmt = image_format.lower()
+                    # Saving without exif= / icc_profile= cleanly strips GPS & camera metadata
                     if fmt in {"jpg", "jpeg"}:
                         if img.mode not in {"RGB", "L"}:
                             img = img.convert("RGB")
@@ -370,6 +556,7 @@ class FfmpegAdapter(PostProcessorAdapter):
             image_format=image_format,
             quality=quality,
             max_width=max_width,
+            strip_metadata=strip_metadata,
         )
         res = await run_safe_subprocess(
             argv,
@@ -439,6 +626,226 @@ class FfmpegAdapter(PostProcessorAdapter):
             raise AdapterError(
                 ErrorCode.ERR_INTERNAL,
                 f"FFmpeg clip failed: {res.stderr[-300:]}",
+                engine_id=self.id,
+            )
+        return output_path
+
+    async def create_gif(
+        self,
+        input_path: Path,
+        output_path: Path,
+        *,
+        fps: int = 12,
+        width: int = 640,
+        max_output_bytes: int,
+        cancel_token: CancellationToken | None = None,
+    ) -> Path:
+        argv = self.build_gif_argv(
+            input_path,
+            output_path,
+            fps=fps,
+            width=width,
+            max_output_bytes=max_output_bytes,
+        )
+        res = await run_safe_subprocess(
+            argv,
+            timeout=float(self._settings.ffmpeg_timeout_seconds),
+            proxy_url=None,
+            cancel_token=cancel_token,
+        )
+        if res.returncode != 0 or not output_path.exists():
+            raise AdapterError(
+                ErrorCode.ERR_INTERNAL,
+                f"GIF creation failed: {res.stderr[-300:]}",
+                engine_id=self.id,
+            )
+        return output_path
+
+    async def create_animated_webp(
+        self,
+        input_path: Path,
+        output_path: Path,
+        *,
+        fps: int = 12,
+        width: int = 640,
+        quality: int = 78,
+        max_output_bytes: int,
+        cancel_token: CancellationToken | None = None,
+    ) -> Path:
+        argv = self.build_animated_webp_argv(
+            input_path,
+            output_path,
+            fps=fps,
+            width=width,
+            quality=quality,
+            max_output_bytes=max_output_bytes,
+        )
+        res = await run_safe_subprocess(
+            argv,
+            timeout=float(self._settings.ffmpeg_timeout_seconds),
+            proxy_url=None,
+            cancel_token=cancel_token,
+        )
+        if res.returncode == 0 and output_path.exists():
+            return output_path
+
+        # Fallback when system FFmpeg lacks libwebp: extract frames via zero-egress FFmpeg & encode via Pillow
+        import asyncio
+        import shutil as _shutil
+
+        try:
+            from PIL import Image
+        except ImportError as exc:
+            raise AdapterError(
+                ErrorCode.ERR_INTERNAL,
+                f"Animated WebP creation failed: {res.stderr[-300:]}",
+                engine_id=self.id,
+            ) from exc
+
+        frames_dir = output_path.parent / f".webp_frames_{output_path.stem}"
+        frames_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            eff_fps = max(4, min(30, fps))
+            eff_w = max(160, min(1280, width))
+            frame_argv = [
+                self._ffmpeg(),
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-protocol_whitelist",
+                "file,pipe",
+                "-i",
+                str(input_path),
+                "-vf",
+                f"fps={eff_fps},scale='min({eff_w},iw)':-2:flags=lanczos",
+                "-frames:v",
+                "240",
+                str(frames_dir / "f_%04d.png"),
+            ]
+            fres = await run_safe_subprocess(
+                frame_argv,
+                timeout=float(self._settings.ffmpeg_timeout_seconds),
+                proxy_url=None,
+                cancel_token=cancel_token,
+            )
+            frame_paths = sorted(frames_dir.glob("f_*.png"))
+            if fres.returncode != 0 or not frame_paths:
+                raise AdapterError(
+                    ErrorCode.ERR_INTERNAL,
+                    f"Animated WebP frame extraction failed: {fres.stderr[-300:]}",
+                    engine_id=self.id,
+                )
+
+            def _encode_webp() -> Path:
+                imgs = [Image.open(p).convert("RGB") for p in frame_paths]
+                try:
+                    imgs[0].save(
+                        output_path,
+                        format="WEBP",
+                        save_all=True,
+                        append_images=imgs[1:],
+                        duration=max(20, round(1000 / eff_fps)),
+                        loop=0,
+                        quality=max(10, min(100, quality)),
+                        method=4,
+                    )
+                finally:
+                    for im in imgs:
+                        im.close()
+                return output_path
+
+            return await asyncio.to_thread(_encode_webp)
+        finally:
+            _shutil.rmtree(frames_dir, ignore_errors=True)
+
+    async def create_contact_sheet(
+        self,
+        input_path: Path,
+        output_path: Path,
+        *,
+        duration_seconds: float | None = None,
+        cols: int = 4,
+        rows: int = 3,
+        tile_width: int = 320,
+        cancel_token: CancellationToken | None = None,
+    ) -> Path:
+        argv = self.build_contact_sheet_argv(
+            input_path,
+            output_path,
+            duration_seconds=duration_seconds,
+            cols=cols,
+            rows=rows,
+            tile_width=tile_width,
+        )
+        res = await run_safe_subprocess(
+            argv,
+            timeout=float(self._settings.ffmpeg_timeout_seconds),
+            proxy_url=None,
+            cancel_token=cancel_token,
+        )
+        if res.returncode != 0 or not output_path.exists():
+            raise AdapterError(
+                ErrorCode.ERR_INTERNAL,
+                f"Contact sheet generation failed: {res.stderr[-300:]}",
+                engine_id=self.id,
+            )
+        return output_path
+
+    async def extract_keyframe(
+        self,
+        input_path: Path,
+        output_path: Path,
+        *,
+        timestamp_seconds: float = 2.0,
+        cancel_token: CancellationToken | None = None,
+    ) -> Path:
+        argv = self.build_keyframe_argv(
+            input_path,
+            output_path,
+            timestamp_seconds=timestamp_seconds,
+        )
+        res = await run_safe_subprocess(
+            argv,
+            timeout=60.0,
+            proxy_url=None,
+            cancel_token=cancel_token,
+        )
+        if res.returncode != 0 or not output_path.exists():
+            raise AdapterError(
+                ErrorCode.ERR_INTERNAL,
+                f"Keyframe extraction failed: {res.stderr[-300:]}",
+                engine_id=self.id,
+            )
+        return output_path
+
+    async def compress_to_target_size(
+        self,
+        input_path: Path,
+        output_path: Path,
+        *,
+        target_size_mb: float,
+        duration_seconds: float | None,
+        max_output_bytes: int,
+        cancel_token: CancellationToken | None = None,
+    ) -> Path:
+        argv = self.build_target_size_argv(
+            input_path,
+            output_path,
+            target_size_mb=target_size_mb,
+            duration_seconds=duration_seconds,
+            max_output_bytes=max_output_bytes,
+        )
+        res = await run_safe_subprocess(
+            argv,
+            timeout=float(self._settings.ffmpeg_timeout_seconds),
+            proxy_url=None,
+            cancel_token=cancel_token,
+        )
+        if res.returncode != 0 or not output_path.exists():
+            raise AdapterError(
+                ErrorCode.ERR_INTERNAL,
+                f"Target-size compression failed: {res.stderr[-300:]}",
                 engine_id=self.id,
             )
         return output_path

@@ -14,12 +14,14 @@ import mimetypes
 import re
 import time
 import uuid
+import zipfile
 from email.message import Message
 from pathlib import Path
 from urllib.parse import urljoin, urlsplit
 
 import httpx
 from bs4 import BeautifulSoup
+from lxml import etree as lxml_etree
 
 from neon_sync import __version__
 from neon_sync.config import Settings
@@ -39,6 +41,7 @@ from neon_sync.models import (
     InvocationMode,
     JobStatus,
     MatchScore,
+    MediaItem,
     MediaMetadata,
     NormalizedMediaOutput,
     ProbeOptions,
@@ -89,7 +92,238 @@ DIRECT_FILE_EXTENSIONS: dict[str, tuple[ContentType, str]] = {
 }
 
 _USER_AGENT = f"NeonSync/{__version__} (+https://github.com/anurag6569201/Neon-sync)"
-_MAX_HTML_BYTES = 2 * 1024 * 1024  # 2 MiB HTML inspection cap
+_MAX_HTML_BYTES = 2 * 1024 * 1024  # 2 MiB HTML/XML inspection cap
+_FEED_MIMES = frozenset(
+    {
+        "application/rss+xml",
+        "application/atom+xml",
+        "application/xml",
+        "text/xml",
+    }
+)
+_FEED_EXTS = frozenset({".rss", ".atom", ".xml"})
+
+
+def _parse_itunes_duration(raw: str | None) -> float | None:
+    if not raw:
+        return None
+    s = raw.strip()
+    if s.isdigit():
+        return float(int(s))
+    parts = s.split(":")
+    try:
+        nums = [float(p) for p in parts]
+    except ValueError:
+        return None
+    if len(nums) == 3:
+        return nums[0] * 3600 + nums[1] * 60 + nums[2]
+    if len(nums) == 2:
+        return nums[0] * 60 + nums[1]
+    return None
+
+
+def _parse_rss_or_atom_feed(xml_text: str, base_url: str, max_items: int = 50) -> dict | None:
+    """Safely parse RSS 2.0 / Podcast / Atom XML feeds (XXE & network entity resolution disabled)."""
+    if not xml_text or not xml_text.strip():
+        return None
+    try:
+        parser = lxml_etree.XMLParser(resolve_entities=False, no_network=True, recover=True)
+        root = lxml_etree.fromstring(xml_text.encode("utf-8", errors="replace"), parser=parser)
+    except (lxml_etree.XMLSyntaxError, ValueError, TypeError):
+        return None
+    if root is None:
+        return None
+
+    tag_local = lxml_etree.QName(root).localname.lower() if isinstance(root.tag, str) else ""
+    if tag_local not in {"rss", "feed", "rdf"}:
+        return None
+
+    def _first_text(el, names: tuple[str, ...]) -> str | None:
+        for child in el:
+            if not isinstance(child.tag, str):
+                continue
+            loc = lxml_etree.QName(child).localname.lower()
+            if loc in names and child.text and child.text.strip():
+                return child.text.strip()
+        return None
+
+    items: list[MediaItem] = []
+    feed_title: str | None = None
+    feed_desc: str | None = None
+    feed_author: str | None = None
+    feed_thumb: str | None = None
+    has_audio_enclosures = False
+
+    if tag_local in {"rss", "rdf"}:
+        channel = next(
+            (c for c in root if isinstance(c.tag, str) and lxml_etree.QName(c).localname.lower() == "channel"),
+            root,
+        )
+        feed_title = _first_text(channel, ("title",))
+        feed_desc = _first_text(channel, ("description", "subtitle"))
+        feed_author = _first_text(channel, ("author", "creator", "managingeditor"))
+        for child in channel:
+            if not isinstance(child.tag, str):
+                continue
+            loc = lxml_etree.QName(child).localname.lower()
+            if loc == "image":
+                href = child.get("href")
+                if href:
+                    feed_thumb = urljoin(base_url, href)
+                else:
+                    u = _first_text(child, ("url",))
+                    if u:
+                        feed_thumb = urljoin(base_url, u)
+
+        raw_items = [
+            el for el in channel if isinstance(el.tag, str) and lxml_etree.QName(el).localname.lower() == "item"
+        ]
+        if not raw_items and tag_local == "rdf":
+            raw_items = [
+                el for el in root if isinstance(el.tag, str) and lxml_etree.QName(el).localname.lower() == "item"
+            ]
+
+        for idx, item_el in enumerate(raw_items[:max_items], start=1):
+            it_title = _first_text(item_el, ("title",)) or f"Episode {idx}"
+            it_link = _first_text(item_el, ("link",))
+            it_dur = _parse_itunes_duration(_first_text(item_el, ("duration",)))
+            it_guid = _first_text(item_el, ("guid",))
+            it_thumb = feed_thumb
+            enc_url: str | None = None
+            enc_mime: str | None = None
+
+            for ch in item_el:
+                if not isinstance(ch.tag, str):
+                    continue
+                loc = lxml_etree.QName(ch).localname.lower()
+                if (loc == "enclosure" and ch.get("url")) or (
+                    loc == "content" and ch.get("url") and not enc_url
+                ):
+                    enc_url = urljoin(base_url, str(ch.get("url")))
+                    enc_mime = str(ch.get("type") or "") or None
+                elif loc in {"image", "thumbnail"} and ch.get("href"):
+                    it_thumb = urljoin(base_url, str(ch.get("href")))
+                elif loc == "thumbnail" and ch.get("url"):
+                    it_thumb = urljoin(base_url, str(ch.get("url")))
+
+            target_url = enc_url or (urljoin(base_url, it_link) if it_link else base_url)
+            mime_low = (enc_mime or "").lower()
+            if mime_low.startswith("audio/") or (enc_url and Path(urlsplit(enc_url).path).suffix.lower() in {".mp3", ".m4a", ".ogg", ".opus", ".wav"}):
+                kind = "audio"
+                has_audio_enclosures = True
+            elif mime_low.startswith("video/"):
+                kind = "video"
+            else:
+                kind = "webpage"
+
+            items.append(
+                MediaItem(
+                    index=idx,
+                    external_id=it_guid[:64] if it_guid else f"ep_{idx}",
+                    url=target_url,
+                    title=it_title,
+                    content_type=kind,
+                    mime_type=enc_mime,
+                    duration_seconds=it_dur,
+                    thumbnail_url=it_thumb,
+                    direct_media_url=enc_url,
+                )
+            )
+    else:
+        # Atom <feed>
+        feed_title = _first_text(root, ("title",))
+        feed_desc = _first_text(root, ("subtitle",))
+        for ch in root:
+            if not isinstance(ch.tag, str):
+                continue
+            loc = lxml_etree.QName(ch).localname.lower()
+            if loc == "author":
+                feed_author = _first_text(ch, ("name",)) or feed_author
+            elif loc in {"logo", "icon"} and ch.text and ch.text.strip():
+                feed_thumb = urljoin(base_url, ch.text.strip())
+
+        entries = [
+            el for el in root if isinstance(el.tag, str) and lxml_etree.QName(el).localname.lower() == "entry"
+        ]
+        for idx, entry in enumerate(entries[:max_items], start=1):
+            it_title = _first_text(entry, ("title",)) or f"Entry {idx}"
+            it_id = _first_text(entry, ("id",))
+            enc_url = None
+            enc_mime = None
+            alt_url = None
+            for ch in entry:
+                if not isinstance(ch.tag, str):
+                    continue
+                if lxml_etree.QName(ch).localname.lower() == "link" and ch.get("href"):
+                    rel = (ch.get("rel") or "alternate").lower()
+                    href = urljoin(base_url, str(ch.get("href")))
+                    if rel == "enclosure":
+                        enc_url = href
+                        enc_mime = ch.get("type")
+                    elif not alt_url:
+                        alt_url = href
+            target_url = enc_url or alt_url or base_url
+            is_audio = bool(enc_mime and enc_mime.lower().startswith("audio/"))
+            if is_audio:
+                has_audio_enclosures = True
+            items.append(
+                MediaItem(
+                    index=idx,
+                    external_id=it_id[:64] if it_id else f"entry_{idx}",
+                    url=target_url,
+                    title=it_title,
+                    content_type="audio" if is_audio else "webpage",
+                    mime_type=enc_mime,
+                    thumbnail_url=feed_thumb,
+                    direct_media_url=enc_url,
+                )
+            )
+
+    return {
+        "title": feed_title or "RSS Feed",
+        "description": feed_desc,
+        "author": feed_author,
+        "thumbnail_url": feed_thumb,
+        "feed_type": "podcast" if has_audio_enclosures else "rss",
+        "items": items,
+    }
+
+
+def _extract_article_text(html: str, *, fmt: str = "markdown", url: str | None = None) -> str:
+    """Extract clean article Markdown or plain text via trafilatura with BeautifulSoup fallback."""
+    try:
+        import trafilatura
+
+        out_fmt = "markdown" if fmt == "markdown" else "txt"
+        extracted = trafilatura.extract(
+            html,
+            url=url,
+            output_format=out_fmt,
+            include_links=(fmt == "markdown"),
+            include_formatting=(fmt == "markdown"),
+            include_tables=True,
+        )
+        if extracted and extracted.strip():
+            return extracted.strip()
+    except (ImportError, ValueError, TypeError, RuntimeError):
+        extracted = None
+
+    soup = BeautifulSoup(html, "lxml")
+    for junk in soup(["script", "style", "noscript", "nav", "footer", "header", "aside"]):
+        junk.decompose()
+    blocks: list[str] = []
+    for el in soup.find_all(["h1", "h2", "h3", "p", "li"]):
+        txt = re.sub(r"\s+", " ", el.get_text(" ", strip=True)).strip()
+        if not txt:
+            continue
+        if fmt == "markdown" and el.name in {"h1", "h2", "h3"}:
+            level = int(el.name[1])
+            blocks.append(f"{'#' * level} {txt}")
+        elif fmt == "markdown" and el.name == "li":
+            blocks.append(f"- {txt}")
+        else:
+            blocks.append(txt)
+    return "\n\n".join(blocks).strip()
 
 
 def _parse_content_disposition_filename(header_value: str | None) -> str | None:
@@ -206,6 +440,44 @@ def _extract_html_metadata(html: str, base_url: str) -> dict:
             if ssrc and not str(ssrc).startswith(("blob:", "data:")):
                 embedded_media.append((urljoin(base_url, str(ssrc)), kind))
 
+    # Inspect inline <svg> logos & valid page <img> assets (strip any <script> tags from SVGs)
+    svg_strings: list[str] = []
+    for svg in soup.find_all("svg"):
+        for sc in svg.find_all("script"):
+            sc.decompose()
+        raw_svg = str(svg)
+        if 30 <= len(raw_svg) <= 250_000:
+            if "xmlns=" not in raw_svg[:120]:
+                raw_svg = raw_svg.replace("<svg", '<svg xmlns="http://www.w3.org/2000/svg"', 1)
+            svg_strings.append(raw_svg)
+        if len(svg_strings) >= 40:
+            break
+
+    page_images: list[str] = []
+    seen_imgs: set[str] = set()
+    if og_image:
+        og_abs = urljoin(base_url, og_image)
+        seen_imgs.add(og_abs)
+        page_images.append(og_abs)
+    for img in soup.find_all("img"):
+        src = img.get("src") or img.get("data-src")
+        if not src:
+            continue
+        s = str(src).strip()
+        if not s or s.startswith(("data:", "blob:", "javascript:")):
+            continue
+        # Skip 1x1 tracking pixels when dimensions are explicit
+        w_attr = str(img.get("width") or "").strip()
+        h_attr = str(img.get("height") or "").strip()
+        if w_attr in {"0", "1"} or h_attr in {"0", "1"}:
+            continue
+        abs_img = urljoin(base_url, s)
+        if abs_img not in seen_imgs:
+            seen_imgs.add(abs_img)
+            page_images.append(abs_img)
+        if len(page_images) >= 32:
+            break
+
     # Deduplicate embedded media preserving order
     seen: set[str] = set()
     unique_media: list[tuple[str, str]] = []
@@ -213,6 +485,10 @@ def _extract_html_metadata(html: str, base_url: str) -> dict:
         if u not in seen:
             seen.add(u)
             unique_media.append((u, kind))
+
+    article_preview = _extract_article_text(html, fmt="txt", url=base_url)
+    word_count = len(article_preview.split()) if article_preview else 0
+    preview_svgs = [s for s in svg_strings if len(s) <= 24_000][:8]
 
     return {
         "title": title,
@@ -222,6 +498,20 @@ def _extract_html_metadata(html: str, base_url: str) -> dict:
         "canonical_url": canonical_url,
         "embedded_media": unique_media,
         "json_ld_count": len(json_ld_items),
+        "svg_strings": svg_strings,
+        "page_images": page_images,
+        "webpage_stats": {
+            "word_count": word_count,
+            "reading_minutes": max(1, round(word_count / 220)) if word_count >= 35 else 0,
+            "has_article": word_count >= 35,
+            "excerpt": article_preview[:750] if article_preview else "",
+            "image_count": len(page_images),
+            "svg_count": len(svg_strings),
+        },
+        "webpage_assets_preview": {
+            "svgs": preview_svgs,
+            "images": page_images[:12],
+        },
     }
 
 
@@ -277,12 +567,20 @@ class DirectHttpAdapter(ExtractorAdapter):
         ext = Path(urlsplit(ctx.url).path).suffix.lower()
         ct = (ctx.head_content_type or "").split(";")[0].strip().lower()
 
-        if ctx.mode == "direct":
+        if ctx.mode in {"direct", "webpage"}:
             return MatchScore(
                 engine_id=self.id,
-                confidence=95,
-                reason="Explicit direct download mode requested.",
-                predicted_content_type="file",
+                confidence=96,
+                reason=f"Explicit {ctx.mode} extraction mode requested.",
+                predicted_content_type="webpage" if ctx.mode == "webpage" else "file",
+            )
+
+        if ct in _FEED_MIMES or ext in _FEED_EXTS:
+            return MatchScore(
+                engine_id=self.id,
+                confidence=96,
+                reason="Podcast / RSS / Atom feed detected.",
+                predicted_content_type="playlist",
             )
 
         if ct and ct not in {"text/html", "application/xhtml+xml"}:
@@ -414,14 +712,56 @@ class DirectHttpAdapter(ExtractorAdapter):
                     ) or sanitize_filename(Path(urlsplit(final_url).path).name or ctx.domain)
 
                     content_type = _classify_mime(mime, final_url)
+                    is_feed = mime in _FEED_MIMES or Path(urlsplit(final_url).path).suffix.lower() in _FEED_EXTS
                     title = filename
                     description: str | None = None
                     thumbnail: ThumbnailInfo | None = None
                     author: AuthorInfo | None = None
                     formats: list[FormatInfo] = []
+                    items: list[MediaItem] = []
                     extra_meta: dict = {"http_status": resp.status_code}
 
-                    if content_type == ContentType.WEBPAGE:
+                    if is_feed:
+                        buf = bytearray()
+                        async for chunk in resp.aiter_bytes(chunk_size=16384):
+                            buf.extend(chunk)
+                            if len(buf) >= _MAX_HTML_BYTES:
+                                break
+                        xml_text = buf.decode(resp.encoding or "utf-8", errors="replace")
+                        feed = _parse_rss_or_atom_feed(xml_text, final_url, max_items=options.max_items)
+                        if feed is not None:
+                            content_type = ContentType.PLAYLIST
+                            title = feed["title"] or title
+                            description = feed["description"]
+                            if feed["thumbnail_url"]:
+                                thumbnail = ThumbnailInfo(url=feed["thumbnail_url"])
+                            if feed["author"]:
+                                author = AuthorInfo(name=feed["author"])
+                            items = feed["items"]
+                            extra_meta["feed_type"] = feed["feed_type"]
+                            first_audio = next((it for it in items if it.direct_media_url), None)
+                            if first_audio and first_audio.direct_media_url:
+                                fext = Path(urlsplit(first_audio.direct_media_url).path).suffix.lstrip(".").lower() or "mp3"
+                                formats.append(
+                                    FormatInfo(
+                                        format_id="latest-episode",
+                                        label=f"Latest Episode ({fext.upper()})",
+                                        container=fext,
+                                        mime_type=first_audio.mime_type or f"audio/{fext}",
+                                        protocol=(
+                                            ProtocolType.HTTPS
+                                            if first_audio.direct_media_url.startswith("https://")
+                                            else ProtocolType.HTTP
+                                        ),
+                                        has_video=(first_audio.content_type == "video"),
+                                        has_audio=True,
+                                        direct_media_url=first_audio.direct_media_url,
+                                    )
+                                )
+                        else:
+                            is_feed = False
+
+                    if not is_feed and content_type == ContentType.WEBPAGE:
                         buf = bytearray()
                         async for chunk in resp.aiter_bytes(chunk_size=16384):
                             buf.extend(chunk)
@@ -438,6 +778,8 @@ class DirectHttpAdapter(ExtractorAdapter):
                         if parsed["canonical_url"]:
                             extra_meta["canonical_url"] = parsed["canonical_url"]
                         extra_meta["json_ld_count"] = parsed["json_ld_count"]
+                        extra_meta["webpage_stats"] = parsed["webpage_stats"]
+                        extra_meta["webpage_assets_preview"] = parsed["webpage_assets_preview"]
 
                         for idx, (media_url, kind) in enumerate(parsed["embedded_media"], start=1):
                             ext = Path(urlsplit(media_url).path).suffix.lstrip(".").lower() or (
@@ -471,7 +813,7 @@ class DirectHttpAdapter(ExtractorAdapter):
                                 if any(f.has_video for f in formats)
                                 else ContentType.AUDIO
                             )
-                    else:
+                    elif not is_feed:
                         # Peek first 64 bytes for magic-byte validation without downloading full file
                         peek = b""
                         async for chunk in resp.aiter_bytes(chunk_size=64):
@@ -542,7 +884,12 @@ class DirectHttpAdapter(ExtractorAdapter):
             size_bytes=size_bytes,
             author=author,
             available_formats=formats,
-            metadata=MediaMetadata(extra=extra_meta),
+            items=items,
+            metadata=MediaMetadata(
+                item_count_total=len(items) if items else 1,
+                item_count_returned=len(items) if items else 1,
+                extra=extra_meta,
+            ),
             download=DownloadInfo(status=DownloadStatus.NOT_REQUESTED),
             engine=EngineProvenance(
                 engine_used=self.id,
@@ -551,6 +898,156 @@ class DirectHttpAdapter(ExtractorAdapter):
                 probe_duration_ms=elapsed_ms,
             ),
             warnings=warnings,
+        )
+
+    async def _download_webpage_transform(
+        self,
+        ctx: UrlContext,
+        plan: DownloadPlan,
+        *,
+        cancel_token: CancellationToken | None = None,
+    ) -> DownloadArtifact:
+        """Extract clean Article Markdown/Text, RSS Feed Index, or Page SVG/Image Asset Pack."""
+        fmt = plan.webpage_format or "markdown"
+        async with self._build_client(float(plan.timeout_seconds)) as client:
+            resp = await client.get(ctx.url)
+            if resp.status_code >= 400:
+                raise AdapterError(
+                    ErrorCode.ERR_NOT_FOUND if resp.status_code == 404 else ErrorCode.ERR_INTERNAL,
+                    f"Webpage fetch failed with HTTP {resp.status_code}.",
+                    engine_id=self.id,
+                    retryable=resp.status_code in {429, 502, 503, 504},
+                )
+            final_url = str(resp.url)
+            validate_and_canonicalize_url(
+                final_url,
+                allow_private=self._settings.allow_private_addresses,
+                max_length=self._settings.max_url_length,
+            )
+            raw_text = resp.content[:_MAX_HTML_BYTES].decode(resp.encoding or "utf-8", errors="replace")
+            mime = resp.headers.get("content-type", "").split(";")[0].strip().lower()
+
+            # Check if this is an RSS / Podcast feed -> export crisp episode Markdown index
+            if mime in _FEED_MIMES or Path(urlsplit(final_url).path).suffix.lower() in _FEED_EXTS:
+                feed = _parse_rss_or_atom_feed(raw_text, final_url, max_items=plan.max_items)
+                if feed is not None:
+                    lines = [f"# {feed['title']}", "", f"> Source: {final_url}"]
+                    if feed.get("author"):
+                        lines.append(f"> Author: {feed['author']}")
+                    if feed.get("description"):
+                        lines.extend(["", feed["description"]])
+                    lines.extend(["", "## Episodes / Entries", ""])
+                    for it in feed["items"]:
+                        dur_str = f" ({int(it.duration_seconds // 60)}m)" if it.duration_seconds else ""
+                        lines.append(f"- **{it.index}. {it.title}**{dur_str} — {it.url}")
+                    body = "\n".join(lines).strip() + "\n"
+                    stem = sanitize_filename(feed["title"], fallback="feed_index", max_len=80)
+                    out_path = ensure_safe_path(plan.output_dir, plan.output_dir / f"{stem}.md")
+                    out_path.write_text(body, encoding="utf-8")
+                    return DownloadArtifact(
+                        local_path=out_path,
+                        filename=out_path.name,
+                        mime_type="text/markdown; charset=utf-8",
+                        size_bytes=out_path.stat().st_size,
+                    )
+
+            parsed = _extract_html_metadata(raw_text, final_url)
+            title = parsed["title"] or ctx.domain
+            stem = sanitize_filename(title, fallback="article", max_len=80)
+
+            if fmt in {"markdown", "text"}:
+                extracted = _extract_article_text(raw_text, fmt=fmt, url=final_url)
+                if not extracted:
+                    raise AdapterError(
+                        ErrorCode.ERR_NOT_FOUND,
+                        "No readable article content was found on this webpage.",
+                        engine_id=self.id,
+                    )
+                if fmt == "markdown":
+                    header = [f"# {title}", "", f"> Source: {final_url}"]
+                    if parsed.get("author"):
+                        header.append(f"> Author: {parsed['author']}")
+                    header.extend(["", "---", ""])
+                    body = "\n".join(header) + extracted + "\n"
+                    out_path = ensure_safe_path(plan.output_dir, plan.output_dir / f"{stem}.md")
+                    out_path.write_text(body, encoding="utf-8")
+                    return DownloadArtifact(
+                        local_path=out_path,
+                        filename=out_path.name,
+                        mime_type="text/markdown; charset=utf-8",
+                        size_bytes=out_path.stat().st_size,
+                    )
+                body = f"{title}\nSource: {final_url}\n\n{extracted}\n"
+                out_path = ensure_safe_path(plan.output_dir, plan.output_dir / f"{stem}.txt")
+                out_path.write_text(body, encoding="utf-8")
+                return DownloadArtifact(
+                    local_path=out_path,
+                    filename=out_path.name,
+                    mime_type="text/plain; charset=utf-8",
+                    size_bytes=out_path.stat().st_size,
+                )
+
+            if fmt == "assets_zip":
+                zip_path = ensure_safe_path(plan.output_dir, plan.output_dir / f"{stem}_assets.zip")
+                added = 0
+                seen_names: set[str] = set()
+                with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+                    for idx, svg_code in enumerate(parsed["svg_strings"], start=1):
+                        name = f"svgs/vector_{idx:02d}.svg"
+                        zf.writestr(name, svg_code.encode("utf-8"))
+                        added += 1
+
+                    for idx, img_url in enumerate(parsed["page_images"][:24], start=1):
+                        if cancel_token and cancel_token.is_cancelled:
+                            break
+                        try:
+                            validate_and_canonicalize_url(
+                                img_url,
+                                allow_private=self._settings.allow_private_addresses,
+                                max_length=self._settings.max_url_length,
+                            )
+                            ir = await client.get(img_url, timeout=10.0)
+                            if ir.status_code != 200 or not ir.content or len(ir.content) > 10 * 1024 * 1024:
+                                continue
+                            magic_mime, is_exec = detect_magic_mime(ir.content[:64])
+                            if is_exec:
+                                continue
+                            ct_img = (magic_mime or ir.headers.get("content-type", "")).split(";")[0].strip().lower()
+                            if not ct_img.startswith("image/"):
+                                continue
+                            ext = (mimetypes.guess_extension(ct_img) or Path(urlsplit(img_url).path).suffix or ".jpg")
+                            if ext == ".jpe":
+                                ext = ".jpg"
+                            raw_name = sanitize_filename(Path(urlsplit(img_url).path).name or f"image_{idx:02d}{ext}", fallback=f"image_{idx:02d}{ext}")
+                            if not Path(raw_name).suffix:
+                                raw_name = f"{raw_name}{ext}"
+                            arc = f"images/{raw_name}"
+                            if arc in seen_names:
+                                arc = f"images/{idx:02d}_{raw_name}"
+                            seen_names.add(arc)
+                            zf.writestr(arc, ir.content)
+                            added += 1
+                        except (UrlValidationError, httpx.HTTPError, OSError):
+                            continue
+
+                if added == 0:
+                    zip_path.unlink(missing_ok=True)
+                    raise AdapterError(
+                        ErrorCode.ERR_NOT_FOUND,
+                        "No downloadable SVG or image assets were found on this webpage.",
+                        engine_id=self.id,
+                    )
+                return DownloadArtifact(
+                    local_path=zip_path,
+                    filename=zip_path.name,
+                    mime_type="application/zip",
+                    size_bytes=zip_path.stat().st_size,
+                )
+
+        raise AdapterError(
+            ErrorCode.ERR_UNSUPPORTED_URL,
+            f"Unsupported webpage extraction format '{fmt}'.",
+            engine_id=self.id,
         )
 
     async def download(
@@ -562,6 +1059,8 @@ class DirectHttpAdapter(ExtractorAdapter):
         cancel_token: CancellationToken | None = None,
     ) -> DownloadArtifact:
         plan.output_dir.mkdir(parents=True, exist_ok=True)
+        if plan.webpage_format in {"markdown", "text", "assets_zip"}:
+            return await self._download_webpage_transform(ctx, plan, cancel_token=cancel_token)
         temp_file = ensure_safe_path(plan.output_dir, plan.output_dir / f"{uuid.uuid4().hex}.part")
         warnings: list[WarningInfo] = []
 

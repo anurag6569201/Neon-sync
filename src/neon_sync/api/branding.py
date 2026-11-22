@@ -36,6 +36,7 @@ _SANITIZE_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\baria2c?\b", re.IGNORECASE), "Neon Sync"),
     (re.compile(r"\b(?:ffprobe|ffmpeg)\b", re.IGNORECASE), "Neon Sync Media"),
     (re.compile(r"\b(?:playwright|chromium)\b", re.IGNORECASE), "Neon Sync Renderer"),
+    (re.compile(r"\b(?:trafilatura|beautifulsoup4?|lxml|pillow)\b", re.IGNORECASE), "Neon Sync"),
     (re.compile(r"\bdirect[-_]?http\b", re.IGNORECASE), "Neon Sync"),
     (re.compile(r"\bEngine\s+Registry\b", re.IGNORECASE), "Neon Sync Core"),
     (re.compile(r"\bcandidate\s+engines?\b", re.IGNORECASE), "Neon Sync pipeline"),
@@ -148,8 +149,16 @@ def build_public_capabilities(manifests: list[EngineManifest]) -> list[Capabilit
             name="Dynamic Web Renderer",
             category="rendering",
             status=_status_for("playwright", optional=True),
-            description="Isolated dynamic page rendering for JavaScript-driven media discovery.",
-            supported_types=["webpage", "spa"],
+            description="Isolated page rendering for JS media discovery, full-page snapshots, and printable PDFs.",
+            supported_types=["webpage", "spa", "pdf", "png"],
+        ),
+        CapabilityStatus(
+            id="neon-web-reader",
+            name="Web Reader, Assets & Feeds",
+            category="extraction",
+            status=_status_for("direct-http"),
+            description="Clean article Markdown/text, webpage SVG & image asset packs, and Podcast/RSS feeds.",
+            supported_types=["webpage", "markdown", "rss", "podcast"],
         ),
     ]
 

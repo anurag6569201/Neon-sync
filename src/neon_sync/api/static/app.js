@@ -35,6 +35,20 @@
     spaceHeld: false,
   };
 
+  const playerHls = new Map();
+  function destroyPlayerHls(nodeId) {
+    const inst = playerHls.get(nodeId);
+    if (inst) {
+      try { inst.destroy(); } catch (_) {}
+      playerHls.delete(nodeId);
+    }
+    const n = state.nodes.get(nodeId);
+    if (n && n.hls) {
+      try { n.hls.destroy(); } catch (_) {}
+      n.hls = null;
+    }
+  }
+
   try {
     const saved = JSON.parse(localStorage.getItem(LAYOUT_STORAGE_KEY) || "{}");
     state.savedPositions = saved.positions || {};
@@ -536,6 +550,7 @@
     "refresh-cw": '<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>',
     compass: '<circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/>',
     archive: '<rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/>',
+    shield: '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/>',
     "external-link": '<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
   };
 
@@ -748,13 +763,19 @@
     const items = probe.items || [];
     const itemCount = probe.metadata?.item_count_total || items.length;
     const thumbnail = probe.thumbnail?.url ? probe.thumbnail : null;
+    const webpageStats = probe.metadata?.extra?.webpage_stats || null;
+    const webpageAssets = probe.metadata?.extra?.webpage_assets_preview || null;
+    const feedType = probe.metadata?.extra?.feed_type || null;
 
-    // Source image width (for smart non-upscaling resize options)
+    // Source image width & height (for smart non-upscaling resize & aspect-ratio calculation)
     let sourceWidth = null;
+    let sourceHeight = null;
     if (ct === "image") {
       sourceWidth = formats[0]?.width || thumbnail?.width || null;
+      sourceHeight = formats[0]?.height || thumbnail?.height || null;
     } else if (thumbnail?.width) {
       sourceWidth = thumbnail.width;
+      sourceHeight = thumbnail.height || null;
     }
 
     return {
@@ -777,6 +798,10 @@
       itemCount,
       thumbnail,
       sourceWidth,
+      sourceHeight,
+      webpageStats,
+      webpageAssets,
+      feedType,
     };
   }
 
@@ -864,8 +889,53 @@
       return list;
     }
 
-    // 6. Playlist -> Playlist Video, Playlist Audio, Browse Individual Entries
+    // 6. Playlist or Podcast / RSS Feed
     if (ct === "playlist") {
+      if (cap.feedType) {
+        const isPod = cap.feedType === "podcast";
+        const list = [];
+        if (items.length > 0) {
+          list.push({
+            key: "feed_items",
+            theme: isPod ? "audio" : "subtitles",
+            icon: "list",
+            title: isPod ? `Browse Episodes (${items.length})` : `Browse Entries (${items.length})`,
+            sub: "Spawn any episode onto the canvas",
+            edgeLabel: isPod ? "EPISODES" : "ENTRIES",
+            detected: true,
+            nextStep: "discovered_items",
+            delta: {},
+          });
+        }
+        if (canStreamLive) {
+          list.push({
+            key: "watch_live",
+            theme: "live",
+            icon: "play",
+            title: "Listen Latest Live",
+            sub: "Stream newest episode immediately",
+            edgeLabel: "LIVE PLAY",
+            isLeaf: true,
+            detected: true,
+            delta: { _livePlay: "audio" },
+          });
+        }
+        list.push({
+          key: "feed_md",
+          theme: "subtitles",
+          icon: "file-text",
+          title: "Feed Index (Markdown)",
+          sub: `Export ${items.length || itemCount} links & titles as .md`,
+          edgeLabel: "INDEX MD",
+          detected: true,
+          isLeaf: true,
+          delta: { mode: "webpage", webpage_format: "markdown" },
+        });
+        if (thumbnail) {
+          list.push({ key: "image", theme: "image", icon: "image", title: "Show Cover Art", sub: "Original · WebP · PNG · JPEG", edgeLabel: "COVER", detected: true, nextStep: "image_format", delta: { mode: "image", _useThumbnailUrl: true } });
+        }
+        return list;
+      }
       const countLbl = itemCount ? `${itemCount} items` : "Playlist";
       const list = [
         { key: "pl_video", theme: "video", icon: "film", title: "Playlist Video", sub: `${countLbl} · Pick range & quality`, edgeLabel: "PL VIDEO", detected: true, nextStep: "playlist_range", delta: { mode: "video" } },
@@ -956,9 +1026,55 @@
       return list;
     }
 
-    // 9. Webpage / Unknown -> Surface real discovered embedded media OR Deep Scan (Dynamic Web Renderer)
+    // 9. Webpage / Unknown -> Article Reader, Page Snapshot, SVG/Image Assets, Embedded Media & Deep Scan
     if (ct === "webpage" || ct === "unknown") {
       const list = [];
+      const ws = cap.webpageStats;
+      if (ws?.has_article) {
+        const readStr = ws.reading_minutes ? `~${ws.reading_minutes} min read · ` : "";
+        list.push({
+          key: "web_article",
+          theme: "subtitles",
+          icon: "file-text",
+          title: "Clean Article",
+          sub: `${readStr}${ws.word_count.toLocaleString()} words · Preview, Copy, .md / .txt`,
+          edgeLabel: "ARTICLE",
+          detected: true,
+          inputKind: "article_preview",
+          isLeaf: true,
+          delta: { mode: "webpage", webpage_format: "markdown" },
+        });
+      }
+      list.push({
+        key: "web_snapshot",
+        theme: "live",
+        icon: "camera",
+        title: "Page Snapshot",
+        sub: "Full-Page PNG Screenshot or Printable PDF",
+        edgeLabel: "SNAPSHOT",
+        detected: true,
+        nextStep: "webpage_snapshot",
+        delta: { mode: "webpage" },
+      });
+      const totalAssets = (ws?.image_count || 0) + (ws?.svg_count || 0);
+      if (totalAssets > 0) {
+        const assetBits = [
+          ws.svg_count ? `${ws.svg_count} SVG${ws.svg_count === 1 ? "" : "s"}` : null,
+          ws.image_count ? `${ws.image_count} image${ws.image_count === 1 ? "" : "s"}` : null,
+        ].filter(Boolean).join(" · ");
+        list.push({
+          key: "web_assets",
+          theme: "image",
+          icon: "archive",
+          title: "Page Assets & Logos",
+          sub: `${assetBits} · Preview, Copy SVG, or ZIP`,
+          edgeLabel: "ASSETS",
+          detected: true,
+          inputKind: "assets_preview",
+          isLeaf: true,
+          delta: { mode: "webpage", webpage_format: "assets_zip" },
+        });
+      }
       if (items.length > 0) {
         list.push({
           key: "web_items",
@@ -992,9 +1108,6 @@
           isLeaf: true,
           delta: { _deepScan: true },
         });
-      }
-      if (!list.length) {
-        list.push({ key: "direct", theme: "video", icon: "file-down", title: "Save Direct Resource", sub: "Download raw response file", edgeLabel: "FILE", isLeaf: true, delta: { mode: "direct" } });
       }
       return list;
     }
@@ -1099,6 +1212,19 @@
         detected: true,
         nextStep: "image_format",
         delta: { mode: "image", _useThumbnailUrl: true },
+      });
+    }
+
+    if (!isLive) {
+      list.push({
+        key: "studio_tools",
+        theme: "video",
+        icon: "sparkles",
+        title: "Studio Tools",
+        sub: "GIF / WebP · Discord 8MB Compress · Frame Sheet",
+        edgeLabel: "STUDIO",
+        nextStep: "video_studio",
+        delta: { mode: "video", video_quality: "720", video_container: "mp4", video_codec: "h264" },
       });
     }
 
@@ -1348,7 +1474,7 @@
 
     if (step === "sub_format") {
       return [
-        { key: "sf_txt", theme: "subtitles", icon: "file-text", title: "Clean .txt + VTT", sub: "Stripped readable transcript", edgeLabel: "TXT+VTT", isLeaf: true, delta: { subtitle_format: "vtt", generate_transcript: true } },
+        { key: "sf_inspect", theme: "subtitles", icon: "file-text", title: "Live Caption Reader & Search", sub: "Preview, search quotes, copy text or export", edgeLabel: "PREVIEW", detected: true, inputKind: "sub_preview", isLeaf: true, delta: { subtitle_format: "vtt", generate_transcript: true } },
         { key: "sf_srt", theme: "subtitles", icon: "subtitles", title: "SubRip (.srt)", sub: "Ready for Premiere / DaVinci", edgeLabel: "SRT", isLeaf: true, delta: { subtitle_format: "srt", generate_transcript: true } },
         { key: "sf_vtt", theme: "subtitles", icon: "subtitles", title: "WebVTT (.vtt)", sub: "Standard HTML5 player track", edgeLabel: "VTT", isLeaf: true, delta: { subtitle_format: "vtt", generate_transcript: false } },
       ];
@@ -1408,12 +1534,66 @@
       }));
     }
 
+    if (step === "webpage_article") {
+      return [
+        { key: "wa_md", theme: "subtitles", icon: "file-text", title: "Clean Markdown (.md)", sub: "Headings, links & source header · Zero clutter", edgeLabel: "MD", detected: true, isLeaf: true, delta: { mode: "webpage", webpage_format: "markdown" } },
+        { key: "wa_txt", theme: "subtitles", icon: "file-text", title: "Plain Text (.txt)", sub: "Clean readable prose for notes", edgeLabel: "TXT", isLeaf: true, delta: { mode: "webpage", webpage_format: "text" } },
+      ];
+    }
+
+    if (step === "webpage_snapshot") {
+      return [
+        { key: "ws_png", theme: "live", icon: "camera", title: "Full-Page PNG", sub: "1440px full-length lossless screenshot", edgeLabel: "PNG", detected: true, isLeaf: true, delta: { mode: "webpage", webpage_format: "screenshot_png" } },
+        { key: "ws_pdf", theme: "live", icon: "file-down", title: "Printable PDF", sub: "Clean A4 page render with backgrounds", edgeLabel: "PDF", isLeaf: true, delta: { mode: "webpage", webpage_format: "pdf" } },
+      ];
+    }
+
+    if (step === "video_studio") {
+      return [
+        { key: "st_gif", theme: "image", icon: "sparkles", title: "Animated GIF / WebP", sub: "Palette-optimized loopable clips", edgeLabel: "GIF/WEBP", nextStep: "studio_gif", delta: {} },
+        { key: "st_comp", theme: "video", icon: "zap", title: "Compress to Size", sub: "Discord 8MB · Slack 25MB · Compact 50MB", edgeLabel: "COMPRESS", nextStep: "studio_compress", delta: {} },
+        { key: "st_frames", theme: "image", icon: "camera", title: "Extract Frames", sub: "4×3 Contact Sheet or Full-Res Keyframe PNG", edgeLabel: "FRAMES", nextStep: "studio_frames", delta: {} },
+      ];
+    }
+
+    if (step === "studio_gif") {
+      const clipEnd = Math.min(8, cap.duration || 8);
+      return [
+        { key: "sg_gif_trim", theme: "image", icon: "scissors", title: "Trim → Crisp GIF", sub: "Pick exact start & end · 12fps 640px", edgeLabel: "TRIM GIF", inputKind: "trim", isLeaf: true, delta: { video_output_action: "gif", gif_fps: 12, gif_width: 640 } },
+        { key: "sg_webp_trim", theme: "image", icon: "scissors", title: "Trim → Animated WebP", sub: "Pick exact range · Ultra-small loop", edgeLabel: "TRIM WEBP", inputKind: "trim", isLeaf: true, delta: { video_output_action: "webp_anim", gif_fps: 14, gif_width: 640 } },
+        { key: "sg_gif_quick", theme: "image", icon: "sparkles", title: `Quick ${clipEnd}s GIF`, sub: `Instant 0:00 → 0:${String(Math.round(clipEnd)).padStart(2, "0")} GIF`, edgeLabel: "QUICK GIF", isLeaf: true, delta: { video_output_action: "gif", clip_start_seconds: 0, clip_end_seconds: clipEnd, gif_fps: 12, gif_width: 540 } },
+      ];
+    }
+
+    if (step === "studio_compress") {
+      const dur = cap.duration || 0;
+      const hintFor = (mb, fallback) => {
+        if (!dur || dur <= 0) return fallback;
+        const kbps = Math.round(((mb * 8192 * 0.9) / dur) - 96);
+        if (kbps >= 1500) return `~${kbps.toLocaleString()} kbps · Crisp HD`;
+        if (kbps >= 500) return `~${kbps.toLocaleString()} kbps · Clean web quality`;
+        return `~${Math.max(120, kbps)} kbps · Tight fit — trim clip for higher quality`;
+      };
+      return [
+        { key: "sc_8", theme: "video", icon: "zap", title: "Discord · ≤ 8 MB", sub: hintFor(8, "Auto-tuned H.264 MP4 under 8 MB"), edgeLabel: "8 MB", isLeaf: true, delta: { target_size_mb: 8.0, video_quality: "720", video_container: "mp4" } },
+        { key: "sc_25", theme: "video", icon: "zap", title: "Email / Slack · ≤ 25 MB", sub: hintFor(25, "Balanced HD MP4 under 25 MB"), edgeLabel: "25 MB", isLeaf: true, delta: { target_size_mb: 25.0, video_quality: "720", video_container: "mp4" } },
+        { key: "sc_50", theme: "video", icon: "zap", title: "Compact Share · ≤ 50 MB", sub: hintFor(50, "High quality MP4 under 50 MB"), edgeLabel: "50 MB", isLeaf: true, delta: { target_size_mb: 50.0, video_quality: "1080", video_container: "mp4" } },
+      ];
+    }
+
+    if (step === "studio_frames") {
+      const midSec = Math.round((cap.duration || 6) / 2);
+      return [
+        { key: "sf_kf", theme: "image", icon: "camera", title: "Pick Exact Frame (PNG)", sub: "Scrub live preview & capture exact still", edgeLabel: "STILL PNG", inputKind: "frame", isLeaf: true, delta: { video_output_action: "keyframe", keyframe_seconds: midSec, video_quality: "1080" } },
+        { key: "sf_sheet", theme: "image", icon: "layers", title: "Contact Sheet (4×3 PNG)", sub: "12 evenly spaced preview frames in one grid", edgeLabel: "4×3 GRID", isLeaf: true, delta: { video_output_action: "contact_sheet", video_quality: "720" } },
+      ];
+    }
+
     if (step === "image_format") {
       return [
-        { key: "if_orig", theme: "image", icon: "download", title: "Original HD", sub: "Exact source resolution", edgeLabel: "ORIGINAL", detected: true, isLeaf: true, delta: { image_format: "original" } },
-        { key: "if_webp", theme: "image", icon: "zap", title: "WebP", sub: "Ultra-fast modern web image", edgeLabel: "WEBP", nextStep: "image_size", delta: { image_format: "webp", image_quality: 90 } },
-        { key: "if_png", theme: "image", icon: "layers", title: "PNG · Lossless", sub: "Crisp lossless pixels", edgeLabel: "PNG", nextStep: "image_size", delta: { image_format: "png", image_quality: 95 } },
-        { key: "if_jpg", theme: "image", icon: "camera", title: "JPEG", sub: "Universal photo format", edgeLabel: "JPEG", nextStep: "image_size", delta: { image_format: "jpg", image_quality: 90 } },
+        { key: "if_studio", theme: "image", icon: "sliders-horizontal", title: "Visual Image Studio", sub: "Preview, format, resize, quality & strip EXIF", edgeLabel: "STUDIO", detected: true, inputKind: "image_studio", isLeaf: true, delta: { image_format: "webp", image_quality: 90, strip_metadata: true } },
+        { key: "if_orig", theme: "image", icon: "download", title: "Original HD", sub: "Exact source resolution", edgeLabel: "ORIGINAL", isLeaf: true, delta: { image_format: "original" } },
+        { key: "if_strip", theme: "image", icon: "shield", title: "Privacy Clean (No EXIF)", sub: "Strip GPS & camera metadata", edgeLabel: "CLEAN", isLeaf: true, delta: { image_format: "original", strip_metadata: true } },
       ];
     }
 
@@ -1455,6 +1635,7 @@
     for (const cid of kids) pruneChoiceSubtree(cid);
     const n = state.nodes.get(nodeId);
     if (n && n.type === "choice") {
+      destroyPlayerHls(nodeId);
       state.nodes.delete(nodeId);
       state.edges = state.edges.filter((e) => e.from !== nodeId && e.to !== nodeId);
       document.querySelector(`[data-node-id="${CSS.escape(nodeId)}"]`)?.remove();
@@ -1466,10 +1647,12 @@
     for (const se of siblingEdges) {
       const sib = state.nodes.get(se.to);
       if (!sib || sib.type !== "choice") continue;
-      if (sib.expanded) {
+      if (sib.expanded || sib.panelOpen) {
         const grandKids = state.edges.filter((e) => e.from === sib.id).map((e) => e.to);
         for (const gk of grandKids) pruneChoiceSubtree(gk);
+        if (sib.panelOpen) destroyPlayerHls(sib.id);
         sib.expanded = false;
+        sib.panelOpen = false;
         se.active = false;
         renderNode(sib);
       }
@@ -1506,10 +1689,23 @@
         inputKind: spec.inputKind || null,
         accumulated: { ...parentAcc, ...(spec.delta || {}) },
         expanded: false,
+        panelOpen: false,
         demo: !!parentNode.demo,
         animDelayMs: idx * 32,
         clipStart: defaultPresets[0]?.start || "0:00",
-        clipEnd: defaultPresets[0]?.end || "0:15",
+        clipEnd: defaultPresets[0]?.end || (spec.delta?.video_output_action ? fmtDuration(Math.min(6, srcDur || 6)) : "0:15"),
+        frameSec: spec.delta?.keyframe_seconds ?? Math.min(2, (srcDur || 4) / 2),
+        gifFps: spec.delta?.gif_fps || 12,
+        gifWidth: spec.delta?.gif_width || 640,
+        loopPreview: Boolean(spec.delta?.video_output_action === "gif" || spec.delta?.video_output_action === "webp_anim"),
+        previewMuted: Boolean(spec.delta?.video_output_action === "gif" || spec.delta?.video_output_action === "webp_anim"),
+        subExportFmt: spec.delta?.subtitle_format || "vtt",
+        subGenTxt: spec.delta?.generate_transcript !== false,
+        articleFmt: spec.delta?.webpage_format || "markdown",
+        imgFmt: spec.delta?.image_format || "webp",
+        imgQuality: spec.delta?.image_quality || 90,
+        imgMaxWidth: null,
+        imgStripExif: spec.delta?.strip_metadata !== false,
         playlistRangeVal: "1-5",
         x: parentNode.x + 360,
         y: parentNode.y,
@@ -1536,29 +1732,34 @@
   }
 
   function refreshActiveLineageHighlight(activeNodeId) {
-    // Walk upward from activeNodeId to root Source to light up the chosen chain & subtly dim unselected siblings!
+    // Highlight the active lineage AND keep every user-expanded branch vivid (multi-path exploration!)
     const litNodes = new Set();
     const litEdges = new Set();
-    const litParents = new Set();
-    let cur = activeNodeId;
-    while (cur) {
-      litNodes.add(cur);
-      const inEdge = state.edges.find((e) => e.to === cur && state.nodes.get(e.from)?.type !== "note");
-      if (!inEdge) break;
-      litEdges.add(inEdge.id);
-      litParents.add(inEdge.from);
-      cur = inEdge.from;
-    }
+    const walkUp = (startId) => {
+      let cur = startId;
+      while (cur) {
+        litNodes.add(cur);
+        const inEdge = state.edges.find((e) => e.to === cur && state.nodes.get(e.from)?.type !== "note");
+        if (!inEdge) break;
+        litEdges.add(inEdge.id);
+        cur = inEdge.from;
+      }
+    };
+    walkUp(activeNodeId);
     const activeNode = state.nodes.get(activeNodeId);
     const rootId = activeNode?.type === "source" ? activeNode.id : activeNode?.rootSourceId;
+    for (const n of state.nodes.values()) {
+      if (n.type === "choice" && (!rootId || n.rootSourceId === rootId) && (n.expanded || n.panelOpen)) {
+        walkUp(n.id);
+      }
+    }
     for (const n of state.nodes.values()) {
       if (n.type === "choice" && (!rootId || n.rootSourceId === rootId)) {
         const el = document.querySelector(`[data-node-id="${CSS.escape(n.id)}"]`);
         if (el) {
           const isLit = litNodes.has(n.id);
-          const siblingChosen = litParents.has(n.parentId) && !isLit;
           el.classList.toggle("path-lit", isLit);
-          el.classList.toggle("path-dimmed", siblingChosen);
+          el.classList.remove("path-dimmed");
         }
       }
     }
@@ -1566,7 +1767,7 @@
       const target = state.nodes.get(e.to);
       if (target?.type === "choice" && (!rootId || target.rootSourceId === rootId)) {
         e.active = litEdges.has(e.id);
-        e.dimmed = litParents.has(e.from) && !e.active;
+        e.dimmed = false;
       }
     }
     renderThreads();
@@ -1576,41 +1777,53 @@
     const root = state.nodes.get(rootId);
     if (!root) return;
 
-    const colGap = 116;
-    const rowGap = 14;
+    const colGap = 128;
+    const rowGap = 20;
     const subtreeH = new Map();
+    const maxWByDepth = new Map();
     const v2 = new Set();
-    function computeHeights(nodeId) {
+
+    function computeMetrics(nodeId, depth) {
       if (v2.has(nodeId)) return 0;
       v2.add(nodeId);
+      const n = state.nodes.get(nodeId);
       const el = document.querySelector(`[data-node-id="${CSS.escape(nodeId)}"]`);
       const ownH = el ? el.offsetHeight : 64;
+      const ownW = el ? el.offsetWidth : (n?.type === "source" ? 344 : 248);
+      maxWByDepth.set(depth, Math.max(maxWByDepth.get(depth) || 0, ownW));
+
       const kids = state.edges
         .filter((e) => e.from === nodeId)
         .map((e) => e.to)
         .filter((cid) => state.nodes.has(cid) && !v2.has(cid));
       let total = ownH;
       if (kids.length) {
-        const sum = kids.reduce((acc, cid) => acc + computeHeights(cid), 0) + rowGap * (kids.length - 1);
+        const sum = kids.reduce((acc, cid) => acc + computeMetrics(cid, depth + 1), 0) + rowGap * (kids.length - 1);
         total = Math.max(ownH, sum);
       }
-      subtreeH.set(nodeId, { ownH, total, kids });
+      subtreeH.set(nodeId, { ownH, total, kids, depth });
       return total;
     }
 
-    computeHeights(rootId);
+    computeMetrics(rootId, 0);
     const rootInfo = subtreeH.get(rootId);
     const rootCenterY = root.y + (rootInfo ? rootInfo.ownH / 2 : 120);
 
-    function place(nodeId, xPos, topY) {
+    // Pre-compute clean non-overlapping X column coordinates using max width at each depth
+    const colX = new Map([[0, root.x]]);
+    const maxDepth = Math.max(0, ...Array.from(maxWByDepth.keys()));
+    for (let d = 0; d < maxDepth; d++) {
+      colX.set(d + 1, (colX.get(d) || root.x) + (maxWByDepth.get(d) || 248) + colGap);
+    }
+
+    function place(nodeId, topY) {
       const n = state.nodes.get(nodeId);
       const info = subtreeH.get(nodeId);
       if (!n || !info) return;
       const el = document.querySelector(`[data-node-id="${CSS.escape(nodeId)}"]`);
-      const ownW = el ? el.offsetWidth : (n.type === "source" ? 344 : 248);
 
       if (nodeId !== rootId) {
-        n.x = Math.round(xPos);
+        n.x = Math.round(colX.get(info.depth) ?? root.x);
         n.y = Math.round(topY + (info.total - info.ownH) / 2);
         if (el) { el.style.left = `${n.x}px`; el.style.top = `${n.y}px`; }
       }
@@ -1621,35 +1834,60 @@
       let curY = nodeCenterY - kidsTotal / 2;
       for (const cid of info.kids) {
         const ch = subtreeH.get(cid)?.total || 64;
-        place(cid, n.x + ownW + colGap, curY);
+        place(cid, curY);
         curY += ch + rowGap;
       }
     }
 
-    place(rootId, root.x, rootCenterY - (rootInfo?.total || 200) / 2);
+    place(rootId, rootCenterY - (rootInfo?.total || 200) / 2);
     requestAnimationFrame(renderThreads);
   }
 
-  /* ---------- Click Handler for Cascading Choice Nodes ---------- */
+  /* ---------- Click Handler for Cascading Choice Nodes (Multi-Branch Open!) ---------- */
   function onChoiceClicked(choiceNode) {
+    // Interactive Studio / Preview choice nodes toggle open/closed independently without closing siblings
+    if (choiceNode.inputKind) {
+      const opening = !choiceNode.panelOpen;
+      if (!opening) {
+        destroyPlayerHls(choiceNode.id);
+      }
+      choiceNode.panelOpen = opening;
+      choiceNode.expanded = opening;
+      renderNode(choiceNode);
+      refreshActiveLineageHighlight(choiceNode.id);
+      layoutTreeFromRoot(choiceNode.rootSourceId);
+      sfx.click();
+      if (opening) {
+        const el = document.querySelector(`[data-node-id="${CSS.escape(choiceNode.id)}"]`);
+        const cx = choiceNode.x + (el ? el.offsetWidth / 2 : 178);
+        const cy = choiceNode.y + (el ? el.offsetHeight / 2 : 160);
+        glideToWorld(cx, cy, Math.min(camera.zoom, 0.96));
+      }
+      return;
+    }
+
     // If leaf node -> execute real download!
-    if (choiceNode.isLeaf && !choiceNode.inputKind) {
+    if (choiceNode.isLeaf) {
       return executeChoiceLeaf(choiceNode);
     }
 
-    // Otherwise -> bloom the NEXT column of possible paths!
-    collapseSiblingChoiceBranches(choiceNode.parentId, choiceNode.id);
-
-    // If already expanded, re-focus its children smoothly
-    const existingKids = state.edges.filter((e) => e.from === choiceNode.id).map((e) => state.nodes.get(e.to)).filter(Boolean);
-    if (existingKids.length) {
-      refreshActiveLineageHighlight(choiceNode.id);
-      const mid = existingKids[Math.floor(existingKids.length / 2)];
-      glideToWorld((choiceNode.x + mid.x) / 2 + 100, mid.y + 30, Math.min(camera.zoom, 0.94));
+    // If already expanded -> toggle ONLY this branch closed (keeping all other open branches!)
+    const existingChoiceKids = state.edges
+      .filter((e) => e.from === choiceNode.id)
+      .map((e) => state.nodes.get(e.to))
+      .filter((n) => n && n.type === "choice");
+    if (existingChoiceKids.length) {
+      for (const kid of existingChoiceKids) pruneChoiceSubtree(kid.id);
+      const remainingKids = state.edges.filter((e) => e.from === choiceNode.id).length;
+      choiceNode.expanded = remainingKids > 0;
+      renderNode(choiceNode);
+      refreshActiveLineageHighlight(choiceNode.parentId || choiceNode.id);
+      layoutTreeFromRoot(choiceNode.rootSourceId);
       sfx.click();
       return;
     }
 
+    // Otherwise -> bloom the NEXT column of possible paths while keeping all sibling paths open!
     const nextSpecs = getNextChoicesFor(choiceNode);
     if (nextSpecs.length) {
       spawnChoiceChildren(choiceNode, nextSpecs, true, true);
@@ -1681,10 +1919,32 @@
       return;
     }
 
-    // Handle inline Trim Clip leaf
+    // Handle inline Trim Clip / GIF / Frame Picker leaves
     if (choiceNode.inputKind === "trim") {
       acc.clip_start_seconds = parseTime(choiceNode.clipStart);
       acc.clip_end_seconds = parseTime(choiceNode.clipEnd);
+      if (acc.video_output_action === "gif" || acc.video_output_action === "webp_anim") {
+        acc.gif_fps = choiceNode.gifFps || acc.gif_fps || 12;
+        acc.gif_width = choiceNode.gifWidth || acc.gif_width || 640;
+      }
+    }
+    if (choiceNode.inputKind === "frame") {
+      acc.keyframe_seconds = Math.max(0, Number(choiceNode.frameSec) || 0);
+    }
+    if (choiceNode.inputKind === "sub_preview") {
+      acc.subtitle_format = choiceNode.subExportFmt || "vtt";
+      acc.generate_transcript = choiceNode.subGenTxt !== false;
+    }
+    if (choiceNode.inputKind === "article_preview") {
+      acc.mode = "webpage";
+      acc.webpage_format = choiceNode.articleFmt || "markdown";
+    }
+    if (choiceNode.inputKind === "image_studio") {
+      acc.mode = "image";
+      acc.image_format = choiceNode.imgFmt || "webp";
+      acc.image_quality = choiceNode.imgQuality || 90;
+      acc.image_max_width = choiceNode.imgMaxWidth || null;
+      acc.strip_metadata = !!choiceNode.imgStripExif;
     }
     if (choiceNode.inputKind === "playlist_range") {
       const rVal = (choiceNode.playlistRangeVal || "").trim();
@@ -2018,6 +2278,374 @@
     fitAllNodes();
   }
 
+  /* ---------- Live Preview Stream Cache & Visual Scrubber Helpers ---------- */
+  function fmtPreciseTime(sec) {
+    const s = Math.max(0, Number(sec) || 0);
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const rem = s % 60;
+    const secStr = rem < 10 ? `0${rem.toFixed(1)}` : rem.toFixed(1);
+    return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${secStr}` : `${m}:${secStr}`;
+  }
+
+  function estimateClipFeedback(node, startSec, endSec) {
+    const dur = Math.max(0.2, (endSec || 0) - (startSec || 0));
+    const act = node.accumulated?.video_output_action;
+    if (act === "gif" || act === "webp_anim") {
+      const fps = node.gifFps || 12;
+      const w = node.gifWidth || 640;
+      const scaleFactor = (w / 640) * (w / 640);
+      // Empirical lightweight size estimate for palette-dithered GIF vs animated WebP
+      const kbpsPerFrame = act === "gif" ? 36 : 12;
+      const estMb = (dur * fps * kbpsPerFrame * scaleFactor) / 1024;
+      const estStr = estMb < 1 ? `~${Math.round(estMb * 1024)} KB` : `~${estMb.toFixed(1)} MB`;
+      if (act === "gif" && dur > 12) {
+        return { cls: "warn", left: `${dur.toFixed(1)}s · ${estStr}`, right: "Tip: 3–8s or WebP for small GIFs" };
+      }
+      return { cls: "good", left: `${dur.toFixed(1)}s · ${fps}fps · ${w}px`, right: `Est. ${estStr}` };
+    }
+    return { cls: "", left: `Clip length: ${dur.toFixed(1)}s`, right: `${fmtDuration(startSec)} → ${fmtDuration(endSec)}` };
+  }
+
+  async function resolvePreviewStreamForSource(srcNode, wantAudioOnly = false) {
+    if (!srcNode?.url) return null;
+    const cacheKey = wantAudioOnly ? "_previewStreamAudio" : "_previewStreamVideo";
+    const promKey = wantAudioOnly ? "_previewPromiseAudio" : "_previewPromiseVideo";
+    if (srcNode[cacheKey]) return srcNode[cacheKey];
+    if (srcNode[promKey]) return srcNode[promKey];
+
+    srcNode[promKey] = (async () => {
+      try {
+        const res = await fetch("/v1/stream/resolve", {
+          method: "POST",
+          headers: apiHeaders({ "Content-Type": "application/json" }),
+          body: JSON.stringify({
+            url: srcNode.url,
+            mode: wantAudioOnly ? "audio" : "video",
+            preferred_quality: "480",
+          }),
+        });
+        if (!res.ok) return null;
+        const data = await res.json();
+        srcNode[cacheKey] = data;
+        return data;
+      } catch (_) {
+        return null;
+      } finally {
+        srcNode[promKey] = null;
+      }
+    })();
+    return srcNode[promKey];
+  }
+
+  function attachScrubberPreview(el, node) {
+    const src = state.nodes.get(node.rootSourceId);
+    const mediaEl = el.querySelector("[data-scrubber-media]");
+    if (!mediaEl || !src) return;
+
+    const isFrame = node.inputKind === "frame";
+    const isAudioOnly = node.accumulated?.mode === "audio";
+    const isAnim = node.accumulated?.video_output_action === "gif" || node.accumulated?.video_output_action === "webp_anim";
+    const overlay = el.querySelector("[data-scrubber-overlay]");
+    const loadBtn = el.querySelector("[data-load-scrubber]");
+    const timeBadge = el.querySelector("[data-scrubber-time]");
+    const playBtn = el.querySelector("[data-scrubber-play]");
+    const loopBtn = el.querySelector("[data-scrubber-loop]");
+    const muteBtn = el.querySelector("[data-scrubber-mute]");
+    const rail = el.querySelector("[data-timeline-rail]");
+    const winEl = el.querySelector("[data-timeline-window]");
+    const playheadEl = el.querySelector("[data-timeline-playhead]");
+    const hStart = el.querySelector("[data-handle-start]");
+    const hEnd = el.querySelector("[data-handle-end]");
+    const tStart = el.querySelector("[data-trim-start]");
+    const tEnd = el.querySelector("[data-trim-end]");
+    const estBox = el.querySelector("[data-scrubber-est]");
+    const runBtnLbl = el.querySelector("[data-run-inline-label]");
+
+    let totalDur = Math.max(1, Number(src.probe?.duration_seconds) || 60);
+    let streamLoaded = false;
+
+    const syncTimelineVisuals = () => {
+      if (isFrame) {
+        const cur = Math.max(0, Math.min(totalDur, Number(node.frameSec) || 0));
+        const pct = (cur / totalDur) * 100;
+        if (playheadEl) playheadEl.style.left = `${pct}%`;
+        if (hStart) hStart.style.left = `${pct}%`;
+        if (timeBadge) timeBadge.textContent = `${fmtPreciseTime(cur)} / ${fmtDuration(totalDur)}`;
+        if (runBtnLbl) runBtnLbl.textContent = `Capture Frame (${fmtPreciseTime(cur)})`;
+        return;
+      }
+      const s = Math.max(0, Math.min(totalDur, parseTime(node.clipStart) || 0));
+      const e = Math.max(s + 0.5, Math.min(totalDur, parseTime(node.clipEnd) || Math.min(totalDur, s + 8)));
+      const sPct = (s / totalDur) * 100;
+      const ePct = (e / totalDur) * 100;
+      if (winEl) {
+        winEl.style.left = `${sPct}%`;
+        winEl.style.width = `${Math.max(1.5, ePct - sPct)}%`;
+      }
+      if (hStart) hStart.style.left = `${sPct}%`;
+      if (hEnd) hEnd.style.left = `${ePct}%`;
+      const cur = Number.isFinite(mediaEl.currentTime) ? mediaEl.currentTime : s;
+      if (playheadEl) playheadEl.style.left = `${Math.min(100, (cur / totalDur) * 100)}%`;
+      if (timeBadge) timeBadge.textContent = `${fmtPreciseTime(cur)} / ${fmtDuration(totalDur)}`;
+      if (estBox) {
+        const est = estimateClipFeedback(node, s, e);
+        estBox.className = `scrubber-est mono ${est.cls}`;
+        estBox.innerHTML = `<span>${esc(est.left)}</span><span>${esc(est.right)}</span>`;
+      }
+    };
+
+    const loadStreamNow = async (autoPlay = false) => {
+      if (streamLoaded) {
+        if (autoPlay) mediaEl.play().catch(() => {});
+        return;
+      }
+      if (loadBtn) loadBtn.textContent = "Connecting preview…";
+      const data = await resolvePreviewStreamForSource(src, isAudioOnly);
+      const track = data?.tracks?.find((t) => (isAudioOnly ? t.kind === "audio" : t.kind === "video")) || data?.tracks?.[0];
+      if (!track) {
+        if (loadBtn) loadBtn.textContent = "Preview unavailable · Use timestamps";
+        return;
+      }
+      streamLoaded = true;
+      if (overlay) overlay.classList.add("hidden");
+      destroyPlayerHls(node.id);
+      if (track.protocol === "hls" && window.Hls && window.Hls.isSupported()) {
+        const hls = new window.Hls({ enableWorker: true });
+        hls.loadSource(track.stream_url);
+        hls.attachMedia(mediaEl);
+        playerHls.set(node.id, hls);
+      } else {
+        mediaEl.src = track.stream_url;
+      }
+      if (!isAudioOnly) mediaEl.muted = !!node.previewMuted;
+      mediaEl.onloadedmetadata = () => {
+        if (Number.isFinite(mediaEl.duration) && mediaEl.duration > 0) totalDur = mediaEl.duration;
+        const initSeek = isFrame ? (Number(node.frameSec) || 0) : (parseTime(node.clipStart) || 0);
+        try { mediaEl.currentTime = Math.min(totalDur - 0.1, Math.max(0, initSeek)); } catch (_) {}
+        syncTimelineVisuals();
+        if (autoPlay) mediaEl.play().catch(() => {});
+      };
+    };
+
+    mediaEl.ontimeupdate = () => {
+      if (!isFrame && node.loopPreview) {
+        const s = parseTime(node.clipStart) || 0;
+        const e = parseTime(node.clipEnd) || totalDur;
+        if (mediaEl.currentTime >= e) {
+          mediaEl.currentTime = s;
+        }
+      }
+      if (isFrame && !mediaEl.paused) {
+        node.frameSec = Number(mediaEl.currentTime.toFixed(1));
+      }
+      syncTimelineVisuals();
+    };
+
+    mediaEl.onplay = () => { if (playBtn) playBtn.textContent = "⏸ Pause"; };
+    mediaEl.onpause = () => { if (playBtn) playBtn.textContent = isAnim ? "▶ Loop GIF" : "▶ Play"; };
+
+    if (loadBtn) {
+      loadBtn.onpointerdown = (e) => e.stopPropagation();
+      loadBtn.onclick = (e) => { e.stopPropagation(); sfx.click(); loadStreamNow(true); };
+    }
+
+    if (playBtn) {
+      playBtn.onpointerdown = (e) => e.stopPropagation();
+      playBtn.onclick = async (e) => {
+        e.stopPropagation();
+        sfx.click();
+        if (!streamLoaded) {
+          await loadStreamNow(true);
+          return;
+        }
+        if (mediaEl.paused) {
+          if (!isFrame) {
+            const s = parseTime(node.clipStart) || 0;
+            const en = parseTime(node.clipEnd) || totalDur;
+            if (mediaEl.currentTime < s || mediaEl.currentTime >= en - 0.15) {
+              mediaEl.currentTime = s;
+            }
+          }
+          mediaEl.play().catch(() => {});
+        } else {
+          mediaEl.pause();
+        }
+      };
+    }
+
+    if (loopBtn) {
+      loopBtn.onpointerdown = (e) => e.stopPropagation();
+      loopBtn.onclick = (e) => {
+        e.stopPropagation();
+        node.loopPreview = !node.loopPreview;
+        loopBtn.classList.toggle("active", node.loopPreview);
+        sfx.click();
+      };
+    }
+
+    if (muteBtn) {
+      muteBtn.onpointerdown = (e) => e.stopPropagation();
+      muteBtn.onclick = (e) => {
+        e.stopPropagation();
+        node.previewMuted = !node.previewMuted;
+        mediaEl.muted = node.previewMuted;
+        muteBtn.textContent = node.previewMuted ? "Muted" : "Sound";
+        sfx.click();
+      };
+    }
+
+    // Set In / Set Out buttons capture exact live playhead
+    const setInBtn = el.querySelector("[data-set-in]");
+    const setOutBtn = el.querySelector("[data-set-out]");
+    if (setInBtn) {
+      setInBtn.onpointerdown = (e) => e.stopPropagation();
+      setInBtn.onclick = (e) => {
+        e.stopPropagation();
+        const cur = Math.max(0, Number(mediaEl.currentTime) || 0);
+        const curEnd = parseTime(node.clipEnd) || totalDur;
+        node.clipStart = fmtPreciseTime(cur);
+        if (cur >= curEnd - 0.5) node.clipEnd = fmtPreciseTime(Math.min(totalDur, cur + (isAnim ? 5 : 10)));
+        if (tStart) tStart.value = node.clipStart;
+        if (tEnd) tEnd.value = node.clipEnd;
+        syncTimelineVisuals();
+        sfx.click();
+      };
+    }
+    if (setOutBtn) {
+      setOutBtn.onpointerdown = (e) => e.stopPropagation();
+      setOutBtn.onclick = (e) => {
+        e.stopPropagation();
+        const cur = Math.max(0.5, Number(mediaEl.currentTime) || 0);
+        const curStart = parseTime(node.clipStart) || 0;
+        node.clipEnd = fmtPreciseTime(cur);
+        if (cur <= curStart + 0.5) node.clipStart = fmtPreciseTime(Math.max(0, cur - (isAnim ? 5 : 10)));
+        if (tStart) tStart.value = node.clipStart;
+        if (tEnd) tEnd.value = node.clipEnd;
+        syncTimelineVisuals();
+        sfx.click();
+      };
+    }
+
+    // Frame nudge buttons (-5s, -1s, -0.2s, +0.2s, +1s, +5s)
+    el.querySelectorAll("[data-frame-nudge]").forEach((btn) => {
+      btn.onpointerdown = (e) => e.stopPropagation();
+      btn.onclick = async (e) => {
+        e.stopPropagation();
+        const delta = parseFloat(btn.dataset.frameNudge);
+        if (!streamLoaded) await loadStreamNow(false);
+        const next = Math.max(0, Math.min(totalDur, (Number(node.frameSec) || 0) + delta));
+        node.frameSec = Number(next.toFixed(1));
+        mediaEl.pause();
+        try { mediaEl.currentTime = node.frameSec; } catch (_) {}
+        syncTimelineVisuals();
+        sfx.click();
+      };
+    });
+
+    // GIF FPS / Width quick chips
+    el.querySelectorAll("[data-gif-fps]").forEach((btn) => {
+      btn.onpointerdown = (e) => e.stopPropagation();
+      btn.onclick = (e) => {
+        e.stopPropagation();
+        node.gifFps = parseInt(btn.dataset.gifFps, 10);
+        el.querySelectorAll("[data-gif-fps]").forEach((b) => b.classList.toggle("active", b === btn));
+        syncTimelineVisuals();
+        sfx.click();
+      };
+    });
+    el.querySelectorAll("[data-gif-width]").forEach((btn) => {
+      btn.onpointerdown = (e) => e.stopPropagation();
+      btn.onclick = (e) => {
+        e.stopPropagation();
+        node.gifWidth = parseInt(btn.dataset.gifWidth, 10);
+        el.querySelectorAll("[data-gif-width]").forEach((b) => b.classList.toggle("active", b === btn));
+        syncTimelineVisuals();
+        sfx.click();
+      };
+    });
+
+    // Interactive Rail Click & Handle Dragging (live-seeks video as you drag!)
+    if (rail) {
+      const secFromClientX = (clientX) => {
+        const r = rail.getBoundingClientRect();
+        const pct = Math.max(0, Math.min(1, (clientX - r.left) / Math.max(1, r.width)));
+        return pct * totalDur;
+      };
+
+      const startDrag = (mode, ev) => {
+        ev.stopPropagation();
+        ev.preventDefault();
+        if (!streamLoaded) loadStreamNow(false);
+        const handleEl = mode === "start" ? hStart : mode === "end" ? hEnd : null;
+        if (handleEl) handleEl.classList.add("dragging");
+
+        const applyAt = (cx) => {
+          const sec = secFromClientX(cx);
+          if (isFrame) {
+            node.frameSec = Number(sec.toFixed(1));
+            mediaEl.pause();
+            try { mediaEl.currentTime = node.frameSec; } catch (_) {}
+          } else if (mode === "start") {
+            const curEnd = parseTime(node.clipEnd) || totalDur;
+            const clamped = Math.min(curEnd - 0.5, sec);
+            node.clipStart = fmtPreciseTime(clamped);
+            if (tStart) tStart.value = node.clipStart;
+            try { mediaEl.currentTime = clamped; } catch (_) {}
+          } else if (mode === "end") {
+            const curStart = parseTime(node.clipStart) || 0;
+            const clamped = Math.max(curStart + 0.5, sec);
+            node.clipEnd = fmtPreciseTime(clamped);
+            if (tEnd) tEnd.value = node.clipEnd;
+            try { mediaEl.currentTime = clamped; } catch (_) {}
+          } else {
+            try { mediaEl.currentTime = sec; } catch (_) {}
+          }
+          syncTimelineVisuals();
+        };
+
+        applyAt(ev.clientX);
+        const onMove = (mv) => applyAt(mv.clientX);
+        const onUp = () => {
+          if (handleEl) handleEl.classList.remove("dragging");
+          window.removeEventListener("pointermove", onMove);
+          window.removeEventListener("pointerup", onUp);
+        };
+        window.addEventListener("pointermove", onMove);
+        window.addEventListener("pointerup", onUp);
+      };
+
+      if (hStart) hStart.onpointerdown = (e) => startDrag("start", e);
+      if (hEnd) hEnd.onpointerdown = (e) => startDrag("end", e);
+      rail.onpointerdown = (e) => {
+        if (e.target.closest("[data-handle-start]") || e.target.closest("[data-handle-end]")) return;
+        startDrag(isFrame ? "start" : "seek", e);
+      };
+    }
+
+    // Sync two-way when user types manual timestamps
+    if (tStart) {
+      tStart.addEventListener("input", () => {
+        const s = parseTime(tStart.value);
+        if (streamLoaded && Number.isFinite(s)) try { mediaEl.currentTime = s; } catch (_) {}
+        syncTimelineVisuals();
+      });
+    }
+    if (tEnd) {
+      tEnd.addEventListener("input", () => {
+        const en = parseTime(tEnd.value);
+        if (streamLoaded && Number.isFinite(en)) try { mediaEl.currentTime = en; } catch (_) {}
+        syncTimelineVisuals();
+      });
+    }
+
+    syncTimelineVisuals();
+    // Auto-connect lightweight preview stream for real probed media so user immediately sees frames!
+    if (!node.demo && analyzeProbe(src.probe).canStreamLive) {
+      loadStreamNow(false);
+    }
+  }
+
   /* ---------- Node Renderer & Magnetic Port Wiring ---------- */
   function buildInlinePreviewHtml(dl) {
     if (!dl?.artifact_url) return "";
@@ -2026,6 +2654,12 @@
     if (mime.startsWith("video/")) return `<div class="inline-player"><video controls preload="metadata" src="${esc(inlineUrl)}"></video></div>`;
     if (mime.startsWith("audio/")) return `<div class="inline-player"><audio controls preload="metadata" src="${esc(inlineUrl)}"></audio></div>`;
     if (mime.startsWith("image/") && !mime.includes("svg")) return `<div class="inline-player"><img src="${esc(inlineUrl)}" alt="${esc(dl.filename)}" /></div>`;
+    if (mime.startsWith("text/markdown") || mime.startsWith("text/plain")) {
+      return `<div class="inline-text-preview mono" data-fetch-text-preview="${esc(inlineUrl)}">Loading text preview…</div>`;
+    }
+    if (mime.startsWith("application/pdf")) {
+      return `<div class="node-actions" style="margin:6px 0;"><a class="ghost-btn btn-xs mono" href="${esc(inlineUrl)}" target="_blank" rel="noopener">Preview PDF ↗</a></div>`;
+    }
     return "";
   }
 
@@ -2039,8 +2673,9 @@
       layer.appendChild(el);
     }
 
+    const hasVisualPreview = node.type === "choice" && !!node.panelOpen && ["trim", "frame", "sub_preview", "article_preview", "assets_preview", "image_studio", "playlist_range"].includes(node.inputKind);
     const extraCls = node.type === "choice"
-      ? `theme-${node.theme} ${node.isLeaf ? "is-leaf" : ""} ${node.inputKind ? "choice-interactive" : ""} ${node.expanded ? "path-lit" : ""}`
+      ? `theme-${node.theme} ${node.isLeaf ? "is-leaf" : ""} ${node.inputKind && node.panelOpen ? "choice-interactive" : ""} ${hasVisualPreview ? "choice-has-preview" : ""} ${node.expanded || node.panelOpen ? "path-lit" : ""}`
       : node.type === "player" && node.theater ? "theater"
       : node.type === "result" && node.job?.status === "completed" ? "is-complete"
       : "";
@@ -2056,34 +2691,236 @@
         <div class="port port-out" data-port="out" data-node="${esc(node.id)}"><span class="port-tip mono">Drag to link</span></div>
       `;
       const arrowHtml = node.inputKind
-        ? ""
+        ? (node.panelOpen ? `<span>Close ▴</span>` : `<span>Open ▾</span>`)
         : node.isLeaf
           ? `${iconSvg("play", "ico-xs")}<span>Run</span>`
           : (node.expanded ? `<span class="detected-dot" style="background:currentColor;"></span>` : iconSvg("chevron-right", "ico-xs"));
       let inlineExtra = "";
 
-      if (node.inputKind === "trim") {
-        const srcDur = state.nodes.get(node.rootSourceId)?.probe?.duration_seconds;
+      if (node.panelOpen && node.inputKind === "trim") {
+        const srcNode = state.nodes.get(node.rootSourceId);
+        const srcDur = srcNode?.probe?.duration_seconds;
+        const poster = srcNode?.probe?.thumbnail?.url || "";
+        const chapters = srcNode?.probe?.metadata?.chapters || [];
+        const isAudioOnly = node.accumulated?.mode === "audio";
+        const act = node.accumulated?.video_output_action;
+        const isAnim = act === "gif" || act === "webp_anim";
         const presets = buildTrimPresets(srcDur);
+        const chapDots = srcDur
+          ? chapters.map((c) => `<span class="timeline-chapter-dot" style="left:${Math.min(100, (c.start_seconds / srcDur) * 100)}%" title="${esc(c.title)}"></span>`).join("")
+          : "";
+        const ctaText = act === "gif" ? "Create Crisp GIF" : act === "webp_anim" ? "Create Animated WebP" : "Extract Clip";
+
         inlineExtra = `
           <div class="choice-inline-body">
+            <div class="scrubber-stage ${isAudioOnly ? "audio-only" : ""}">
+              ${isAudioOnly
+                ? `<audio controls preload="metadata" data-scrubber-media></audio>`
+                : `<video playsinline ${node.previewMuted ? "muted" : ""} poster="${esc(poster)}" data-scrubber-media></video>`
+              }
+              <div class="scrubber-hud-top">
+                <span class="scrubber-badge mono num" data-scrubber-time>${esc(node.clipStart)} / ${srcDur ? esc(fmtDuration(srcDur)) : "--:--"}</span>
+                ${!isAudioOnly ? `<button type="button" class="scrubber-mute-btn mono" data-scrubber-mute>${node.previewMuted ? "Muted" : "Sound"}</button>` : ""}
+              </div>
+              ${!isAudioOnly ? `
+                <div class="scrubber-poster-overlay" data-scrubber-overlay>
+                  <button type="button" class="scrubber-load-btn" data-load-scrubber>${iconSvg("play", "ico-xs")}<span>Load Live Scrubber</span></button>
+                </div>
+              ` : ""}
+            </div>
+
+            <div class="timeline-wrap">
+              <div class="timeline-rail" data-timeline-rail title="Click to seek · Drag handles to set start & end">
+                ${chapDots}
+                <div class="timeline-window" data-timeline-window></div>
+                <div class="timeline-playhead" data-timeline-playhead></div>
+                <div class="timeline-handle" data-handle-start title="Drag clip start"></div>
+                <div class="timeline-handle" data-handle-end title="Drag clip end"></div>
+              </div>
+            </div>
+
+            <div class="scrubber-controls">
+              <button type="button" class="scrubber-btn" data-scrubber-play>${isAnim ? "▶ Loop GIF" : "▶ Play"}</button>
+              <button type="button" class="scrubber-btn ${node.loopPreview ? "active" : ""}" data-scrubber-loop title="Loop selected clip range">↻ Loop</button>
+              <button type="button" class="scrubber-btn" data-set-in title="Set clip start to current playhead">[ Set In</button>
+              <button type="button" class="scrubber-btn" data-set-out title="Set clip end to current playhead">Set Out ]</button>
+            </div>
+
+            <div class="scrubber-est mono" data-scrubber-est></div>
+
+            ${isAnim ? `
+              <div class="gif-tune-row">
+                <span class="mono muted" style="font-size:9px;">FPS</span>
+                ${[8, 12, 15].map((f) => `<button type="button" class="scrubber-btn ${node.gifFps === f ? "active" : ""}" data-gif-fps="${f}">${f}</button>`).join("")}
+                <span class="mono muted" style="font-size:9px;margin-left:4px;">WIDTH</span>
+                ${[480, 640].map((w) => `<button type="button" class="scrubber-btn ${node.gifWidth === w ? "active" : ""}" data-gif-width="${w}">${w}px</button>`).join("")}
+              </div>
+            ` : ""}
+
             <div class="trim-presets">
               ${presets.map((pr) => `<button type="button" class="trim-chip" data-trim-preset="${esc(pr.start)}|${esc(pr.end)}">${esc(pr.label)}</button>`).join("")}
-              ${srcDur ? `<span class="mono muted" style="margin-left:auto;font-size:9.5px;">Total ${esc(fmtDuration(srcDur))}</span>` : ""}
             </div>
             <div class="cfg-row">
               <input type="text" class="cfg-input mono" data-trim-start value="${esc(node.clipStart)}" placeholder="0:00" />
               <span class="muted">→</span>
-              <input type="text" class="cfg-input mono" data-trim-end value="${esc(node.clipEnd)}" placeholder="0:15" />
+              <input type="text" class="cfg-input mono" data-trim-end value="${esc(node.clipEnd)}" placeholder="0:06" />
             </div>
-            <button class="reactor-fire btn-sm" data-run-inline-leaf="${esc(node.id)}">${iconSvg("play", "ico-xs")}<span>Extract Clip</span></button>
+            <button class="reactor-fire btn-sm" data-run-inline-leaf="${esc(node.id)}">${iconSvg("play", "ico-xs")}<span data-run-inline-label>${esc(ctaText)}</span></button>
           </div>
         `;
-      } else if (node.inputKind === "playlist_range") {
+      } else if (node.panelOpen && node.inputKind === "frame") {
+        const srcNode = state.nodes.get(node.rootSourceId);
+        const srcDur = srcNode?.probe?.duration_seconds;
+        const poster = srcNode?.probe?.thumbnail?.url || "";
         inlineExtra = `
           <div class="choice-inline-body">
+            <div class="scrubber-stage">
+              <video playsinline muted poster="${esc(poster)}" data-scrubber-media></video>
+              <div class="scrubber-hud-top">
+                <span class="scrubber-badge mono num" data-scrubber-time>${esc(fmtPreciseTime(node.frameSec || 0))} / ${srcDur ? esc(fmtDuration(srcDur)) : "--:--"}</span>
+              </div>
+              <div class="scrubber-poster-overlay" data-scrubber-overlay>
+                <button type="button" class="scrubber-load-btn" data-load-scrubber>${iconSvg("camera", "ico-xs")}<span>Load Frame Preview</span></button>
+              </div>
+            </div>
+            <div class="timeline-wrap">
+              <div class="timeline-rail" data-timeline-rail title="Scrub to exact frame">
+                <div class="timeline-playhead" data-timeline-playhead></div>
+                <div class="timeline-handle" data-handle-start title="Drag to pick exact frame"></div>
+              </div>
+            </div>
+            <div class="scrubber-controls">
+              <button type="button" class="scrubber-btn" data-scrubber-play>▶ Play</button>
+              <button type="button" class="scrubber-btn" data-frame-nudge="-5">−5s</button>
+              <button type="button" class="scrubber-btn" data-frame-nudge="-1">−1s</button>
+              <button type="button" class="scrubber-btn" data-frame-nudge="-0.2">−.2s</button>
+              <button type="button" class="scrubber-btn" data-frame-nudge="0.2">+.2s</button>
+              <button type="button" class="scrubber-btn" data-frame-nudge="1">+1s</button>
+              <button type="button" class="scrubber-btn" data-frame-nudge="5">+5s</button>
+            </div>
+            <button class="reactor-fire btn-sm" data-run-inline-leaf="${esc(node.id)}">${iconSvg("camera", "ico-xs")}<span data-run-inline-label>Capture Frame (${esc(fmtPreciseTime(node.frameSec || 0))})</span></button>
+          </div>
+        `;
+      } else if (node.panelOpen && node.inputKind === "sub_preview") {
+        inlineExtra = `
+          <div class="choice-inline-body">
+            <div class="preview-search-row">
+              <input type="text" class="cfg-input mono" data-sub-search placeholder="Search captions / find quote…" />
+              <button type="button" class="scrubber-btn" data-sub-copy title="Copy full plain text transcript">Copy Text</button>
+            </div>
+            <div class="preview-scroll-box" data-sub-cues>
+              <span class="mono muted" style="font-size:10px;padding:8px;">Loading live caption preview…</span>
+            </div>
+            <div class="scrubber-est mono" data-sub-meta><span>Inspecting caption track…</span><span>Click any line to copy</span></div>
+            <div class="gif-tune-row">
+              <span class="mono muted" style="font-size:9px;">EXPORT</span>
+              ${[["vtt", "VTT + TXT"], ["srt", "SRT (Editors)"]].map(([f, lbl]) => `<button type="button" class="scrubber-btn ${node.subExportFmt === f ? "active" : ""}" data-sub-fmt="${f}">${lbl}</button>`).join("")}
+            </div>
+            <button class="reactor-fire btn-sm" data-run-inline-leaf="${esc(node.id)}">${iconSvg("download", "ico-xs")}<span>Download Captions</span></button>
+          </div>
+        `;
+      } else if (node.panelOpen && node.inputKind === "article_preview") {
+        const ws = state.nodes.get(node.rootSourceId)?.probe?.metadata?.extra?.webpage_stats || {};
+        const excerpt = ws.excerpt || "Article text ready for clean extraction.";
+        inlineExtra = `
+          <div class="choice-inline-body">
+            <div class="scrubber-est mono good">
+              <span>${ws.reading_minutes ? `~${ws.reading_minutes} min read` : "Article Ready"}</span>
+              <span>${(ws.word_count || 0).toLocaleString()} words</span>
+            </div>
+            <div class="article-excerpt-box">${esc(excerpt)}${excerpt.length >= 740 ? "\n…" : ""}</div>
+            <div class="scrubber-controls">
+              <button type="button" class="scrubber-btn ${node.articleFmt === "markdown" ? "active" : ""}" data-art-fmt="markdown">Markdown (.md)</button>
+              <button type="button" class="scrubber-btn ${node.articleFmt === "text" ? "active" : ""}" data-art-fmt="text">Plain Text (.txt)</button>
+              <button type="button" class="scrubber-btn" data-art-copy style="margin-left:auto;">Copy Excerpt</button>
+            </div>
+            <button class="reactor-fire btn-sm" data-run-inline-leaf="${esc(node.id)}">${iconSvg("file-text", "ico-xs")}<span data-art-cta>Download ${node.articleFmt === "text" ? "Plain Text (.txt)" : "Clean Markdown (.md)"}</span></button>
+          </div>
+        `;
+      } else if (node.panelOpen && node.inputKind === "assets_preview") {
+        const srcNode = state.nodes.get(node.rootSourceId);
+        const assets = srcNode?.probe?.metadata?.extra?.webpage_assets_preview || { svgs: [], images: [] };
+        const svgs = assets.svgs || [];
+        const imgs = assets.images || [];
+        inlineExtra = `
+          <div class="choice-inline-body">
+            <div class="scrubber-est mono">
+              <span>${svgs.length} SVG${svgs.length === 1 ? "" : "s"} · ${imgs.length} image${imgs.length === 1 ? "" : "s"} previewed</span>
+              <span>Click tile to copy / spawn</span>
+            </div>
+            <div class="asset-grid">
+              ${svgs.map((s, idx) => `<button type="button" class="asset-tile is-svg" data-copy-svg-idx="${idx}" title="Click to copy raw SVG code"><img src="data:image/svg+xml;charset=utf-8,${encodeURIComponent(s)}" alt="SVG ${idx + 1}" /><span class="asset-tile-tag mono">SVG</span></button>`).join("")}
+              ${imgs.map((u, idx) => `<button type="button" class="asset-tile" data-spawn-asset-img="${esc(u)}" title="Click to open this single image on canvas"><img src="${esc(u)}" alt="Asset ${idx + 1}" loading="lazy" /><span class="asset-tile-tag mono">IMG</span></button>`).join("")}
+            </div>
+            <button class="reactor-fire btn-sm" data-run-inline-leaf="${esc(node.id)}">${iconSvg("archive", "ico-xs")}<span>Download All as ZIP</span></button>
+          </div>
+        `;
+      } else if (node.panelOpen && node.inputKind === "image_studio") {
+        const srcNode = state.nodes.get(node.rootSourceId);
+        const cap = analyzeProbe(srcNode?.probe);
+        const imgUrl = (node.accumulated?._useThumbnailUrl && cap.thumbnail?.url) || cap.thumbnail?.url || srcNode?.url || "";
+        const sw = cap.sourceWidth;
+        const sh = cap.sourceHeight;
+        const aspect = sw && sh ? (sw / sh) : null;
+        const dimLabel = sw && sh ? `${sw}×${sh}` : "Source HD";
+        const widthChoices = [null, 1920, 1280, 800].filter((w) => w === null || !sw || w < sw);
+        inlineExtra = `
+          <div class="choice-inline-body">
+            ${imgUrl ? `
+              <div class="img-studio-stage">
+                <img src="${esc(imgUrl)}" alt="" />
+                <span class="img-dim-badge mono" data-img-dim-badge>${esc(dimLabel)}</span>
+              </div>
+            ` : ""}
+            <div class="gif-tune-row">
+              <span class="mono muted" style="font-size:9px;">FMT</span>
+              ${[["webp", "WebP"], ["png", "PNG"], ["jpg", "JPEG"], ["original", "Orig"]].map(([f, lbl]) => `<button type="button" class="scrubber-btn ${node.imgFmt === f ? "active" : ""}" data-img-fmt="${f}">${lbl}</button>`).join("")}
+            </div>
+            <div class="gif-tune-row">
+              <span class="mono muted" style="font-size:9px;">WIDTH</span>
+              ${widthChoices.map((w) => {
+                const lbl = w === null ? "Full" : (aspect ? `${w}×${Math.round(w / aspect)}` : `${w}px`);
+                return `<button type="button" class="scrubber-btn ${node.imgMaxWidth === w ? "active" : ""}" data-img-w="${w === null ? "" : w}">${lbl}</button>`;
+              }).join("")}
+            </div>
+            <div class="scrubber-controls">
+              <span class="mono muted" style="font-size:9px;">QUALITY</span>
+              <input type="range" class="range-track" style="flex:1;" min="50" max="100" step="5" value="${node.imgQuality}" data-img-q />
+              <span class="mono num" style="font-size:10px;" data-img-q-val>${node.imgQuality}%</span>
+              <button type="button" class="scrubber-btn ${node.imgStripExif ? "active" : ""}" data-img-exif title="Remove GPS & camera EXIF metadata">No EXIF</button>
+            </div>
+            <button class="reactor-fire btn-sm" data-run-inline-leaf="${esc(node.id)}">${iconSvg("download", "ico-xs")}<span>Export Image</span></button>
+          </div>
+        `;
+      } else if (node.panelOpen && node.inputKind === "playlist_range") {
+        const srcItems = state.nodes.get(node.rootSourceId)?.probe?.items || [];
+        const hasItems = srcItems.length > 0;
+        inlineExtra = `
+          <div class="choice-inline-body">
+            ${hasItems ? `
+              <div class="preview-search-row">
+                <input type="text" class="cfg-input mono" data-pl-filter placeholder="Filter ${srcItems.length} items…" />
+                <button type="button" class="scrubber-btn" data-pl-quick="1-5">1–5</button>
+                <button type="button" class="scrubber-btn" data-pl-quick="all">All</button>
+              </div>
+              <div class="picker-list" data-pl-list>
+                ${srcItems.slice(0, 40).map((it, idx) => {
+                  const num = it.index || (idx + 1);
+                  return `
+                    <label class="picker-row" data-pl-title="${esc((it.title || "").toLowerCase())}">
+                      <input type="checkbox" data-pl-chk="${num}" ${num <= 5 ? "checked" : ""} />
+                      <span class="mono muted" style="font-size:9.5px;min-width:18px;">#${num}</span>
+                      ${it.thumbnail_url ? `<img class="picker-thumb" src="${esc(it.thumbnail_url)}" alt="" loading="lazy" />` : ""}
+                      <span class="picker-title">${esc(it.title || `Item #${num}`)}</span>
+                      ${it.duration_seconds ? `<span class="mono muted" style="font-size:9px;">${esc(fmtDuration(it.duration_seconds))}</span>` : ""}
+                      <button type="button" class="picker-spawn-btn mono" data-pl-spawn="${esc(it.direct_media_url || it.url)}" title="Open single item on canvas">↗</button>
+                    </label>
+                  `;
+                }).join("")}
+              </div>
+            ` : ""}
             <input type="text" class="cfg-input mono" data-pl-range value="${esc(node.playlistRangeVal || "1-5")}" placeholder="e.g. 1-5 or 1,3,7" />
-            <button class="reactor-fire btn-sm" data-run-inline-leaf="${esc(node.id)}">${iconSvg("play", "ico-xs")}<span>Extract Range</span></button>
+            <button class="reactor-fire btn-sm" data-run-inline-leaf="${esc(node.id)}">${iconSvg("play", "ico-xs")}<span>Extract Selected</span></button>
           </div>
         `;
       }
@@ -2132,7 +2969,10 @@
         }
         if (cap.chapters.length) caps.push(`${cap.chapters.length} chapters`);
         if (cap.subtitles.length) caps.push(`${cap.subtitles.length} captions`);
-        if (cap.itemCount > 1) caps.push(`${cap.itemCount} items`);
+        if (cap.itemCount > 1) caps.push(`${cap.itemCount} ${cap.feedType === "podcast" ? "episodes" : "items"}`);
+        if (cap.webpageStats?.reading_minutes) caps.push(`~${cap.webpageStats.reading_minutes} min read`);
+        if (cap.webpageStats?.svg_count) caps.push(`${cap.webpageStats.svg_count} SVGs`);
+        if (cap.webpageStats?.image_count) caps.push(`${cap.webpageStats.image_count} imgs`);
         if (cap.thumbnail) caps.push("Cover");
       }
       const statusCls = node.probeError ? "err" : node.probing ? "warn" : "ok";
@@ -2364,7 +3204,7 @@
           window.removeEventListener("pointermove", onMove);
           window.removeEventListener("pointerup", onUp);
           el.classList.remove("dragging");
-          if (!moved && node.type === "choice" && !node.inputKind) {
+          if (!moved && node.type === "choice") {
             onChoiceClicked(node);
           } else if (moved) {
             renderThreads();
@@ -2398,11 +3238,251 @@
         const [s, en] = btn.dataset.trimPreset.split("|");
         node.clipStart = s;
         node.clipEnd = en;
-        if (tStart) tStart.value = s;
-        if (tEnd) tEnd.value = en;
+        if (tStart) { tStart.value = s; tStart.dispatchEvent(new Event("input")); }
+        if (tEnd) { tEnd.value = en; tEnd.dispatchEvent(new Event("input")); }
         sfx.click();
       };
     });
+    if (node.type === "choice" && node.panelOpen && (node.inputKind === "trim" || node.inputKind === "frame")) {
+      attachScrubberPreview(el, node);
+    }
+
+    // Re-run tree layout whenever async images load inside Source / Image Studio / Result nodes
+    el.querySelectorAll(".node-thumb img, .img-studio-stage img").forEach((imgEl) => {
+      imgEl.onload = () => {
+        const rootId = node.type === "source" ? node.id : node.rootSourceId;
+        if (rootId) layoutTreeFromRoot(rootId);
+      };
+    });
+
+    // Interactive Live Caption Reader & Search wiring
+    if (node.type === "choice" && node.panelOpen && node.inputKind === "sub_preview") {
+      const src = state.nodes.get(node.rootSourceId);
+      const cuesHost = el.querySelector("[data-sub-cues]");
+      const searchInput = el.querySelector("[data-sub-search]");
+      const metaEl = el.querySelector("[data-sub-meta]");
+      const copyBtn = el.querySelector("[data-sub-copy]");
+      let loadedCues = [];
+      let loadedPlain = "";
+
+      const renderCues = (query = "") => {
+        if (!cuesHost) return;
+        const q = query.trim().toLowerCase();
+        const filtered = q ? loadedCues.filter((c) => c.text.toLowerCase().includes(q)) : loadedCues;
+        if (!filtered.length) {
+          cuesHost.innerHTML = `<span class="mono muted" style="font-size:10px;padding:8px;">${q ? "No matching lines." : "No caption lines found."}</span>`;
+          return;
+        }
+        cuesHost.innerHTML = filtered.slice(0, 120).map((c) => {
+          const safe = esc(c.text);
+          const highlighted = q ? safe.replace(new RegExp(`(${q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`, "ig"), '<mark class="cue-mark">$1</mark>') : safe;
+          return `<div class="cue-row" data-copy-cue="${esc(`[${c.start}] ${c.text}`)}" title="Click to copy timestamped line"><span class="cue-time mono">${esc(c.start)}</span><span>${highlighted}</span></div>`;
+        }).join("");
+        cuesHost.querySelectorAll("[data-copy-cue]").forEach((row) => {
+          row.onpointerdown = (e) => e.stopPropagation();
+          row.onclick = async (e) => {
+            e.stopPropagation();
+            try { await navigator.clipboard.writeText(row.dataset.copyCue); toast("Copied caption line!", "ok"); sfx.click(); } catch (_) {}
+          };
+        });
+        if (metaEl) metaEl.innerHTML = `<span>${filtered.length} / ${loadedCues.length} lines</span><span>Click any line to copy</span>`;
+      };
+
+      if (searchInput) {
+        searchInput.onpointerdown = (e) => e.stopPropagation();
+        searchInput.oninput = () => renderCues(searchInput.value);
+      }
+      if (copyBtn) {
+        copyBtn.onpointerdown = (e) => e.stopPropagation();
+        copyBtn.onclick = async (e) => {
+          e.stopPropagation();
+          if (!loadedPlain) return toast("Transcript still loading…", "err");
+          try { await navigator.clipboard.writeText(loadedPlain); toast("Full transcript copied to clipboard!", "ok"); sfx.complete(); } catch (_) {}
+        };
+      }
+      el.querySelectorAll("[data-sub-fmt]").forEach((btn) => {
+        btn.onpointerdown = (e) => e.stopPropagation();
+        btn.onclick = (e) => {
+          e.stopPropagation();
+          node.subExportFmt = btn.dataset.subFmt;
+          el.querySelectorAll("[data-sub-fmt]").forEach((b) => b.classList.toggle("active", b === btn));
+          sfx.click();
+        };
+      });
+
+      if (src?.url && !node.demo) {
+        const lang = (node.accumulated?.subtitle_languages || ["en"])[0];
+        const subMode = node.accumulated?.subtitle_mode || "prefer_manual";
+        fetch("/v1/preview/subtitles", {
+          method: "POST",
+          headers: apiHeaders({ "Content-Type": "application/json" }),
+          body: JSON.stringify({ url: src.url, language: lang, subtitle_mode: subMode }),
+        })
+          .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+          .then((d) => {
+            loadedCues = d.cues || [];
+            loadedPlain = d.plain_text || "";
+            renderCues(searchInput?.value || "");
+            if (node.rootSourceId) layoutTreeFromRoot(node.rootSourceId);
+          })
+          .catch(() => {
+            if (cuesHost) cuesHost.innerHTML = `<span class="mono muted" style="font-size:10px;padding:8px;">Live preview unavailable — click Download Captions below.</span>`;
+          });
+      }
+    }
+
+    // Interactive Article Preview wiring
+    if (node.type === "choice" && node.panelOpen && node.inputKind === "article_preview") {
+      const ws = state.nodes.get(node.rootSourceId)?.probe?.metadata?.extra?.webpage_stats || {};
+      el.querySelectorAll("[data-art-fmt]").forEach((btn) => {
+        btn.onpointerdown = (e) => e.stopPropagation();
+        btn.onclick = (e) => {
+          e.stopPropagation();
+          node.articleFmt = btn.dataset.artFmt;
+          el.querySelectorAll("[data-art-fmt]").forEach((b) => b.classList.toggle("active", b === btn));
+          const cta = el.querySelector("[data-art-cta]");
+          if (cta) cta.textContent = `Download ${node.articleFmt === "text" ? "Plain Text (.txt)" : "Clean Markdown (.md)"}`;
+          sfx.click();
+        };
+      });
+      const copyArt = el.querySelector("[data-art-copy]");
+      if (copyArt) {
+        copyArt.onpointerdown = (e) => e.stopPropagation();
+        copyArt.onclick = async (e) => {
+          e.stopPropagation();
+          if (ws.excerpt) {
+            try { await navigator.clipboard.writeText(ws.excerpt); toast("Article excerpt copied!", "ok"); sfx.click(); } catch (_) {}
+          }
+        };
+      }
+    }
+
+    // Interactive Webpage SVG & Image Asset Picker wiring
+    if (node.type === "choice" && node.panelOpen && node.inputKind === "assets_preview") {
+      const assets = state.nodes.get(node.rootSourceId)?.probe?.metadata?.extra?.webpage_assets_preview || { svgs: [], images: [] };
+      el.querySelectorAll("[data-copy-svg-idx]").forEach((btn) => {
+        btn.onpointerdown = (e) => e.stopPropagation();
+        btn.onclick = async (e) => {
+          e.stopPropagation();
+          const svg = assets.svgs?.[parseInt(btn.dataset.copySvgIdx, 10)];
+          if (svg) {
+            try { await navigator.clipboard.writeText(svg); toast("SVG vector code copied to clipboard!", "ok"); sfx.complete(); } catch (_) {}
+          }
+        };
+      });
+      el.querySelectorAll("[data-spawn-asset-img]").forEach((btn) => {
+        btn.onpointerdown = (e) => e.stopPropagation();
+        btn.onclick = (e) => {
+          e.stopPropagation();
+          const u = btn.dataset.spawnAssetImg;
+          if (u) {
+            const pos = pickChildPosition(node, 0);
+            const child = spawnSourceWithPossibilities(u, pos, true);
+            if (child) addEdge(node.id, child.id, "image", false, "ASSET");
+            sfx.capture();
+          }
+        };
+      });
+    }
+
+    // Interactive Visual Image Studio wiring
+    if (node.type === "choice" && node.panelOpen && node.inputKind === "image_studio") {
+      const qRange = el.querySelector("[data-img-q]");
+      const qVal = el.querySelector("[data-img-q-val]");
+      const exifBtn = el.querySelector("[data-img-exif]");
+      el.querySelectorAll("[data-img-fmt]").forEach((btn) => {
+        btn.onpointerdown = (e) => e.stopPropagation();
+        btn.onclick = (e) => {
+          e.stopPropagation();
+          node.imgFmt = btn.dataset.imgFmt;
+          el.querySelectorAll("[data-img-fmt]").forEach((b) => b.classList.toggle("active", b === btn));
+          sfx.click();
+        };
+      });
+      el.querySelectorAll("[data-img-w]").forEach((btn) => {
+        btn.onpointerdown = (e) => e.stopPropagation();
+        btn.onclick = (e) => {
+          e.stopPropagation();
+          node.imgMaxWidth = btn.dataset.imgW ? parseInt(btn.dataset.imgW, 10) : null;
+          el.querySelectorAll("[data-img-w]").forEach((b) => b.classList.toggle("active", b === btn));
+          sfx.click();
+        };
+      });
+      if (qRange) {
+        qRange.onpointerdown = (e) => e.stopPropagation();
+        qRange.oninput = () => {
+          node.imgQuality = parseInt(qRange.value, 10);
+          if (qVal) qVal.textContent = `${node.imgQuality}%`;
+        };
+      }
+      if (exifBtn) {
+        exifBtn.onpointerdown = (e) => e.stopPropagation();
+        exifBtn.onclick = (e) => {
+          e.stopPropagation();
+          node.imgStripExif = !node.imgStripExif;
+          exifBtn.classList.toggle("active", node.imgStripExif);
+          sfx.click();
+        };
+      }
+    }
+
+    // Interactive Playlist Checklist Picker wiring
+    const plFilter = el.querySelector("[data-pl-filter]");
+    const plList = el.querySelector("[data-pl-list]");
+    if (plList) {
+      const syncCheckedToRange = () => {
+        const nums = Array.from(plList.querySelectorAll("[data-pl-chk]:checked")).map((c) => parseInt(c.dataset.plChk, 10)).sort((a, b) => a - b);
+        const val = nums.join(",");
+        node.playlistRangeVal = val;
+        const rInp = el.querySelector("[data-pl-range]");
+        if (rInp) rInp.value = val;
+      };
+      plList.querySelectorAll("[data-pl-chk]").forEach((chk) => {
+        chk.onpointerdown = (e) => e.stopPropagation();
+        chk.onchange = () => { syncCheckedToRange(); sfx.click(); };
+      });
+      plList.querySelectorAll("[data-pl-spawn]").forEach((btn) => {
+        btn.onpointerdown = (e) => e.stopPropagation();
+        btn.onclick = (e) => {
+          e.stopPropagation(); e.preventDefault();
+          const pos = pickChildPosition(node, 0);
+          const child = spawnSourceWithPossibilities(btn.dataset.plSpawn, pos, true);
+          if (child) addEdge(node.id, child.id, node.theme, false, "SINGLE");
+          sfx.capture();
+        };
+      });
+      if (plFilter) {
+        plFilter.onpointerdown = (e) => e.stopPropagation();
+        plFilter.oninput = () => {
+          const q = plFilter.value.trim().toLowerCase();
+          plList.querySelectorAll(".picker-row").forEach((row) => {
+            row.style.display = !q || (row.dataset.plTitle || "").includes(q) ? "" : "none";
+          });
+        };
+      }
+      el.querySelectorAll("[data-pl-quick]").forEach((btn) => {
+        btn.onpointerdown = (e) => e.stopPropagation();
+        btn.onclick = (e) => {
+          e.stopPropagation();
+          const mode = btn.dataset.plQuick;
+          plList.querySelectorAll("[data-pl-chk]").forEach((chk) => {
+            const n = parseInt(chk.dataset.plChk, 10);
+            chk.checked = mode === "all" ? true : n <= 5;
+          });
+          syncCheckedToRange();
+          sfx.click();
+        };
+      });
+    }
+    const textPreviewEl = el.querySelector("[data-fetch-text-preview]");
+    if (textPreviewEl) {
+      fetch(textPreviewEl.dataset.fetchTextPreview)
+        .then((r) => (r.ok ? r.text() : ""))
+        .then((txt) => {
+          textPreviewEl.textContent = txt ? txt.slice(0, 900) + (txt.length > 900 ? "\n…" : "") : "Preview ready — click Save File.";
+        })
+        .catch(() => { textPreviewEl.textContent = "Click Save File to view full text."; });
+    }
     const plRange = el.querySelector("[data-pl-range]");
     if (plRange) {
       plRange.onpointerdown = (e) => e.stopPropagation();

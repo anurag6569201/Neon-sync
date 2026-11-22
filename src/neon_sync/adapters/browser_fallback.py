@@ -497,6 +497,108 @@ class PlaywrightFallbackAdapter(ExtractorAdapter):
             ),
         )
 
+    async def capture_webpage(
+        self,
+        ctx: UrlContext,
+        output_dir: Path,
+        *,
+        fmt: str = "screenshot_png",
+        timeout_seconds: float = 25.0,
+        cancel_token: CancellationToken | None = None,
+    ) -> DownloadArtifact:
+        """Render a webpage in an isolated SSRF-guarded BrowserContext and capture PNG or PDF."""
+        if not self._playwright_available():
+            raise AdapterError(
+                ErrorCode.ERR_INTERNAL,
+                "Dynamic Web Renderer is not installed on this server.",
+                engine_id=self.id,
+            )
+
+        from playwright.async_api import async_playwright
+
+        output_dir.mkdir(parents=True, exist_ok=True)
+        timeout_ms = min(timeout_seconds, float(self._settings.browser_timeout_seconds) + 12.0) * 1000
+        is_pdf = fmt == "pdf"
+        out_name = "webpage_print.pdf" if is_pdf else "webpage_full.png"
+        out_path = output_dir / out_name
+
+        async with self._sem, async_playwright() as pw:
+            launch_args = [
+                "--disable-dev-shm-usage",
+                "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
+            ]
+            proxy_cfg = (
+                {"server": self._settings.egress_proxy_url}
+                if self._settings.egress_proxy_url
+                else None
+            )
+            browser = await pw.chromium.launch(headless=True, args=launch_args, proxy=proxy_cfg)
+            try:
+                context = await browser.new_context(
+                    ignore_https_errors=False,
+                    accept_downloads=False,
+                    java_script_enabled=True,
+                    viewport={"width": 1440, "height": 900},
+                )
+
+                async def _route_guard(route) -> None:
+                    req = route.request
+                    if req.resource_type == "beacon":
+                        await route.abort()
+                        return
+                    try:
+                        validate_and_canonicalize_url(
+                            req.url,
+                            allow_private=self._settings.allow_private_addresses,
+                            max_length=self._settings.max_url_length,
+                        )
+                    except UrlValidationError:
+                        await route.abort()
+                        return
+                    await route.continue_()
+
+                await context.route("**/*", _route_guard)
+                page = await context.new_page()
+                from playwright.async_api import Error as PlaywrightError
+
+                try:
+                    await page.goto(ctx.url, wait_until="networkidle", timeout=timeout_ms)
+                except PlaywrightError:
+                    # Fall back to domcontentloaded if long-polling analytics prevent networkidle
+                    await page.goto(ctx.url, wait_until="domcontentloaded", timeout=timeout_ms)
+                    await page.wait_for_timeout(1200)
+
+                if cancel_token is not None and cancel_token.is_cancelled:
+                    raise AdapterError(ErrorCode.ERR_INTERNAL, "Capture cancelled.", engine_id=self.id)
+
+                if is_pdf:
+                    await page.pdf(
+                        path=str(out_path),
+                        format="A4",
+                        print_background=True,
+                        margin={"top": "14mm", "right": "14mm", "bottom": "14mm", "left": "14mm"},
+                    )
+                else:
+                    await page.screenshot(path=str(out_path), full_page=True, type="png")
+            except AdapterError:
+                raise
+            except Exception as exc:
+                raise AdapterError(
+                    ErrorCode.ERR_TIMEOUT if "Timeout" in str(exc) else ErrorCode.ERR_INTERNAL,
+                    f"Webpage capture failed: {exc}",
+                    engine_id=self.id,
+                    retryable="Timeout" in str(exc),
+                ) from exc
+            finally:
+                await browser.close()
+
+        return DownloadArtifact(
+            local_path=out_path,
+            filename=out_name,
+            mime_type="application/pdf" if is_pdf else "image/png",
+            size_bytes=out_path.stat().st_size,
+        )
+
     async def download(
         self,
         ctx: UrlContext,

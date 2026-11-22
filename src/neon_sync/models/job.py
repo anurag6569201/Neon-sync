@@ -33,7 +33,7 @@ class ProbeRequest(BaseModel):
 
 class DownloadRequest(AdvancedProcessingOptions):
     url: str = Field(min_length=4, max_length=4096)
-    mode: Literal["auto", "video", "audio", "image", "direct"] = "auto"
+    mode: Literal["auto", "video", "audio", "image", "direct", "webpage"] = "auto"
     format_id: str | None = None
     allow_browser_fallback: bool = False
     max_items: int = Field(default=50, ge=1, le=200)
@@ -42,7 +42,7 @@ class DownloadRequest(AdvancedProcessingOptions):
 
 class BatchDownloadRequest(AdvancedProcessingOptions):
     urls: list[str] = Field(min_length=1, max_length=10)
-    mode: Literal["auto", "video", "audio", "image", "direct"] = "auto"
+    mode: Literal["auto", "video", "audio", "image", "direct", "webpage"] = "auto"
     allow_browser_fallback: bool = False
     max_items: int = Field(default=50, ge=1, le=200)
 

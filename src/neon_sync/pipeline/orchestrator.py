@@ -15,6 +15,7 @@ from neon_sync.adapters import (
     AdapterError,
     DownloadArtifact,
     FfmpegAdapter,
+    PlaywrightFallbackAdapter,
     ProgressCallback,
     UrlContext,
 )
@@ -367,10 +368,14 @@ class ExtractionOrchestrator:
 
         # Pre-flight size quota check if known.
         # Do NOT reject lightweight partial extractions (subtitles, audio-only, clips, lower quality,
-        # or explicitly selected smaller formats) simply because the full-length 4K master exceeds quota.
+        # webpage reader/snapshots, studio GIF/frames/compression, or explicitly selected smaller formats)
+        # simply because the full-length 4K master exceeds quota.
         is_partial_extraction = (
             request.subtitles_only
-            or request.mode == "audio"
+            or request.mode in {"audio", "webpage"}
+            or request.webpage_format is not None
+            or request.video_output_action is not None
+            or request.target_size_mb is not None
             or request.clip_start_seconds is not None
             or request.video_quality != "best"
         )
@@ -393,11 +398,16 @@ class ExtractionOrchestrator:
                 engine_id="orchestrator",
             )
 
-        downloader = self._router.select_downloader(
-            ctx,
-            probe_result=result,
-            preferred_engine=pref_engine,
-        )
+        if request.webpage_format in {"markdown", "text", "assets_zip"}:
+            downloader = self._registry.get_extractor("direct-http")
+        elif request.webpage_format in {"screenshot_png", "pdf"}:
+            downloader = self._registry.get_extractor("playwright")
+        else:
+            downloader = self._router.select_downloader(
+                ctx,
+                probe_result=result,
+                preferred_engine=pref_engine,
+            )
         if downloader is None:
             raise AdapterError(
                 ErrorCode.ERR_UNSUPPORTED_URL,
@@ -456,6 +466,13 @@ class ExtractionOrchestrator:
                 clip_end_seconds=request.clip_end_seconds,
                 playlist_items=request.playlist_items,
                 livestream_max_duration=request.livestream_max_duration,
+                video_output_action=request.video_output_action,
+                gif_fps=request.gif_fps,
+                gif_width=request.gif_width,
+                keyframe_seconds=request.keyframe_seconds,
+                target_size_mb=request.target_size_mb,
+                strip_metadata=request.strip_metadata,
+                webpage_format=request.webpage_format,
                 custom_filename_prefix=request.custom_filename_prefix,
                 max_bytes=self._settings.max_job_bytes,
                 max_items=request.max_items,
@@ -463,7 +480,17 @@ class ExtractionOrchestrator:
             )
 
             artifact: DownloadArtifact | None = None
-            if request.subtitles_only:
+            if request.webpage_format in {"screenshot_png", "pdf"} and isinstance(
+                downloader, PlaywrightFallbackAdapter
+            ):
+                artifact = await downloader.capture_webpage(
+                    ctx,
+                    scratch_job_dir,
+                    fmt=request.webpage_format,
+                    timeout_seconds=float(self._settings.browser_timeout_seconds + 12),
+                    cancel_token=cancel_token,
+                )
+            elif request.subtitles_only:
                 artifact = await self._try_fetch_subtitle_direct(
                     result,
                     request,
@@ -495,6 +522,7 @@ class ExtractionOrchestrator:
 
             if (
                 not request.subtitles_only
+                and request.webpage_format is None
                 and not is_archive_output
                 and isinstance(ffmpeg, FfmpegAdapter)
                 and ffmpeg.manifest().installation_status == "installed"
@@ -511,7 +539,9 @@ class ExtractionOrchestrator:
                 )
                 is_image_output = final_mime.startswith("image/") or result.content_type == ContentType.IMAGE
                 if is_image_output and (
-                    request.image_format != "original" or request.image_max_width is not None
+                    request.image_format != "original"
+                    or request.image_max_width is not None
+                    or request.strip_metadata
                 ):
                     target_fmt = (
                         request.image_format
@@ -529,13 +559,14 @@ class ExtractionOrchestrator:
                         image_format=target_fmt,
                         quality=request.image_quality,
                         max_width=request.image_max_width,
+                        strip_metadata=request.strip_metadata,
                         cancel_token=cancel_token,
                     )
                     final_filename = f"{Path(final_filename).stem}.{target_fmt}"
                     final_mime = "image/jpeg" if target_fmt == "jpg" else f"image/{target_fmt}"
                     result.engine.post_processor = f"ffmpeg-{ffmpeg.manifest().version}"
                 else:
-                    # Run clipping and audio normalization/conversion sequentially (not mutually exclusive)
+                    # Run clipping and creative/audio/compression transforms sequentially
                     if (
                         request.clip_start_seconds is not None
                         and not already_clipped
@@ -552,7 +583,85 @@ class ExtractionOrchestrator:
                         )
                         result.engine.post_processor = f"ffmpeg-{ffmpeg.manifest().version}"
 
-                    if request.mode == "audio" and (
+                    if request.video_output_action == "gif" and result.content_type == ContentType.VIDEO:
+                        gif_out = scratch_job_dir / f"{Path(final_filename).stem}.gif"
+                        final_path = await ffmpeg.create_gif(
+                            final_path,
+                            gif_out,
+                            fps=request.gif_fps,
+                            width=request.gif_width,
+                            max_output_bytes=self._settings.max_job_bytes,
+                            cancel_token=cancel_token,
+                        )
+                        final_filename = f"{Path(final_filename).stem}.gif"
+                        final_mime = "image/gif"
+                        result.engine.post_processor = f"ffmpeg-{ffmpeg.manifest().version}"
+                    elif request.video_output_action == "webp_anim" and result.content_type == ContentType.VIDEO:
+                        webp_out = scratch_job_dir / f"{Path(final_filename).stem}.webp"
+                        final_path = await ffmpeg.create_animated_webp(
+                            final_path,
+                            webp_out,
+                            fps=request.gif_fps,
+                            width=request.gif_width,
+                            max_output_bytes=self._settings.max_job_bytes,
+                            cancel_token=cancel_token,
+                        )
+                        final_filename = f"{Path(final_filename).stem}.webp"
+                        final_mime = "image/webp"
+                        result.engine.post_processor = f"ffmpeg-{ffmpeg.manifest().version}"
+                    elif request.video_output_action == "contact_sheet" and result.content_type == ContentType.VIDEO:
+                        sheet_dur = result.duration_seconds
+                        if sheet_dur is None:
+                            try:
+                                sheet_dur = (await ffmpeg.probe_file(final_path, cancel_token=cancel_token)).get("duration_seconds")
+                            except AdapterError:
+                                sheet_dur = None
+                        sheet_out = scratch_job_dir / f"{Path(final_filename).stem}_sheet.png"
+                        final_path = await ffmpeg.create_contact_sheet(
+                            final_path,
+                            sheet_out,
+                            duration_seconds=sheet_dur,
+                            cancel_token=cancel_token,
+                        )
+                        final_filename = f"{Path(final_filename).stem}_sheet.png"
+                        final_mime = "image/png"
+                        result.engine.post_processor = f"ffmpeg-{ffmpeg.manifest().version}"
+                    elif request.video_output_action == "keyframe" and result.content_type == ContentType.VIDEO:
+                        ts = request.keyframe_seconds if request.keyframe_seconds is not None else min(
+                            2.0, (result.duration_seconds or 4.0) / 2.0
+                        )
+                        kf_out = scratch_job_dir / f"{Path(final_filename).stem}_frame.png"
+                        final_path = await ffmpeg.extract_keyframe(
+                            final_path,
+                            kf_out,
+                            timestamp_seconds=ts,
+                            cancel_token=cancel_token,
+                        )
+                        final_filename = f"{Path(final_filename).stem}_frame.png"
+                        final_mime = "image/png"
+                        result.engine.post_processor = f"ffmpeg-{ffmpeg.manifest().version}"
+                    elif request.target_size_mb is not None and result.content_type == ContentType.VIDEO:
+                        comp_dur = result.duration_seconds
+                        if request.clip_start_seconds is not None and request.clip_end_seconds:
+                            comp_dur = max(1.0, request.clip_end_seconds - request.clip_start_seconds)
+                        if comp_dur is None:
+                            try:
+                                comp_dur = (await ffmpeg.probe_file(final_path, cancel_token=cancel_token)).get("duration_seconds")
+                            except AdapterError:
+                                comp_dur = None
+                        comp_out = scratch_job_dir / f"{Path(final_filename).stem}_{int(request.target_size_mb)}mb.mp4"
+                        final_path = await ffmpeg.compress_to_target_size(
+                            final_path,
+                            comp_out,
+                            target_size_mb=request.target_size_mb,
+                            duration_seconds=comp_dur,
+                            max_output_bytes=self._settings.max_job_bytes,
+                            cancel_token=cancel_token,
+                        )
+                        final_filename = f"{Path(final_filename).stem}_{int(request.target_size_mb)}mb.mp4"
+                        final_mime = "video/mp4"
+                        result.engine.post_processor = f"ffmpeg-{ffmpeg.manifest().version}"
+                    elif request.mode == "audio" and (
                         request.normalize_audio
                         or (
                             request.audio_format

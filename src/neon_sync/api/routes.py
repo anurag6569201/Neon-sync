@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import AsyncIterator
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
+import httpx
 from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import FileResponse, StreamingResponse
+from pydantic import BaseModel, Field
 
 from neon_sync import __version__
 from neon_sync.adapters import AdapterError
@@ -20,7 +23,11 @@ from neon_sync.models import (
     ProbeRequest,
     get_format_catalog,
 )
-from neon_sync.pipeline import RateLimitExceededError
+from neon_sync.pipeline import (
+    RateLimitExceededError,
+    convert_json3_to_vtt,
+    normalize_subtitle_to_transcript,
+)
 from neon_sync.security import (
     UrlValidationError,
     build_content_disposition,
@@ -138,6 +145,182 @@ async def probe_url(body: ProbeRequest, request: Request) -> NormalizedMediaOutp
                 request_id=_request_id(request),
             ),
         ) from exc
+
+
+class SubtitlePreviewRequest(BaseModel):
+    url: str = Field(min_length=4, max_length=4096)
+    language: str = Field(default="en", min_length=1, max_length=24)
+    subtitle_mode: Literal["prefer_manual", "manual_only", "include_auto"] = "prefer_manual"
+
+
+_CUE_TIME_RE = re.compile(
+    r"(?P<start>(?:\d{1,2}:)?\d{2}:\d{2}[.,]\d{3})\s*-->\s*(?P<end>(?:\d{1,2}:)?\d{2}:\d{2}[.,]\d{3})"
+)
+_TAG_STRIP_RE = re.compile(r"<[^>]+>")
+
+
+def _parse_vtt_preview_cues(vtt_text: str, max_cues: int = 250) -> list[dict[str, str]]:
+    """Parse VTT/SRT text into lightweight timestamped cue rows for instant UI inspection."""
+    cues: list[dict[str, str]] = []
+    lines = vtt_text.replace("\r\n", "\n").splitlines()
+    i = 0
+    last_text = ""
+    while i < len(lines) and len(cues) < max_cues:
+        m = _CUE_TIME_RE.search(lines[i])
+        if not m:
+            i += 1
+            continue
+        start = m.group("start").replace(",", ".").split(".")[0].removeprefix("00:")
+        end = m.group("end").replace(",", ".").split(".")[0].removeprefix("00:")
+        i += 1
+        buf: list[str] = []
+        while i < len(lines) and lines[i].strip():
+            cleaned = _TAG_STRIP_RE.sub("", lines[i]).strip()
+            if cleaned:
+                buf.append(cleaned)
+            i += 1
+        text = " ".join(buf).strip()
+        if text and text != last_text:
+            cues.append({"start": start, "end": end, "text": text})
+            last_text = text
+    return cues
+
+
+@router.post("/preview/subtitles", tags=["extraction"])
+async def preview_subtitles(body: SubtitlePreviewRequest, request: Request) -> dict:
+    """Fetch & parse a lightweight live caption preview (zero disk artifact, SSRF-safe)."""
+    c = _container(request)
+    client_key = _client_key(request)
+    try:
+        c.probe_limiter.check_and_consume(client_key)
+    except RateLimitExceededError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=brand_error_detail(
+                ErrorCode.ERR_RATE_LIMITED.value,
+                str(exc),
+                retryable=True,
+                request_id=_request_id(request),
+            ),
+        ) from exc
+
+    try:
+        probed = await c.orchestrator.probe(ProbeRequest(url=body.url, include_subtitles=True))
+    except (UrlValidationError, AdapterError) as exc:
+        raise HTTPException(
+            status_code=_error_status_code(exc.code),
+            detail=brand_error_detail(
+                exc.code.value,
+                exc.message,
+                request_id=_request_id(request),
+            ),
+        ) from exc
+
+    req_lang = body.language.strip().lower()
+    candidates = [
+        t
+        for t in probed.subtitles
+        if t.url and (body.subtitle_mode != "manual_only" or not t.is_auto_generated)
+    ]
+    chosen = None
+    for want_auto in (False, True):
+        if want_auto and body.subtitle_mode == "manual_only":
+            continue
+        pool = [t for t in candidates if t.is_auto_generated == want_auto]
+        chosen = next((t for t in pool if t.language.lower() == req_lang), None) or next(
+            (
+                t
+                for t in pool
+                if t.language.lower().startswith(f"{req_lang}-")
+                or t.language.lower().startswith(f"{req_lang}_")
+            ),
+            None,
+        )
+        if chosen is not None:
+            break
+
+    if chosen is None or not chosen.url:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=brand_error_detail(
+                ErrorCode.ERR_NOT_FOUND.value,
+                f"No previewable caption track found for '{body.language}'.",
+                request_id=_request_id(request),
+            ),
+        )
+
+    try:
+        validated = validate_and_canonicalize_url(
+            chosen.url,
+            allow_private=c.settings.allow_private_addresses,
+            max_length=c.settings.max_url_length,
+        )
+    except UrlValidationError as exc:
+        raise HTTPException(
+            status_code=_error_status_code(exc.code),
+            detail=brand_error_detail(exc.code.value, exc.message, request_id=_request_id(request)),
+        ) from exc
+
+    client_kwargs: dict = {
+        "timeout": httpx.Timeout(12.0),
+        "follow_redirects": True,
+        "max_redirects": 4,
+        "headers": {
+            "User-Agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+            ),
+        },
+    }
+    if c.settings.egress_proxy_url:
+        client_kwargs["proxy"] = c.settings.egress_proxy_url
+
+    try:
+        async with httpx.AsyncClient(**client_kwargs) as client:
+            resp = await client.get(validated.canonical_url)
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=brand_error_detail(
+                ErrorCode.ERR_INTERNAL.value,
+                f"Caption preview fetch failed: {exc}",
+                retryable=True,
+                request_id=_request_id(request),
+            ),
+        ) from exc
+
+    if resp.status_code == 429:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=brand_error_detail(
+                ErrorCode.ERR_RATE_LIMITED.value,
+                "Caption source temporarily rate-limited preview; try again in a few seconds.",
+                retryable=True,
+                request_id=_request_id(request),
+            ),
+        )
+    if resp.status_code != 200 or not resp.text.strip():
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=brand_error_detail(
+                ErrorCode.ERR_NOT_FOUND.value,
+                f"Caption preview unavailable (HTTP {resp.status_code}).",
+                request_id=_request_id(request),
+            ),
+        )
+
+    raw_text = resp.text
+    vtt_text = convert_json3_to_vtt(raw_text) if raw_text.lstrip().startswith("{") else raw_text
+    cues = _parse_vtt_preview_cues(vtt_text, max_cues=250)
+    plain_text = normalize_subtitle_to_transcript(vtt_text)
+    return {
+        "language": chosen.language,
+        "name": chosen.name,
+        "is_auto_generated": chosen.is_auto_generated,
+        "cue_count": len(cues),
+        "cues": cues,
+        "plain_text": plain_text[:25_000],
+    }
 
 
 @router.post(
@@ -323,6 +506,8 @@ _SAFE_INLINE_MIMES = frozenset(
         "image/gif",
         "image/avif",
         "application/pdf",
+        "text/plain",
+        "text/markdown",
     }
 )
 

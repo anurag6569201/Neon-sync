@@ -126,7 +126,7 @@ class DownloadPlan(AdvancedProcessingOptions):
     job_id: str
     output_dir: Path
     format_id: str | None = None
-    mode: Literal["auto", "video", "audio", "image", "direct"] = "auto"
+    mode: Literal["auto", "video", "audio", "image", "direct", "webpage"] = "auto"
     max_bytes: int = Field(default=2 * 1024 * 1024 * 1024, ge=1)
     max_items: int = Field(default=50, ge=1, le=500)
     timeout_seconds: int = Field(default=1800, ge=10, le=7200)
