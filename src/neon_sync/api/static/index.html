@@ -2,8 +2,17 @@
 <html lang="en" data-theme="dark">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Neon Sync — Spatial Media Engine</title>
+  <meta name="description" content="Free universal browser media downloader and live player — zero ads, zero logins." />
+  <meta name="theme-color" content="#08090d" id="meta-theme-color" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Neon Sync" />
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <link rel="icon" type="image/svg+xml" href="/static/icon.svg" />
+  <link rel="apple-touch-icon" href="/static/icon-192.png" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -32,11 +41,26 @@
       <a href="/" class="brand">
         <span class="brand-led" aria-hidden="true"></span>
         <span class="brand-name">NEON SYNC</span>
-        <span class="brand-ver mono">GRAPH</span>
       </a>
+      <div class="toolbar-activity" id="activity-status" role="status" aria-live="polite" aria-label="Canvas idle">
+        <span class="activity-dot" aria-hidden="true"></span>
+        <span id="activity-status-text">Idle</span>
+      </div>
     </div>
 
     <div class="bezel-controls">
+      <button class="hw-btn hidden" id="install-app-btn" title="Install Neon Sync as a standalone browser app">Install</button>
+      <button class="hw-btn" id="recent-jobs-btn" aria-haspopup="dialog">Jobs</button>
+      <button class="hw-btn feature-status" id="status-pill" title="View available features and service limits" aria-haspopup="dialog">
+        <span class="led-dot" id="status-led"></span>
+        <span id="status-pill-text" aria-live="polite">Checking</span>
+      </button>
+      <details class="toolbar-menu" id="workspace-menu">
+        <summary class="hw-btn" aria-label="Workspace options" title="Workspace options">
+          <svg class="ico-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="3" fill="var(--surface)"/><circle cx="15" cy="17" r="3" fill="var(--surface)"/></svg>
+          <span class="options-label">Options</span>
+        </summary>
+        <div class="toolbar-menu-panel" role="group" aria-label="Workspace settings">
       <button class="hw-btn active" id="layout-mode-btn" title="Switch 4-Way Compass Hub vs Classic Left-to-Right Tree">
         <i data-lucide="compass" class="ico-sm"></i>
         <span id="layout-mode-text">Compass</span>
@@ -45,21 +69,22 @@
         <i data-lucide="layout-grid" class="ico-sm"></i>
         <span>Tidy</span>
       </button>
-      <button class="hw-btn active" id="autosave-pill" title="Auto-save extracted files straight to Downloads">
+      <button class="hw-btn active" id="autosave-pill" title="Automatically download completed files" aria-pressed="true">
         <span class="led-dot" id="autosave-dot"></span>
         <span>Auto-save</span>
       </button>
-      <button class="hw-btn active" id="sfx-btn" title="Toggle synthesized tactile sound effects">
+      <button class="hw-btn active" id="sfx-btn" title="Toggle sound effects" aria-pressed="true">
         <span class="led-dot" id="sfx-dot"></span>
-        <span id="sfx-text">SFX</span>
+        <span id="sfx-text">Sound</span>
       </button>
-      <div class="hw-btn status-pill-static" id="status-pill" title="Neon Sync core operational">
-        <span class="led-dot live" id="status-led"></span>
-        <span class="mono num" id="status-pill-text">Core OK</span>
-      </div>
       <button class="hw-btn" id="theme-btn" title="Switch Obsidian / Ceramic theme">
         <span id="theme-text">Light</span>
       </button>
+      <button class="hw-btn" id="quick-capture-btn" title="Install app, URL prefix shortcut, and bookmarklet" aria-haspopup="dialog">
+        <span>Quick capture</span>
+      </button>
+        </div>
+      </details>
     </div>
   </header>
 
@@ -70,10 +95,11 @@
     <div class="empty-canvas-hud hidden" id="empty-canvas-hud">
       <div class="empty-hud-card">
         <div class="empty-hud-badge mono">SPATIAL CANVAS READY</div>
-        <h2>Drop or paste any link to bloom its paths</h2>
-        <p>Press <kbd class="mono">⌘V</kbd> anywhere, drag a URL onto the canvas, or explore an interactive example tree.</p>
+        <h2>Your media, one link away</h2>
+        <p>Paste a public video, audio, gallery, file, or article link. Inspect its available formats, then choose what to save. No Neon Sync account needed.</p>
         <div class="empty-hud-actions">
           <button class="reactor-fire btn-sm" id="empty-focus-btn">Paste a Link</button>
+          <button class="ghost-btn btn-sm" id="empty-capture-btn">Quick Capture</button>
           <button class="ghost-btn btn-sm" id="empty-demo-btn">Load Demo Tree</button>
         </div>
       </div>
@@ -113,34 +139,22 @@
     <!-- Compact Upward Batch Spawner -->
     <div class="dock-popover hidden" id="dock-popover">
       <div class="popover-head">
-        <span class="mono strip-label">BATCH SPAWN (1 LINK PER LINE)</span>
+        <span class="mono strip-label">INSPECT LINKS (ONE PER LINE)</span>
         <button class="ghost-btn btn-xs" id="exit-batch-btn">Close</button>
       </div>
       <div class="batch-wrap">
         <textarea class="batch-box mono" id="batch-input" placeholder="Paste multiple URLs (one per line) to spawn their Source trees side-by-side…"></textarea>
         <div class="batch-foot">
           <span class="mono num muted" id="batch-count">0 links</span>
-          <button class="reactor-fire btn-sm" id="spawn-batch-btn">Spawn All Trees</button>
+          <button class="ghost-btn btn-xs" id="clear-batch-btn">Clear links</button>
+          <button class="reactor-fire btn-sm" id="spawn-batch-btn">Inspect all</button>
         </div>
       </div>
     </div>
 
-    <!-- Telemetry Strip -->
-    <div class="dock-telemetry">
-      <div class="row-gap">
-        <span class="intent-switch intent-badge">
-          <span class="intent-dot"></span>
-          <span class="mono" id="intent-label">SPAWN POSSIBILITIES</span>
-        </span>
-        <span class="platform-chip mono hidden" id="platform-tag">LINK</span>
-      </div>
-      <div class="oscilloscope" id="oscilloscope" aria-hidden="true"></div>
-      <span class="mono dock-status" id="reactor-status-text">ZERO HEAVY LOAD ON SPAWN · ⌘V ANYWHERE</span>
-    </div>
-
     <!-- Clean Single Input + Spawn Button -->
     <div class="reactor-input-row" id="single-bar">
-      <button class="icon-toggle-btn" id="dock-batch-btn" title="Batch spawn multiple links">
+      <button class="icon-toggle-btn" id="dock-batch-btn" title="Inspect multiple links" aria-label="Inspect multiple links" aria-expanded="false" aria-controls="dock-popover">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>
         </svg>
@@ -149,25 +163,18 @@
         type="text"
         class="reactor-input"
         id="url-input"
-        placeholder="Paste any video, audio, gallery, or live stream link to spawn its paths…"
+        aria-label="Media or webpage URL"
+        placeholder="Paste a media, file, or article link…"
         autocomplete="off"
         spellcheck="false"
         autofocus
       />
-      <button class="ghost-btn btn-xs hidden" id="clear-url-btn">Clear</button>
-      <button class="ghost-btn btn-xs" id="paste-btn" title="Paste link (⌘V anywhere)">Paste</button>
-      <button class="ghost-btn btn-sm live-watch-dock-btn" id="watch-live-btn" title="Stream & watch live immediately without downloading (VLC mode)">
-        <i data-lucide="play" class="ico-xs"></i>
-        <span>Watch</span>
-      </button>
+      <button class="ghost-btn btn-xs hidden" id="clear-url-btn" aria-label="Clear link" title="Clear link">×</button>
       <button class="reactor-fire magnetic" id="download-btn">
-        <span id="fire-label">Spawn</span>
+        <span id="fire-label">Inspect</span>
       </button>
     </div>
   </section>
-
-  <!-- Bottom-Left Live Coordinate HUD -->
-  <div class="hud-coords mono" id="coord-readout">X:+0000 Y:+0000 · 100%</div>
 
   <!-- Bottom-Right Live Spatial Minimap + Camera Controls -->
   <div class="nav-cluster">
@@ -218,9 +225,88 @@
     </div>
   </div>
 
+  <dialog class="modal service-dialog" id="recent-jobs-dialog" aria-labelledby="recent-jobs-title">
+    <div class="modal-head">
+      <span id="recent-jobs-title">Recent jobs</span>
+      <button class="ghost-btn btn-xs" id="close-recent-jobs" autofocus>Close</button>
+    </div>
+    <div class="modal-body">
+      <p>Jobs on this installation. Downloaded files are temporary; save a copy before they expire.</p>
+      <div id="recent-jobs-list" class="service-capabilities" aria-live="polite"></div>
+      <button class="ghost-btn btn-sm" id="refresh-recent-jobs">Refresh jobs</button>
+    </div>
+  </dialog>
+  <dialog class="modal service-dialog" id="service-status-dialog" aria-labelledby="service-status-title">
+    <div class="modal-head">
+      <span id="service-status-title">Available features</span>
+      <button class="ghost-btn btn-xs" id="close-service-status" autofocus>Close</button>
+    </div>
+    <div class="modal-body">
+      <p id="service-support-note">Checking this installation…</p>
+      <div id="service-capabilities" class="service-capabilities" aria-live="polite"></div>
+      <p id="service-limits" class="service-limits"></p>
+      <button class="ghost-btn btn-sm" id="refresh-service-status">Check again</button>
+    </div>
+  </dialog>
+  <dialog class="modal service-dialog quick-capture-dialog" id="quick-capture-dialog" aria-labelledby="quick-capture-title">
+    <div class="modal-head">
+      <span id="quick-capture-title">Use Neon Sync Everywhere</span>
+      <button class="ghost-btn btn-xs" id="close-quick-capture" autofocus>Close</button>
+    </div>
+    <div class="modal-body">
+      <p>Works in any browser on any OS — no app store, account, or ad-filled site required.</p>
+      <div class="service-capabilities">
+        <div class="service-capability">
+          <header>
+            <strong>Install as Browser App (PWA)</strong>
+            <span class="mono capture-badge" id="pwa-install-badge">READY</span>
+          </header>
+          <p id="pwa-install-hint">Install Neon Sync to your home screen or dock for a fullscreen app experience and native Android Share Sheet support.</p>
+          <div class="capture-actions">
+            <button class="reactor-fire btn-sm" id="pwa-install-btn">Install App</button>
+          </div>
+        </div>
+        <div class="service-capability">
+          <header>
+            <strong>Instant Address-Bar Prefix</strong>
+            <span class="mono capture-badge">ZERO INSTALL</span>
+          </header>
+          <p>Type this address right in front of any video, gallery, or article URL in your browser bar to open and inspect it immediately:</p>
+          <code class="mono capture-code" id="capture-prefix-example"></code>
+          <div class="capture-actions">
+            <button class="ghost-btn btn-xs" id="copy-prefix-btn">Copy prefix</button>
+          </div>
+        </div>
+        <div class="service-capability">
+          <header>
+            <strong>1-Click Browser Bookmarklet</strong>
+            <span class="mono capture-badge">ALL BROWSERS</span>
+          </header>
+          <p>Drag this button onto your bookmarks bar, then click it on any tab to send that page straight to Neon Sync:</p>
+          <div class="capture-actions">
+            <a class="reactor-fire btn-sm bookmarklet-pill" id="bookmarklet-link" href="#" draggable="true">Send to Neon Sync</a>
+            <button class="ghost-btn btn-xs" id="copy-bookmarklet-btn">Copy bookmarklet</button>
+          </div>
+        </div>
+        <div class="service-capability">
+          <header>
+            <strong>Phone Share Sheet (iOS &amp; Android)</strong>
+            <span class="mono capture-badge">MOBILE</span>
+          </header>
+          <p>On Android, install Neon Sync to get <strong>Share → Neon Sync</strong> automatically. On iPhone/iPad, create a 1-step Apple Shortcut that opens this URL with the shared link:</p>
+          <code class="mono capture-code" id="capture-shortcut-url"></code>
+          <div class="capture-actions">
+            <button class="ghost-btn btn-xs" id="copy-shortcut-url-btn">Copy shortcut URL</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </dialog>
   <div class="toast-stack" id="toast-stack" aria-live="polite"></div>
   <script src="https://unpkg.com/lucide@0.469.0/dist/umd/lucide.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.18/dist/hls.min.js"></script>
+  <script src="/static/client.js"></script>
+  <script src="/static/sizes.js"></script>
   <script src="/static/app.js"></script>
 </body>
 </html>

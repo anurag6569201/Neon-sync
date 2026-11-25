@@ -20,6 +20,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+engines = [
+    "yt-dlp[default,curl-cffi]",
+    "gallery-dl",
+    "streamlink",
+]
 webpage = [
     "trafilatura>=2.0.0",
 ]

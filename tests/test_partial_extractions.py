@@ -236,7 +236,7 @@ async def test_ytdlp_download_packages_multi_item_playlist_into_zip(tmp_path: Pa
     assert artifact.mime_type == "application/zip"
     assert len(artifact.extra_files) == 1 and artifact.extra_files[0].suffix == ".vtt"
     with zipfile.ZipFile(artifact.local_path, "r") as zf:
-        assert sorted(zf.namelist()) == ["vid1.mp4", "vid2.mp4", "vid3.mp4"]
+        assert sorted(zf.namelist()) == ["vid1.en.vtt", "vid1.mp4", "vid2.mp4", "vid3.mp4"]
 
 
 class _StubAdapter(ExtractorAdapter):
@@ -411,7 +411,7 @@ async def test_orchestrator_quota_blocks_full_4k_but_allows_partial_extractions(
     # Audio-only, lower video quality, and clip are all allowed!
     res_aud = await orch.execute_download(
         "job_part_aud",
-        DownloadRequest(url="https://youtu.be/YW7Uc5_ixtM", mode="audio", audio_format="mp3"),
+        DownloadRequest(url="https://youtu.be/YW7Uc5_ixtM", mode="audio", audio_format="m4a"),
     )
     assert res_aud.download.status == DownloadStatus.COMPLETED
 

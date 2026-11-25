@@ -191,6 +191,7 @@ def _parse_rss_or_atom_feed(xml_text: str, base_url: str, max_items: int = 50) -
             it_thumb = feed_thumb
             enc_url: str | None = None
             enc_mime: str | None = None
+            enc_size: int | None = None
 
             for ch in item_el:
                 if not isinstance(ch.tag, str):
@@ -201,6 +202,8 @@ def _parse_rss_or_atom_feed(xml_text: str, base_url: str, max_items: int = 50) -
                 ):
                     enc_url = urljoin(base_url, str(ch.get("url")))
                     enc_mime = str(ch.get("type") or "") or None
+                    length = ch.get("length") or ch.get("fileSize")
+                    enc_size = int(length) if length and length.isdigit() else None
                 elif loc in {"image", "thumbnail"} and ch.get("href"):
                     it_thumb = urljoin(base_url, str(ch.get("href")))
                 elif loc == "thumbnail" and ch.get("url"):
@@ -225,6 +228,7 @@ def _parse_rss_or_atom_feed(xml_text: str, base_url: str, max_items: int = 50) -
                     content_type=kind,
                     mime_type=enc_mime,
                     duration_seconds=it_dur,
+                    size_bytes=enc_size,
                     thumbnail_url=it_thumb,
                     direct_media_url=enc_url,
                 )
@@ -250,6 +254,7 @@ def _parse_rss_or_atom_feed(xml_text: str, base_url: str, max_items: int = 50) -
             it_id = _first_text(entry, ("id",))
             enc_url = None
             enc_mime = None
+            enc_size = None
             alt_url = None
             for ch in entry:
                 if not isinstance(ch.tag, str):
@@ -260,6 +265,8 @@ def _parse_rss_or_atom_feed(xml_text: str, base_url: str, max_items: int = 50) -
                     if rel == "enclosure":
                         enc_url = href
                         enc_mime = ch.get("type")
+                        length = ch.get("length")
+                        enc_size = int(length) if length and length.isdigit() else None
                     elif not alt_url:
                         alt_url = href
             target_url = enc_url or alt_url or base_url
@@ -274,6 +281,7 @@ def _parse_rss_or_atom_feed(xml_text: str, base_url: str, max_items: int = 50) -
                     title=it_title,
                     content_type="audio" if is_audio else "webpage",
                     mime_type=enc_mime,
+                    size_bytes=enc_size,
                     thumbnail_url=feed_thumb,
                     direct_media_url=enc_url,
                 )
@@ -755,6 +763,7 @@ class DirectHttpAdapter(ExtractorAdapter):
                                         ),
                                         has_video=(first_audio.content_type == "video"),
                                         has_audio=True,
+                                        size_bytes=first_audio.size_bytes,
                                         direct_media_url=first_audio.direct_media_url,
                                     )
                                 )

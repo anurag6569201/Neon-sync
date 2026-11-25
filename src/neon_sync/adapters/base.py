@@ -57,6 +57,7 @@ class UrlContext:
     head_final_url: str | None = None
     head_filename: str | None = None
     prefetched_html: str | None = None
+    is_collection: bool = False
 
     @property
     def url(self) -> str:

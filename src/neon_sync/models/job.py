@@ -26,6 +26,7 @@ class JobStatus(StrEnum):
 class ProbeRequest(BaseModel):
     url: str = Field(min_length=4, max_length=4096)
     max_items: int = Field(default=50, ge=1, le=200)
+    playlist_start: int = Field(default=1, ge=1, le=1_000_000)
     include_subtitles: bool = True
     allow_browser_fallback: bool = False
     bypass_cache: bool = False

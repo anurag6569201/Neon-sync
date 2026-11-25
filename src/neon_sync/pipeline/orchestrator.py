@@ -70,8 +70,9 @@ class ExtractionOrchestrator:
         self._registry = registry
         self._storage = storage
         self._router = UrlRouter(registry)
-        self._probe_cache: dict[tuple[str, str | None, int, bool], tuple[float, NormalizedMediaOutput]] = {}
-        self._inflight_probes: dict[tuple[str, str | None, int, bool], asyncio.Task[NormalizedMediaOutput]] = {}
+        self._probe_semaphore = asyncio.Semaphore(max(1, settings.max_concurrent_probes))
+        self._probe_cache: dict[tuple[str, str | None, int, bool, int], tuple[float, NormalizedMediaOutput]] = {}
+        self._inflight_probes: dict[tuple[str, str | None, int, bool, int], asyncio.Task[NormalizedMediaOutput]] = {}
 
     async def probe(
         self,
@@ -91,6 +92,7 @@ class ExtractionOrchestrator:
             pref_engine,
             request.max_items,
             request.allow_browser_fallback,
+            request.playlist_start,
         )
         now = time.monotonic()
         if not request.bypass_cache and cache_key in self._probe_cache:
@@ -109,15 +111,18 @@ class ExtractionOrchestrator:
         options = ProbeOptions(
             timeout_seconds=self._settings.probe_timeout_seconds,
             max_items=request.max_items,
+            playlist_start=request.playlist_start,
             include_subtitles=request.include_subtitles,
             preferred_engine=pref_engine,
             allow_browser_fallback=(
                 request.allow_browser_fallback and self._settings.enable_browser_fallback
             ),
         )
-        task = asyncio.create_task(
-            self._router.probe_with_fallback(ctx, options, cancel_token=cancel_token)
-        )
+        async def run_probe() -> NormalizedMediaOutput:
+            async with self._probe_semaphore:
+                return await self._router.probe_with_fallback(ctx, options, cancel_token=cancel_token)
+
+        task = asyncio.create_task(run_probe())
         if cancel_token is None:
             self._inflight_probes[cache_key] = task
         try:
@@ -327,6 +332,7 @@ class ExtractionOrchestrator:
             pref_engine,
             request.max_items,
             request.allow_browser_fallback,
+            1,  # Download probes never reuse a later metadata page.
         )
         now = time.monotonic()
         cached_entry = self._probe_cache.get(cache_key)
@@ -367,6 +373,22 @@ class ExtractionOrchestrator:
                 )
 
         # Pre-flight size quota check if known.
+        ctx.is_collection = result.content_type in {ContentType.PLAYLIST, ContentType.GALLERY}
+        if request.livestream_max_duration is not None and request.livestream_max_duration > self._settings.max_livestream_duration_seconds:
+            raise AdapterError(
+                ErrorCode.ERR_QUOTA_EXCEEDED,
+                f"Live recordings are limited to {self._settings.max_livestream_duration_seconds} seconds.",
+                engine_id="orchestrator",
+            )
+        if result.is_live and request.livestream_max_duration is None:
+            request = request.model_copy(update={"livestream_max_duration": self._settings.max_livestream_duration_seconds})
+        if result.duration_seconds is not None and not ctx.is_collection:
+            if request.clip_start_seconds is not None and request.clip_start_seconds >= result.duration_seconds:
+                raise AdapterError(ErrorCode.ERR_VALIDATION_FAILED, "Clip start is outside the media duration.", engine_id="orchestrator")
+            if request.clip_end_seconds is not None and request.clip_end_seconds > result.duration_seconds:
+                raise AdapterError(ErrorCode.ERR_VALIDATION_FAILED, "Clip end is outside the media duration.", engine_id="orchestrator")
+            if request.keyframe_seconds is not None and request.keyframe_seconds >= result.duration_seconds:
+                raise AdapterError(ErrorCode.ERR_VALIDATION_FAILED, "Frame position is outside the media duration.", engine_id="orchestrator")
         # Do NOT reject lightweight partial extractions (subtitles, audio-only, clips, lower quality,
         # webpage reader/snapshots, studio GIF/frames/compression, or explicitly selected smaller formats)
         # simply because the full-length 4K master exceeds quota.
@@ -490,7 +512,7 @@ class ExtractionOrchestrator:
                     timeout_seconds=float(self._settings.browser_timeout_seconds + 12),
                     cancel_token=cancel_token,
                 )
-            elif request.subtitles_only:
+            elif request.subtitles_only and not ctx.is_collection:
                 artifact = await self._try_fetch_subtitle_direct(
                     result,
                     request,
@@ -519,13 +541,33 @@ class ExtractionOrchestrator:
             final_mime = artifact.mime_type or "application/octet-stream"
             ffmpeg = self._registry.get_postprocessor("ffmpeg")
             is_archive_output = final_path.suffix.lower() in {".zip", ".tar"}
+            is_image_output = final_mime.startswith("image/") or result.content_type == ContentType.IMAGE
+            processor_installed = (
+                isinstance(ffmpeg, FfmpegAdapter)
+                and ffmpeg.manifest().installation_status == "installed"
+            )
+            needs_conversion = (
+                request.video_output_action is not None or request.target_size_mb is not None
+                or request.normalize_audio
+                or (request.mode == "audio" and (
+                    final_mime.startswith("video/")
+                    or (request.audio_format not in {None, "best"} and final_path.suffix.lstrip(".").lower() != request.audio_format)
+                ))
+                or (request.clip_start_seconds is not None and not already_clipped)
+            )
+            if needs_conversion and not processor_installed and not is_archive_output and not request.subtitles_only:
+                raise AdapterError(
+                    ErrorCode.ERR_UNSUPPORTED_URL,
+                    "The requested media conversion is unavailable on this installation. Choose an original format or enable media processing.",
+                    engine_id="orchestrator",
+                )
 
             if (
                 not request.subtitles_only
                 and request.webpage_format is None
                 and not is_archive_output
                 and isinstance(ffmpeg, FfmpegAdapter)
-                and ffmpeg.manifest().installation_status == "installed"
+                and (processor_installed or is_image_output)
             ):
                 await self._emit(
                     progress_cb,
@@ -537,7 +579,6 @@ class ExtractionOrchestrator:
                         message="Optimizing and verifying media with Neon Sync",
                     ),
                 )
-                is_image_output = final_mime.startswith("image/") or result.content_type == ContentType.IMAGE
                 if is_image_output and (
                     request.image_format != "original"
                     or request.image_max_width is not None
@@ -749,6 +790,7 @@ class ExtractionOrchestrator:
                             language=(request.subtitle_languages or ["en"])[0],
                             source="manual_captions" if request.subtitle_mode == "manual_only" else "auto_captions",
                             artifact_url=stored_txt.download_url,
+                            size_bytes=stored_txt.size_bytes,
                         )
 
             # Use human-readable media title for the delivered filename when available
@@ -779,6 +821,11 @@ class ExtractionOrchestrator:
                     message="Finalizing artifact storage",
                 ),
             )
+            if final_path.stat().st_size > self._settings.max_job_bytes:
+                raise AdapterError(
+                    ErrorCode.ERR_QUOTA_EXCEEDED, "The processed output exceeds the job size limit.",
+                    engine_id="orchestrator",
+                )
             stored = self._storage.store(
                 job_id=job_id,
                 source_path=final_path,

@@ -10,6 +10,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     aria2 \
+    ffmpeg \
     ca-certificates \
     curl \
     unzip \
@@ -20,7 +21,7 @@ RUN curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh
 
 # Install GPL/Unlicense CLI extractors as standalone binaries (strict subprocess boundary)
 RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir "yt-dlp[default,curl-cffi]" gallery-dl
+    && pip install --no-cache-dir "yt-dlp[default,curl-cffi]" gallery-dl streamlink
 
 WORKDIR /app
 COPY pyproject.toml README.md ./

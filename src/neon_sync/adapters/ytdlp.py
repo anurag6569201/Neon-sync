@@ -47,8 +47,11 @@ from neon_sync.models import (
     SupportedDomains,
     ThumbnailInfo,
     TranscriptInfo,
+    WarningInfo,
     build_ytdlp_format_selector,
 )
+from neon_sync.models.selection import playlist_indices
+from neon_sync.models.sizing import source_size
 from neon_sync.security import (
     CancellationToken,
     SubprocessCancelledError,
@@ -169,6 +172,12 @@ def classify_ytdlp_error(stderr: str, engine_id: str = "yt-dlp") -> AdapterError
             retryable=False,
             outdated=True,
         )
+    if "requested format is not available" in low:
+        return AdapterError(
+            ErrorCode.ERR_UNSUPPORTED_URL,
+            "The requested quality or codec is unavailable. Try Native Best or a different format.",
+            engine_id=engine_id,
+        )
     if any(k in low for k in ("unsupported url", "no video formats found", "no media found")):
         return AdapterError(ErrorCode.ERR_UNSUPPORTED_URL, tail, engine_id=engine_id)
     return AdapterError(ErrorCode.ERR_INTERNAL, tail, engine_id=engine_id, retryable=True)
@@ -210,6 +219,8 @@ def normalize_ytdlp_json(
     *,
     version: str,
     probe_ms: int,
+    playlist_start: int = 1,
+    page_size: int = 50,
 ) -> NormalizedMediaOutput:
     """Convert raw yt-dlp --dump-single-json payload into NormalizedMediaOutput."""
     is_playlist = raw.get("_type") in {"playlist", "multi_video"}
@@ -231,8 +242,7 @@ def normalize_ytdlp_json(
             if width and height
             else ("audio_only" if has_audio and not has_video else f.get("resolution"))
         )
-        size = f.get("filesize") or f.get("filesize_approx")
-        size_int = int(size) if isinstance(size, (int, float)) and size >= 0 else None
+        size_int, size_approx = source_size(f, duration=raw.get("duration"), live=is_live)
         mime = mimetypes.guess_type(f"x.{ext}")[0] or (
             f"video/{ext}" if has_video else f"audio/{ext}"
         )
@@ -251,7 +261,7 @@ def normalize_ytdlp_json(
                 video_bitrate_kbps=float(f["vbr"]) if isinstance(f.get("vbr"), (int, float)) and f["vbr"] >= 0 else None,
                 audio_bitrate_kbps=float(f["abr"]) if isinstance(f.get("abr"), (int, float)) and f["abr"] >= 0 else None,
                 size_bytes=size_int,
-                size_is_approx=(f.get("filesize") is None and f.get("filesize_approx") is not None),
+                size_is_approx=size_approx,
                 protocol=_map_protocol(f.get("protocol")),
                 has_video=has_video,
                 has_audio=has_audio,
@@ -289,20 +299,45 @@ def normalize_ytdlp_json(
 
     items: list[MediaItem] = []
     if is_playlist:
-        for idx, entry in enumerate(raw.get("entries") or [], start=1):
+        for idx, entry in enumerate(raw.get("entries") or [], start=playlist_start):
             if not isinstance(entry, dict):
                 continue
-            entry_url = entry.get("webpage_url") or entry.get("url") or ctx.url
+            entry_url = entry.get("webpage_url") or entry.get("url")
+            if not isinstance(entry_url, str) or not entry_url.startswith(("https://", "http://")):
+                continue
+            if entry.get("availability") in {"private", "needs_auth", "premium_only", "subscriber_only"}:
+                continue
+            ext = str(entry.get("ext") or "")
+            mime = mimetypes.guess_type(f"item.{ext}")[0] or ""
+            kind = "audio" if mime.startswith("audio/") or entry.get("vcodec") == "none" else "video"
+            if mime.startswith("image/"):
+                kind = "image"
+            item_live = bool(entry.get("is_live") or entry.get("live_status") == "is_live")
+            item_size, item_size_approx = source_size(entry, live=item_live)
+            if item_live:
+                kind = "livestream"
             items.append(
                 MediaItem(
-                    index=idx,
+                    index=entry.get("playlist_index") or idx,
                     external_id=str(entry["id"]) if entry.get("id") else None,
                     url=str(entry_url),
                     title=entry.get("title"),
-                    content_type="video",
-                    duration_seconds=entry.get("duration") if isinstance(entry.get("duration"), (int, float)) else None,
+                    content_type=kind,
+                    mime_type=mime or None,
+                    size_bytes=item_size,
+                    size_is_approx=item_size_approx,
+                    width=entry.get("width") if isinstance(entry.get("width"), int) and entry["width"] > 0 else None,
+                    height=entry.get("height") if isinstance(entry.get("height"), int) and entry["height"] > 0 else None,
+                    duration_seconds=entry.get("duration") if isinstance(entry.get("duration"), (int, float)) and entry["duration"] >= 0 else None,
                     thumbnail_url=entry.get("thumbnail"),
                 )
+            )
+        # A page of private/deleted slots must not hide accessible later pages.
+        if playlist_start == 1 and not items and not (isinstance(raw.get("playlist_count"), int) and raw["playlist_count"] > 0):
+            raise AdapterError(
+                ErrorCode.ERR_NOT_FOUND,
+                "This playlist is empty or has no accessible items.",
+                engine_id="yt-dlp",
             )
 
     chapters: list[ChapterInfo] = []
@@ -337,10 +372,11 @@ def normalize_ytdlp_json(
         else None
     )
 
-    primary_size = raw.get("filesize") or raw.get("filesize_approx")
+    primary_size, primary_size_approx = source_size(raw, live=is_live)
     if primary_size is None and formats:
         sized = [f.size_bytes for f in formats if f.size_bytes is not None]
         primary_size = max(sized) if sized else None
+        primary_size_approx = primary_size is not None
 
     transcript = None
     if subtitles:
@@ -353,6 +389,23 @@ def normalize_ytdlp_json(
         )
 
     extractor_key = raw.get("extractor_key") or raw.get("extractor")
+    page = None
+    if is_playlist:
+        count = len(raw.get("entries") or [])
+        total = raw.get("playlist_count")
+        known_total = total if isinstance(total, int) and total >= 0 else None
+        next_start = playlist_start + count
+        has_more = count > 0 and (
+            next_start <= known_total if known_total is not None else count >= page_size
+        )
+        page = {
+            "start": playlist_start,
+            "end": next_start - 1,
+            "limit": page_size,
+            "has_more": has_more,
+            "next_start": next_start if has_more else None,
+            "total": known_total,
+        }
     return NormalizedMediaOutput(
         job_id=ctx.job_id,
         original_url=ctx.validated.original_url,
@@ -374,6 +427,7 @@ def normalize_ytdlp_json(
             else None
         ),
         size_bytes=int(primary_size) if isinstance(primary_size, (int, float)) and primary_size >= 0 else None,
+        size_is_approx=primary_size_approx,
         author=author,
         available_formats=formats,
         subtitles=subtitles,
@@ -387,6 +441,11 @@ def normalize_ytdlp_json(
             item_count_total=raw.get("playlist_count") or (len(items) if is_playlist else 1),
             item_count_returned=len(items) if is_playlist else 1,
             chapters=chapters,
+            extra={
+                "collection_total_known": isinstance(raw.get("playlist_count"), int),
+                "collection_unavailable_count": len(raw.get("entries") or []) - len(items),
+                "playlist_page": page,
+            } if is_playlist else {},
         ),
         download=DownloadInfo(status=DownloadStatus.NOT_REQUESTED),
         engine=EngineProvenance(
@@ -501,15 +560,17 @@ class YtDlpAdapter(ExtractorAdapter):
             "--skip-download",
             "--no-warnings",
             "--flat-playlist",
+            "--playlist-start",
+            str(options.playlist_start),
             "--playlist-end",
-            str(min(options.max_items, self._settings.max_playlist_items)),
+            str(options.playlist_start + min(options.max_items, self._settings.playlist_probe_page_size) - 1),
         ]
         if self._settings.egress_proxy_url:
             argv.extend(["--proxy", self._settings.egress_proxy_url])
         argv.extend(["--", url])
         return argv
 
-    def build_download_argv(self, url: str, plan: DownloadPlan) -> list[str]:
+    def build_download_argv(self, url: str, plan: DownloadPlan, *, collection: bool = False) -> list[str]:
         argv = [
             self._exe(),
             "--ignore-config",
@@ -524,13 +585,23 @@ class YtDlpAdapter(ExtractorAdapter):
             "6",
             "--max-filesize",
             str(plan.max_bytes),
-            "--playlist-end",
-            str(min(plan.max_items, self._settings.max_playlist_items)),
             "--progress-template",
             f"download:{_PROGRESS_PREFIX}%(progress._percent_str)s|%(progress.downloaded_bytes)s|%(progress.total_bytes)s|%(progress.speed)s|%(progress.eta)s",
             "-o",
             str(plan.output_dir / "%(id)s.%(ext)s"),
         ]
+
+        cap = min(plan.max_items, self._settings.max_playlist_items)
+        if plan.playlist_items:
+            try:
+                playlist_indices(plan.playlist_items, limit=cap)
+            except ValueError as exc:
+                raise AdapterError(ErrorCode.ERR_QUOTA_EXCEEDED, str(exc), engine_id=self.id) from exc
+            argv.extend(["--playlist-items", ",".join(part.strip() for part in plan.playlist_items.split(","))])
+        else:
+            argv.extend(["--playlist-end", str(cap)])
+        if collection:
+            argv.append("--ignore-errors")
 
         if plan.subtitles_only:
             argv.append("--skip-download")
@@ -576,8 +647,10 @@ class YtDlpAdapter(ExtractorAdapter):
             if plan.mode == "audio":
                 # If normalize_audio is requested, skip yt-dlp's lossy transcode so FFmpeg
                 # performs a single clean loudnorm + encode pass without double-transcoding.
-                if plan.audio_format and plan.audio_format != "best" and not plan.normalize_audio:
-                    argv.extend(["-x", "--audio-format", plan.audio_format])
+                if not plan.normalize_audio:
+                    argv.append("-x")
+                    if plan.audio_format and plan.audio_format != "best":
+                        argv.extend(["--audio-format", plan.audio_format])
                     if plan.audio_bitrate != "auto":
                         argv.extend(["--audio-quality", plan.audio_bitrate.upper()])
             elif plan.video_container != "auto":
@@ -586,9 +659,6 @@ class YtDlpAdapter(ExtractorAdapter):
                     argv.extend(["--remux-video", plan.video_container])
                 else:
                     argv.extend(["--merge-output-format", plan.video_container])
-
-            if plan.playlist_items:
-                argv.extend(["--playlist-items", plan.playlist_items])
 
             if plan.extract_subtitles or plan.embed_subtitles or plan.generate_transcript:
                 langs = ",".join(plan.subtitle_languages or ["en"])
@@ -656,7 +726,11 @@ class YtDlpAdapter(ExtractorAdapter):
             ) from exc
 
         elapsed_ms = int((time.monotonic() - t0) * 1000)
-        return normalize_ytdlp_json(raw, ctx, version=self._version, probe_ms=elapsed_ms)
+        return normalize_ytdlp_json(
+            raw, ctx, version=self._version, probe_ms=elapsed_ms,
+            playlist_start=options.playlist_start,
+            page_size=min(options.max_items, self._settings.playlist_probe_page_size),
+        )
 
     async def download(
         self,
@@ -667,7 +741,7 @@ class YtDlpAdapter(ExtractorAdapter):
         cancel_token: CancellationToken | None = None,
     ) -> DownloadArtifact:
         plan.output_dir.mkdir(parents=True, exist_ok=True)
-        argv = self.build_download_argv(ctx.url, plan)
+        argv = self.build_download_argv(ctx.url, plan, collection=ctx.is_collection)
 
         async def _on_line(line: str) -> None:
             if not progress_cb or not line.startswith(_PROGRESS_PREFIX):
@@ -740,14 +814,30 @@ class YtDlpAdapter(ExtractorAdapter):
             )
 
         if plan.subtitles_only:
-            media_files = files
+            media_files = [p for p in files if p.suffix.lower() in {".vtt", ".srt", ".ass", ".json3", ".ttml"}]
             sidecar_files: list = []
         else:
             media_files = [p for p in files if p.suffix.lower() not in _SIDECAR_EXTS]
             sidecar_files = [p for p in files if p.suffix.lower() in _SIDECAR_EXTS]
             if not media_files:
-                media_files = files
-                sidecar_files = []
+                raise AdapterError(
+                    ErrorCode.ERR_NOT_FOUND,
+                    "No playable media was downloaded. Only metadata or preview files were returned.",
+                    engine_id=self.id,
+                )
+        if not media_files:
+            raise AdapterError(ErrorCode.ERR_NOT_FOUND, "No requested captions were found.", engine_id=self.id)
+
+        if sum(p.stat().st_size for p in media_files + sidecar_files) > plan.max_bytes:
+            raise AdapterError(ErrorCode.ERR_QUOTA_EXCEEDED, "The combined playlist exceeds the job size limit.", engine_id=self.id)
+
+        warnings = []
+        if ctx.is_collection and "ERROR:" in res.stderr:
+            warnings.append(WarningInfo(
+                code="WARN_COLLECTION_PARTIAL",
+                message="Some collection items were unavailable and were skipped. The archive contains the successful items.",
+                engine=self.id,
+            ))
 
         # Validate magic MIME on all downloaded media files before returning or archiving
         checked_mimes: dict = {}
@@ -762,23 +852,42 @@ class YtDlpAdapter(ExtractorAdapter):
                 )
             checked_mimes[mf] = magic_mime
 
-        # Package multi-item playlist downloads into a single lossless ZIP archive so items 2..N are never dropped
-        if not plan.subtitles_only and len(media_files) > 1:
-            zip_path = plan.output_dir / "playlist_archive.zip"
+        if len(media_files) > 1 and plan.mode == "audio" and plan.normalize_audio and not plan.subtitles_only:
+            from .ffmpeg import FfmpegAdapter
+
+            processor = FfmpegAdapter(self._settings)
+            normalized = []
+            for source in media_files:
+                fmt = plan.audio_format if plan.audio_format not in {None, "best"} else source.suffix.lstrip(".")
+                target = plan.output_dir / f"{source.stem}_normalized.{fmt}"
+                await processor.extract_audio(
+                    source, target, audio_format=fmt, audio_bitrate=plan.audio_bitrate,
+                    normalize_audio=True, max_output_bytes=plan.max_bytes, cancel_token=cancel_token,
+                )
+                normalized.append(target)
+            media_files = normalized
+
+        # Keep all selected media, caption tracks, and sidecars in the delivered file.
+        if len(media_files) > 1 or sidecar_files:
+            filename = "captions_archive.zip" if plan.subtitles_only else "playlist_archive.zip"
+            zip_path = plan.output_dir / filename
             seen_names: set[str] = set()
             with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_STORED) as zf:
-                for idx, mf in enumerate(media_files, start=1):
+                for idx, mf in enumerate([*media_files, *sidecar_files], start=1):
                     arcname = sanitize_filename(mf.name, fallback=f"item_{idx}{mf.suffix}")
                     if arcname in seen_names:
                         arcname = f"{idx:03d}_{arcname}"
                     seen_names.add(arcname)
                     zf.write(mf, arcname=arcname)
+            if zip_path.stat().st_size > plan.max_bytes:
+                raise AdapterError(ErrorCode.ERR_QUOTA_EXCEEDED, "The collection archive exceeds the job size limit.", engine_id=self.id)
             return DownloadArtifact(
                 local_path=zip_path,
-                filename="playlist_archive.zip",
+                filename=filename,
                 mime_type="application/zip",
                 size_bytes=zip_path.stat().st_size,
-                extra_files=sidecar_files,
+                extra_files=media_files if plan.subtitles_only else sidecar_files,
+                warnings=warnings,
             )
 
         primary = media_files[0]
@@ -792,6 +901,7 @@ class YtDlpAdapter(ExtractorAdapter):
             mime_type=magic_mime or mimetypes.guess_type(primary.name)[0] or "application/octet-stream",
             size_bytes=size,
             extra_files=extra_files,
+            warnings=warnings,
         )
 
     async def health_check(self) -> HealthReport:

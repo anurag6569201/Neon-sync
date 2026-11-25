@@ -41,6 +41,7 @@ from neon_sync.models import (
     SupportedDomains,
     ThumbnailInfo,
 )
+from neon_sync.models.sizing import source_size
 from neon_sync.security import (
     CancellationToken,
     SubprocessCancelledError,
@@ -116,6 +117,7 @@ def parse_gallery_dl_json(
             ext = str(meta.get("extension") or Path(item_url).suffix.lstrip(".") or "jpg").lower()
             mime = mimetypes.guess_type(f"x.{ext}")[0] or f"image/{ext}"
             kind = "video" if mime.startswith("video/") else "image"
+            item_size, item_size_approx = source_size(meta)
             items.append(
                 MediaItem(
                     index=len(items) + 1,
@@ -124,6 +126,8 @@ def parse_gallery_dl_json(
                     title=meta.get("title") or meta.get("filename"),
                     content_type=kind,
                     mime_type=mime,
+                    size_bytes=item_size,
+                    size_is_approx=item_size_approx,
                     width=meta.get("width") if isinstance(meta.get("width"), int) else None,
                     height=meta.get("height") if isinstance(meta.get("height"), int) else None,
                     direct_media_url=item_url,
@@ -164,8 +168,12 @@ def parse_gallery_dl_json(
             mime_type="application/zip" if not is_single else (first.mime_type or "image/jpeg"),
             width=first.width if is_single else None,
             height=first.height if is_single else None,
+            size_bytes=first.size_bytes if is_single else None,
+            size_is_approx=first.size_is_approx if is_single else False,
             protocol=ProtocolType.HTTPS if first.url.startswith("https://") else ProtocolType.HTTP,
             direct_media_url=first.direct_media_url if is_single else None,
+            has_video=is_single and first.content_type == "video",
+            has_audio=is_single and first.content_type == "video",
         )
     ]
 
@@ -178,10 +186,12 @@ def parse_gallery_dl_json(
             platform=str(dir_meta.get("category") or ctx.domain).lower(),
             extractor_key=str(dir_meta.get("subcategory") or dir_meta.get("category") or "gallery-dl"),
         ),
-        content_type=ContentType.IMAGE if is_single else ContentType.GALLERY,
+        content_type=(ContentType.VIDEO if first.content_type == "video" else ContentType.IMAGE) if is_single else ContentType.GALLERY,
         title=str(title)[:300],
+        size_bytes=first.size_bytes if is_single else None,
+        size_is_approx=first.size_is_approx if is_single else False,
         description=str(dir_meta["description"])[:1000] if isinstance(dir_meta.get("description"), str) else None,
-        thumbnail=ThumbnailInfo(url=first.url, width=first.width, height=first.height, mime_type=first.mime_type),
+        thumbnail=ThumbnailInfo(url=first.url, width=first.width, height=first.height, mime_type=first.mime_type) if first.content_type == "image" else None,
         author=AuthorInfo(name=str(author_name)) if author_name else None,
         available_formats=formats,
         items=items,
@@ -284,6 +294,11 @@ class GalleryDlAdapter(ExtractorAdapter):
     def build_download_argv(self, url: str, plan: DownloadPlan) -> list[str]:
         start = max(1, plan.gallery_range_start)
         max_span = min(plan.max_items, self._settings.max_gallery_items)
+        if plan.gallery_range_end is not None and plan.gallery_range_end - start + 1 > max_span:
+            raise AdapterError(
+                ErrorCode.ERR_QUOTA_EXCEEDED,
+                f"Select at most {max_span} gallery items per job.", engine_id=self.id,
+            )
         end = (
             min(plan.gallery_range_end, start + max_span - 1)
             if plan.gallery_range_end is not None and plan.gallery_range_end >= start
@@ -409,6 +424,29 @@ class GalleryDlAdapter(ExtractorAdapter):
                     f"Blocked dangerous executable inside gallery ({magic_mime}).",
                     engine_id=self.id,
                 )
+
+        if len(downloaded_files) > 1 and (
+            plan.image_format != "original" or plan.image_max_width is not None or plan.strip_metadata
+        ):
+            from .ffmpeg import FfmpegAdapter
+
+            processor = FfmpegAdapter(self._settings)
+            processed = []
+            for index, source in enumerate(sorted(downloaded_files), start=1):
+                mime = mimetypes.guess_type(source.name)[0] or ""
+                if not mime.startswith("image/"):
+                    processed.append(source)
+                    continue
+                fmt = plan.image_format if plan.image_format != "original" else source.suffix.lstrip(".").lower()
+                fmt = "jpg" if fmt == "jpeg" else fmt
+                target = plan.output_dir / f"{index:04d}_{sanitize_filename(source.stem)}_processed.{fmt}"
+                await processor.process_image(
+                    source, target, image_format=fmt, quality=plan.image_quality,
+                    max_width=plan.image_max_width, strip_metadata=plan.strip_metadata,
+                    cancel_token=cancel_token,
+                )
+                processed.append(target)
+            downloaded_files = processed
 
         if len(downloaded_files) == 1:
             single = downloaded_files[0]

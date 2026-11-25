@@ -34,6 +34,7 @@ services:
       NEON_SYNC_ALLOW_PRIVATE_ADDRESSES: "false"
       NEON_SYNC_SCRATCH_DIR: "/scratch/jobs"
       NEON_SYNC_STORAGE_DIR: "/data/artifacts"
+      NEON_SYNC_JOB_DB_PATH: "/data/artifacts/jobs.sqlite3"
     volumes:
       - scratch_data:/scratch/jobs
       - artifact_data:/data/artifacts

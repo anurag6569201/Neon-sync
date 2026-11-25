@@ -146,3 +146,77 @@ async def test_web_ui_served_at_root_with_sqlite_backing(tmp_path: Path):
         assert "/v1/auth/" not in js.text
         assert "/v1/agent/run" not in js.text
         assert "/v1/logs" not in js.text
+
+
+async def test_pwa_assets_share_target_and_url_prefix_capture(tmp_path: Path):
+    settings = Settings(
+        scratch_dir=tmp_path / "scratch",
+        storage_dir=tmp_path / "storage",
+        job_db_path=tmp_path / "state" / "jobs.db",
+        min_free_disk_bytes=1024,
+    )
+    app = create_app(settings)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://testserver",
+        follow_redirects=False,
+    ) as client:
+        # PWA manifest, service worker, and icons
+        manifest_resp = await client.get("/manifest.webmanifest")
+        assert manifest_resp.status_code == 200
+        assert "application/manifest+json" in manifest_resp.headers["content-type"]
+        manifest = manifest_resp.json()
+        assert manifest["name"] == "Neon Sync"
+        assert manifest["display"] == "standalone"
+        assert manifest["share_target"]["action"] == "/share"
+        assert any(icon["src"] == "/static/icon-192.png" for icon in manifest["icons"])
+
+        sw_resp = await client.get("/sw.js")
+        assert sw_resp.status_code == 200
+        assert sw_resp.headers.get("service-worker-allowed") == "/"
+        assert "no-cache" in sw_resp.headers.get("cache-control", "")
+        assert 'url.pathname.startsWith("/v1/")' in sw_resp.text
+
+        png_resp = await client.get("/apple-touch-icon.png")
+        assert png_resp.status_code == 200
+        assert png_resp.content.startswith(b"\x89PNG\r\n\x1a\n")
+
+        icon_512 = await client.get("/static/icon-512.png")
+        assert icon_512.status_code == 200
+        assert icon_512.content.startswith(b"\x89PNG\r\n\x1a\n")
+
+        fav_resp = await client.get("/favicon.ico")
+        assert fav_resp.status_code == 200
+        assert "<svg" in fav_resp.text
+
+        # Share Target receiver handles direct url, embedded text url, and rejects non-http schemes
+        share_direct = await client.get("/share", params={"url": "https://example.com/watch?v=123"})
+        assert share_direct.status_code == 302
+        assert share_direct.headers["location"] == "/?url=https%3A%2F%2Fexample.com%2Fwatch%3Fv%3D123"
+
+        share_text = await client.get("/share", params={"text": "Watch this https://youtu.be/abc123!"})
+        assert share_text.status_code == 302
+        assert share_text.headers["location"] == "/?url=https%3A%2F%2Fyoutu.be%2Fabc123"
+
+        share_bad = await client.get("/share", params={"url": "javascript:alert(1)"})
+        assert share_bad.status_code == 302
+        assert share_bad.headers["location"] == "/"
+
+        # Instant URL prefix route (both full https:// and proxy-collapsed https:/) preserves query string
+        prefix_full = await client.get("/https://www.youtube.com/watch?v=abc123&t=42")
+        assert prefix_full.status_code == 302
+        assert prefix_full.headers["location"] == "/?url=https%3A%2F%2Fwww.youtube.com%2Fwatch%3Fv%3Dabc123%26t%3D42"
+
+        prefix_collapsed = await client.get("/https:/youtu.be/abc123")
+        assert prefix_collapsed.status_code == 302
+        assert prefix_collapsed.headers["location"] == "/?url=https%3A%2F%2Fyoutu.be%2Fabc123"
+
+        # Non-HTTP paths stay strict 404 (never catch-all)
+        for bad_path in ("/docs", "/unknown-route", "/javascript:alert(1)", "/ftp://example.com/file.zip"):
+            assert (await client.get(bad_path)).status_code == 404
+
+        # HTML wires up manifest and Quick Capture dialog
+        html = (await client.get("/")).text
+        assert 'rel="manifest" href="/manifest.webmanifest"' in html
+        assert "quick-capture-dialog" in html
+        assert "bookmarklet-link" in html

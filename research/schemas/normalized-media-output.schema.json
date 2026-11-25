@@ -92,6 +92,7 @@
       "minimum": 0,
       "description": "Total or primary estimated/actual media size in bytes."
     },
+    "size_is_approx": { "type": "boolean", "default": false },
     "author": {
       "type": ["object", "null"],
       "properties": {
@@ -153,7 +154,8 @@
         "available": { "type": "boolean" },
         "language": { "type": ["string", "null"] },
         "source": { "type": ["string", "null"], "enum": ["manual_captions", "auto_captions", "webpage_text", null] },
-        "artifact_url": { "type": ["string", "null"], "format": "uri" }
+        "artifact_url": { "type": ["string", "null"], "format": "uri" },
+        "size_bytes": { "type": ["integer", "null"], "minimum": 0 }
       }
     },
     "items": {
@@ -173,6 +175,7 @@
           "height": { "type": ["integer", "null"] },
           "duration_seconds": { "type": ["number", "null"] },
           "size_bytes": { "type": ["integer", "null"] },
+          "size_is_approx": { "type": "boolean", "default": false },
           "thumbnail_url": { "type": ["string", "null"], "format": "uri" },
           "direct_media_url": { "type": ["string", "null"], "format": "uri" }
         }

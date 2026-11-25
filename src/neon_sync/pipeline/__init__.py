@@ -2,7 +2,7 @@
 
 from .job_store import InMemoryJobStore, JobStore, SQLiteJobStore
 from .orchestrator import ExtractionOrchestrator
-from .queue import JobManager, RateLimitExceededError, SlidingWindowRateLimiter
+from .queue import JobManager, QueueCapacityError, RateLimitExceededError, SlidingWindowRateLimiter
 from .router import UrlRouter
 from .storage import (
     ArtifactStorage,
@@ -24,6 +24,7 @@ __all__ = [
     "JobManager",
     "JobStore",
     "LocalArtifactStorage",
+    "QueueCapacityError",
     "RateLimitExceededError",
     "S3ArtifactStorage",
     "SQLiteJobStore",

@@ -134,10 +134,20 @@ class EngineRegistry:
             *self._extractors.values(),
             *self._postprocessors.values(),
         ]
-        reports = await asyncio.gather(*(a.health_check() for a in all_adapters))
-        for report in reports:
+        results = await asyncio.gather(
+            *(asyncio.wait_for(a.health_check(), timeout=10.0) for a in all_adapters),
+            return_exceptions=True,
+        )
+        for adapter, result in zip(all_adapters, results, strict=True):
+            report = result if isinstance(result, HealthReport) else HealthReport(
+                engine_id=adapter.id,
+                installation_status=InstallationStatus.MISCONFIGURED,
+                version="unknown",
+                healthy=False,
+                detail="Health check failed; check the service installation.",
+            )
             self._health_reports[report.engine_id] = report
-        return list(reports)
+        return [self._health_reports[a.id] for a in all_adapters]
 
     def record_outcome(
         self,

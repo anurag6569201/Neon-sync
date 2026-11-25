@@ -3,8 +3,16 @@
   "use strict";
 
   const $ = (id) => document.getElementById(id);
+  const {
+    request: apiRequest,
+    preferences: localStorage,
+    terminal,
+    extractIncomingUrl,
+    buildBookmarkletHref,
+  } = window.NeonClient;
   const URL_RE = /https?:\/\/[^\s<>"')]+/i;
   const LAYOUT_STORAGE_KEY = "neon_sync_spatial_layout_v5";
+  let deferredInstallPrompt = null;
 
   const SHOWCASE_VIDEO = {
     url: "https://youtu.be/YW7Uc5_ixtM",
@@ -23,8 +31,8 @@
     layoutMode: localStorage.getItem("neon_layout_mode") || "compass", // "compass" (4-way NESW) | "tree" (L->R)
     sse: new Map(),
     autoSavedJobs: new Set(),
-    oscActive: false,
     historyJobs: [],
+    capabilities: null,
     selectedNodeId: null,
     nodes: new Map(), // id -> { id, type: 'source'|'choice'|'result'|'player'|'note', x, y, ... }
     edges: [],        // { id, from, to, kind, label, active?: bool, demo?: bool }
@@ -34,6 +42,8 @@
     pendingPatch: null,
     hasDemoGraph: false,
     spaceHeld: false,
+    workspaceRevision: 0,
+    hiddenJobIds: new Set(),
   };
 
   const playerHls = new Map();
@@ -53,15 +63,18 @@
   try {
     const saved = JSON.parse(localStorage.getItem(LAYOUT_STORAGE_KEY) || "{}");
     state.savedPositions = saved.positions || {};
+    if (Array.isArray(saved.hiddenJobIds)) state.hiddenJobIds = new Set(saved.hiddenJobIds);
   } catch (_) {}
 
   function persistWorkspace() {
     const positions = {};
+    const sources = [];
     const notes = [];
     const customEdges = [];
     for (const n of state.nodes.values()) {
       if (n.demo || n.type === "choice") continue;
       positions[n.id] = { x: Math.round(n.x), y: Math.round(n.y), collapsed: !!n.collapsed };
+      if (n.type === "source") sources.push({ url: n.url });
       if (n.type === "note") notes.push({ id: n.id, x: Math.round(n.x), y: Math.round(n.y), text: n.text || "" });
     }
     for (const e of state.edges) {
@@ -71,8 +84,10 @@
       }
     }
     state.savedPositions = positions;
-    try { localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify({ positions, notes, customEdges })); } catch (_) {}
+    try { localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify({ positions, sources, notes, customEdges, hiddenJobIds: [...state.hiddenJobIds] })); } catch (_) {}
   }
+
+  function isCurrentNode(node) { return !!node && state.nodes.get(node.id) === node; }
 
   /* ---------- Web Audio Tactile Haptics Synthesizer ---------- */
   const sfx = (() => {
@@ -167,7 +182,7 @@
     const ty = vp.height * 0.43 - wy * targetZoom;
     const startX = camera.x, startY = camera.y, startZ = camera.zoom;
     const t0 = performance.now();
-    const dur = 340;
+    const dur = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 1 : 340;
     function tick(now) {
       const p = Math.min(1, (now - t0) / dur);
       const ease = 1 - Math.pow(1 - p, 3);
@@ -270,7 +285,7 @@
   /* ---------- 60fps Infinite Camera-Synced Gravitational Dot & Architectural Grid Field ---------- */
   const gravity = (() => {
     const canvas = $("gravity-field");
-    if (!canvas) return { shockAt: () => {}, pulseAt: () => {}, wake: () => {} };
+    if (!canvas || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return { shockAt: () => {}, pulseAt: () => {}, wake: () => {} };
     const ctx = canvas.getContext("2d");
     let w = 0, h = 0, dpr = 1;
     let lastCamKey = "";
@@ -289,21 +304,9 @@
     resize();
     window.addEventListener("resize", resize);
 
-    function updateCoordHud(sx, sy) {
-      const pt = screenToWorld(sx, sy);
-      const cr = $("coord-readout");
-      if (cr) {
-        const px = (pt.x >= 0 ? "+" : "-") + String(Math.min(9999, Math.abs(Math.round(pt.x)))).padStart(4, "0");
-        const py = (pt.y >= 0 ? "+" : "-") + String(Math.min(9999, Math.abs(Math.round(pt.y)))).padStart(4, "0");
-        const nCount = state.nodes.size;
-        cr.textContent = `X:${px} Y:${py} · ${Math.round(camera.zoom * 100)}% · ${nCount} NODE${nCount === 1 ? "" : "S"}`;
-      }
-    }
-
     window.addEventListener("pointermove", (e) => {
       pointer.x = e.clientX; pointer.y = e.clientY; pointer.active = true;
       idleFrames = 0;
-      updateCoordHud(e.clientX, e.clientY);
     });
     window.addEventListener("pointerleave", () => { pointer.active = false; idleFrames = 0; });
     function pushWave(sx, sy, kind) { waves.push({ x: sx, y: sy, t: 0, kind }); idleFrames = 0; }
@@ -355,19 +358,6 @@
       }
       ctx.stroke();
 
-      // World Origin (0,0) Reticle
-      const originX = camera.x;
-      const originY = camera.y + 54;
-      if (originX > -20 && originX < w + 20 && originY > 34 && originY < h + 20) {
-        ctx.strokeStyle = `rgba(${accentRgb},0.28)`;
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.arc(originX, originY, 7, 0, Math.PI * 2);
-        ctx.moveTo(originX - 12, originY); ctx.lineTo(originX + 12, originY);
-        ctx.moveTo(originX, originY - 12); ctx.lineTo(originX, originY + 12);
-        ctx.stroke();
-      }
-
       for (let gx = ox; gx < w; gx += step) {
         for (let gy = oy; gy < h; gy += step) {
           let dx = 0, dy = 0, energy = 0, useOk = false;
@@ -408,43 +398,38 @@
     };
   })();
 
-  /* ---------- Oscilloscope ---------- */
-  const osc = (() => {
-    const host = $("oscilloscope");
-    const bars = [];
-    if (host) {
-      for (let i = 0; i < 20; i++) {
-        const b = document.createElement("span"); b.className = "osc-bar"; host.appendChild(b); bars.push(b);
-      }
+  /* ---------- Compact toolbar activity ---------- */
+  function updateActivityStatus() {
+    let inspecting = 0, running = 0, connecting = 0, streaming = 0;
+    for (const node of state.nodes.values()) {
+      if (node.type === "source" && (node.probing || node.collectionLoading || node.probe?.items?.some((item) => item._checkingSize))) inspecting++;
+      if ((node.type === "result" && !terminal(node.job?.status)) || node.submitting || node.retrying) running++;
+      if (node.type === "player") { if (node.loading) connecting++; else if (node.stream && !node.error) streaming++; }
     }
-    let phase = 0;
-    setInterval(() => {
-      phase += 0.35;
-      if (!host) return;
-      host.classList.toggle("active", state.oscActive);
-      bars.forEach((b, idx) => {
-        const h = state.oscActive
-          ? 4 + Math.round((Math.sin(phase + idx * 0.55) * 0.5 + 0.5) * 10)
-          : 3 + Math.round((Math.sin(phase * 0.25 + idx * 0.4) * 0.5 + 0.5) * 2.5);
-        b.style.height = `${h}px`;
-      });
-    }, 85);
-    return {
-      set: (active, label) => {
-        state.oscActive = active;
-        if (label && $("reactor-status-text")) $("reactor-status-text").textContent = label;
-      },
-    };
-  })();
+    const label = running ? `${running} running` : inspecting ? `Inspecting${inspecting > 1 ? ` ${inspecting}` : ""}` : connecting ? "Connecting" : streaming ? "Streaming" : "Idle";
+    const host = $("activity-status");
+    if (!host) return;
+    const busy = !!(inspecting || running || connecting);
+    host.classList.toggle("is-busy", busy);
+    host.title = `${inspecting} inspecting · ${running} running · ${streaming} streaming`;
+    host.setAttribute("aria-label", host.title);
+    if ($("activity-status-text").textContent !== label) $("activity-status-text").textContent = label;
+  }
+  const osc = { set: () => updateActivityStatus() };
 
   /* ---------- Helpers ---------- */
   function toast(msg, kind = "") {
     const stack = $("toast-stack");
+    for (const prior of stack.children) {
+      if (prior.dataset.message === msg && prior.dataset.kind === kind) { prior.remove(); break; }
+    }
     const el = document.createElement("div");
     el.className = `toast ${kind}`;
+    el.dataset.message = msg;
+    el.dataset.kind = kind;
     el.textContent = msg;
     stack.appendChild(el);
-    setTimeout(() => { el.style.opacity = "0"; el.style.transition = "opacity .18s"; setTimeout(() => el.remove(), 200); }, 3200);
+    setTimeout(() => { el.style.opacity = "0"; el.style.transition = "opacity .18s"; setTimeout(() => el.remove(), 200); }, kind === "err" ? 8000 : 4500);
   }
   function esc(str) {
     return String(str ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -455,6 +440,58 @@
     let v = Number(n), i = 0;
     while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
     return `${v.toFixed(i ? 1 : 0)} ${units[i]}`;
+  }
+  function sizeBadge(size) {
+    const text = window.NeonSize.label(size);
+    const kind = size?.pending ? "pending" : size?.bytes == null || size.unknownCount ? "unknown" : size.target ? "target" : size.approximate ? "estimate" : "known";
+    const explanation = size?.pending ? "Loading size metadata for the selected items automatically." : size?.reason || (size?.unknownCount ? "A complete total is unavailable because some items do not report size metadata." : kind === "estimate" ? "Estimated from source metadata. Encoding and container overhead may change the final size." : kind === "target" ? "Requested output size target." : "Reported source size.");
+    return `<span class="size-badge ${kind}" data-size-kind="${kind}" title="${esc(explanation)}">${esc(text)}</span>`;
+  }
+
+  function choiceEstimate(node) {
+    const source = state.nodes.get(node.rootSourceId);
+    const probe = source?.probe;
+    if (!probe) return null;
+    const options = { ...(node.accumulated || {}) };
+    if (options._reprobe || options._deepScan || options._livePlay) return null;
+    if (options._spawnUrl) return window.NeonSize.itemSize((probe.items || []).find((item) => [item.url, item.direct_media_url].includes(options._spawnUrl)));
+    if (node.inputKind === "playlist_range") {
+      if (!node.playlistRangeVal) return { bytes: null, reason: "Choose playlist items to see their combined size." };
+      options.playlist_items = node.playlistRangeVal;
+    }
+    if (node.inputKind === "trim") { options.clip_start_seconds = parseTime(node.clipStart); options.clip_end_seconds = parseTime(node.clipEnd); }
+    if (node.inputKind === "image_studio") { options.image_format = node.imgFmt; options.image_max_width = node.imgMaxWidth; options.strip_metadata = node.imgStripExif; }
+    const size = window.NeonSize.estimate(probe, options);
+    if (probe.content_type === "playlist" && options.playlist_items) {
+      try {
+        const selected = new Set(window.NeonClient.parseIndices(options.playlist_items));
+        if ((size.bytes == null || size.unknownCount) && probe.items?.some((item) => selected.has(item.index) && item._checkingSize)) size.pending = true;
+      } catch (_) {}
+    }
+    return size;
+  }
+
+  function choiceSubtitle(node) {
+    const size = choiceEstimate(node);
+    const selection = node.accumulated?.playlist_items;
+    const context = selection ? `Items ${selection}` : node.sub || "";
+    const showSize = size && !(node.inputKind === "playlist_range" && node.panelOpen);
+    return `<span class="choice-context">${esc(context)}</span>${showSize ? `${context ? '<span aria-hidden="true">·</span>' : ""}<span data-choice-size>${sizeBadge(size)}</span>` : ""}`;
+  }
+
+  function updateChoiceSize(node) {
+    if (!isCurrentNode(node) || node.type !== "choice") return;
+    const host = document.querySelector(`[data-node-id="${CSS.escape(node.id)}"] [data-choice-size]`);
+    const size = choiceEstimate(node);
+    if (host) host.innerHTML = size ? sizeBadge(size) : "";
+  }
+
+  function jobSizeText(job) {
+    const text = window.NeonSize.progress(job.progress || {}, job.status === "completed" ? job.result?.download?.size_bytes : null);
+    if (job.status !== "completed" && job.request?.playlist_items) {
+      try { if (window.NeonClient.parseIndices(job.request.playlist_items).length > 1) return `Current item · ${text}`; } catch (_) {}
+    }
+    return text;
   }
   function fmtDuration(sec) {
     if (sec === null || sec === undefined) return "";
@@ -814,7 +851,7 @@
       const recovery = [
         { key: "retry_probe", theme: "video", icon: "refresh-cw", title: "Retry Probe", sub: sourceNode.probeError.slice(0, 48), edgeLabel: "RETRY", isLeaf: true, delta: { _reprobe: true } },
       ];
-      if (!sourceNode.usedDeepScan) {
+      if (!sourceNode.usedDeepScan && capabilityAvailable("neon-dynamic-renderer")) {
         recovery.push({
           key: "deep_scan",
           theme: "live",
@@ -842,9 +879,8 @@
     // 3. Direct File / Document / Archive -> ONLY Direct Download with real metadata
     if (ct === "document" || ct === "archive" || ct === "file") {
       const mime = p.available_formats?.[0]?.mime_type || ct.toUpperCase();
-      const sizeStr = p.size_bytes ? fmtBytes(p.size_bytes) : "Verified transfer";
       return [
-        { key: "direct", theme: "video", icon: "file-down", title: "Direct Download", sub: `${mime} · ${sizeStr}`, edgeLabel: "FILE", isLeaf: true, detected: true, delta: { mode: "direct" } },
+        { key: "direct", theme: "video", icon: "file-down", title: "Direct Download", sub: mime, edgeLabel: "FILE", isLeaf: true, detected: true, delta: { mode: "direct" } },
       ];
     }
 
@@ -853,7 +889,7 @@
       const f0 = p.available_formats?.[0];
       const dims = f0?.width && f0?.height ? `${f0.width}×${f0.height}` : null;
       const ext = f0?.container ? f0.container.toUpperCase() : "Original";
-      const subParts = [dims, ext, p.size_bytes ? fmtBytes(p.size_bytes) : null].filter(Boolean);
+      const subParts = [dims, ext].filter(Boolean);
       return [
         { key: "image", theme: "image", icon: "image", title: "Image", sub: subParts.length ? subParts.join(" · ") : "Original · WebP · PNG · JPEG", edgeLabel: "IMAGE", detected: true, nextStep: "image_format", delta: { mode: "image" } },
       ];
@@ -880,7 +916,7 @@
           theme: "image",
           icon: "layers",
           title: "Pick Single Image",
-          sub: `Inspect ${Math.min(items.length, 8)} detected photo(s)`,
+          sub: `Browse ${items.length} detected media item(s)`,
           edgeLabel: "BROWSE",
           detected: true,
           nextStep: "discovered_items",
@@ -937,7 +973,7 @@
         }
         return list;
       }
-      const countLbl = itemCount ? `${itemCount} items` : "Playlist";
+      const countLbl = itemCount ? `${itemCount} items${p.metadata?.extra?.collection_total_known === false ? " loaded" : ""}` : "Playlist";
       const list = [
         { key: "pl_video", theme: "video", icon: "film", title: "Playlist Video", sub: `${countLbl} · Pick range & quality`, edgeLabel: "PL VIDEO", detected: true, nextStep: "playlist_range", delta: { mode: "video" } },
         { key: "pl_audio", theme: "audio", icon: "headphones", title: "Playlist Audio", sub: `${countLbl} · MP3 · M4A · Opus · FLAC`, edgeLabel: "PL AUDIO", detected: true, nextStep: "playlist_range", delta: { mode: "audio" } },
@@ -1005,7 +1041,6 @@
       const aBits = [
         audioSummary?.nativeContainer,
         audioSummary?.maxBitrateKbps ? `${audioSummary.maxBitrateKbps}kbps` : null,
-        audioSummary?.nativeSize ? fmtBytes(audioSummary.nativeSize) : null,
       ].filter(Boolean);
       list.push({
         key: "audio",
@@ -1046,7 +1081,7 @@
           delta: { mode: "webpage", webpage_format: "markdown" },
         });
       }
-      list.push({
+      if (capabilityAvailable("neon-dynamic-renderer")) list.push({
         key: "web_snapshot",
         theme: "live",
         icon: "camera",
@@ -1098,7 +1133,7 @@
       if (thumbnail) {
         list.push({ key: "image", theme: "image", icon: "image", title: "Page Cover Image", sub: "OpenGraph preview image", edgeLabel: "COVER", detected: true, nextStep: "image_format", delta: { mode: "image", _useThumbnailUrl: true } });
       }
-      if (!p.engine?.used_browser_fallback && !sourceNode.usedDeepScan) {
+      if (!p.engine?.used_browser_fallback && !sourceNode.usedDeepScan && capabilityAvailable("neon-dynamic-renderer")) {
         list.push({
           key: "deep_scan",
           theme: "live",
@@ -1134,7 +1169,6 @@
     if (topTier?.height) vidSubParts.push(`Up to ${topTier.height >= 2160 ? "4K" : topTier.height + "p"}`);
     if (topTier?.maxFps && topTier.maxFps >= 48) vidSubParts.push(`${Math.round(topTier.maxFps)}fps`);
     if (videoTiers.length > 1) vidSubParts.push(`${videoTiers.length} qualities`);
-    else if (topTier?.bestSize) vidSubParts.push(fmtBytes(topTier.bestSize));
     if (!hasAudio) vidSubParts.push("Muted source");
 
     // If video has NO audio track and no trim needed, skip unnecessary track-split step!
@@ -1239,6 +1273,17 @@
     const step = choiceNode.nextStep;
     const acc = choiceNode.accumulated || {};
 
+    const pageChoices = (items, build) => {
+      const offset = choiceNode.listOffset || 0;
+      const choices = items.slice(offset, offset + 8).map((item, idx) => build(item, offset + idx));
+      if (offset + 8 < items.length) choices.push({
+        key: `more_${offset + 8}`, theme: choiceNode.theme, icon: "list",
+        title: `More (${offset + 9}–${Math.min(offset + 16, items.length)} of ${items.length})`,
+        sub: "Browse the next page", edgeLabel: "MORE", nextStep: step, listOffset: offset + 8,
+      });
+      return choices;
+    };
+
     if (step === "video_track") {
       const tracks = [];
       if (cap.hasAudio) {
@@ -1271,7 +1316,6 @@
           const details = [];
           if (t.maxFps && t.maxFps >= 48) details.push(`${Math.round(t.maxFps)}fps`);
           if (t.codecs.size) details.push(Array.from(t.codecs).slice(0, 2).join(" / "));
-          if (t.bestSize) details.push(`~${fmtBytes(t.bestSize)}`);
           const icon = t.height >= 2160 ? "zap" : t.height >= 1080 ? "monitor" : t.height >= 720 ? "tv" : "smartphone";
           const lbl = t.height ? _resolutionDisplayTitle(t.height) : "Best Available";
           const edgeLbl = t.height >= 2160 ? "4K" : t.height >= 1440 ? "2K" : t.height ? `${t.height}p` : "BEST";
@@ -1290,9 +1334,13 @@
       }
       // Fallback only when probe returned zero format details (e.g., playlist)
       return [
-        { key: "q_best", theme: "video", icon: "monitor", title: "Best Available", sub: "Highest detected stream up to 1080p", edgeLabel: "BEST", nextStep: "video_container", delta: { video_quality: "1080" } },
+        { key: "q_best", theme: "video", icon: "monitor", title: "Best Available", sub: "Best quality available for each item", edgeLabel: "BEST", nextStep: "video_container", delta: { video_quality: "best" } },
+        { key: "q_2160", theme: "video", icon: "zap", title: "4K · 2160p", sub: "Up to 2160p for each item, where available", edgeLabel: "4K", nextStep: "video_container", delta: { video_quality: "2160" } },
+        { key: "q_1440", theme: "video", icon: "monitor", title: "1440p · QHD", sub: "Up to 1440p for each item, where available", edgeLabel: "1440p", nextStep: "video_container", delta: { video_quality: "1440" } },
+        { key: "q_1080", theme: "video", icon: "monitor", title: "1080p · Full HD", sub: "Up to 1080p for each item, where available", edgeLabel: "1080p", nextStep: "video_container", delta: { video_quality: "1080" } },
         { key: "q_720", theme: "video", icon: "tv", title: "720p · HD", sub: "Balanced quality & size", edgeLabel: "720p", nextStep: "video_container", delta: { video_quality: "720" } },
-        { key: "q_2160", theme: "video", icon: "zap", title: "4K · 2160p", sub: "Ultra-HD if available", edgeLabel: "4K", nextStep: "video_container", delta: { video_quality: "2160" } },
+        { key: "q_480", theme: "video", icon: "smartphone", title: "480p · SD", sub: "Smaller files, up to 480p per item", edgeLabel: "480p", nextStep: "video_container", delta: { video_quality: "480" } },
+        { key: "q_360", theme: "video", icon: "smartphone", title: "360p · Compact", sub: "Smallest resolution option, up to 360p per item", edgeLabel: "360p", nextStep: "video_container", delta: { video_quality: "360" } },
       ];
     }
 
@@ -1370,7 +1418,6 @@
         const natDesc = [
           cap.audioSummary.nativeCodec || cap.audioSummary.nativeContainer,
           cap.audioSummary.maxBitrateKbps ? `${cap.audioSummary.maxBitrateKbps}kbps` : null,
-          cap.audioSummary.nativeSize ? fmtBytes(cap.audioSummary.nativeSize) : null,
         ].filter(Boolean).join(" · ");
         list.push({
           key: "af_native",
@@ -1388,7 +1435,7 @@
         { key: "af_mp3", theme: "audio", icon: "music", title: "MP3", sub: "Universal stereo compatibility", edgeLabel: "MP3", nextStep: "audio_quality", delta: { audio_format: "mp3" } },
         { key: "af_m4a", theme: "audio", icon: "disc-3", title: "M4A · AAC", sub: "Apple & mobile friendly", edgeLabel: "M4A", nextStep: "audio_quality", delta: { audio_format: "m4a" } },
         { key: "af_opus", theme: "audio", icon: "sliders-horizontal", title: "Opus", sub: "High-efficiency web audio", edgeLabel: "OPUS", nextStep: "audio_quality", delta: { audio_format: "opus" } },
-        { key: "af_flac", theme: "audio", icon: "gem", title: "FLAC · Lossless", sub: "Bit-perfect studio master", edgeLabel: "FLAC", nextStep: "audio_lossless", delta: { audio_format: "flac", audio_bitrate: "auto" } },
+        { key: "af_flac", theme: "audio", icon: "gem", title: "FLAC · Lossless", sub: "Lossless encoding; source quality is preserved", edgeLabel: "FLAC", nextStep: "audio_lossless", delta: { audio_format: "flac", audio_bitrate: "auto" } },
         { key: "af_wav", theme: "audio", icon: "audio-waveform", title: "WAV · Raw PCM", sub: "Uncompressed DAW track", edgeLabel: "WAV", nextStep: "audio_lossless", delta: { audio_format: "wav", audio_bitrate: "auto" } },
       );
       return list;
@@ -1426,7 +1473,7 @@
     }
 
     if (step === "chapter_pick") {
-      return cap.chapters.slice(0, 8).map((ch, idx) => ({
+      return pageChoices(cap.chapters, (ch, idx) => ({
         key: `ch_${idx}`,
         theme: "subtitles",
         icon: "bookmark",
@@ -1457,7 +1504,7 @@
 
     if (step === "sub_lang") {
       // Strictly real detected caption tracks!
-      return cap.subtitles.slice(0, 6).map((s) => ({
+      return pageChoices(cap.subtitles, (s) => ({
         key: `lang_${s.language}_${s.is_auto_generated ? "auto" : "man"}`,
         theme: "subtitles",
         icon: "globe",
@@ -1482,20 +1529,27 @@
     }
 
     if (step === "live_duration") {
-      return [
+      const maxDuration = state.capabilities?.limits?.live_duration_seconds || 1800;
+      const durations = [
         { key: "ld_60", theme: "live", icon: "radio", title: "1 Minute Clip", sub: "Capture next 60s of live stream", edgeLabel: "1 MIN", isLeaf: true, delta: { livestream_max_duration: 60 } },
         { key: "ld_300", theme: "live", icon: "radio", title: "5 Minutes", sub: "Capture next 5 min segment", edgeLabel: "5 MIN", isLeaf: true, delta: { livestream_max_duration: 300 } },
         { key: "ld_900", theme: "live", icon: "radio", title: "15 Minutes", sub: "Extended broadcast capture", edgeLabel: "15 MIN", isLeaf: true, delta: { livestream_max_duration: 900 } },
         { key: "ld_1800", theme: "live", icon: "radio", title: "30 Minutes Max", sub: "Full bounded broadcast capture", edgeLabel: "30 MIN", isLeaf: true, delta: { livestream_max_duration: 1800 } },
       ];
+      const allowed = durations.filter((choice) => choice.delta.livestream_max_duration <= maxDuration);
+      if (!allowed.length && maxDuration >= 5) allowed.push({ key: "ld_max", theme: "live", icon: "radio", title: `${maxDuration} Seconds`, sub: "Maximum recording length for this installation", edgeLabel: "RECORD", isLeaf: true, delta: { livestream_max_duration: maxDuration } });
+      return allowed;
     }
 
     if (step === "playlist_range") {
       const nextAfter = acc.mode === "audio" ? "audio_format" : "video_quality";
-      const n = cap.itemCount || 10;
+      const n = cap.itemCount;
+      const capLimit = Math.min(200, state.capabilities?.limits?.playlist_items || 50);
+      const known = probe?.metadata?.extra?.collection_total_known !== false;
       const list = [];
-      if (n <= 20) {
-        list.push({ key: "pr_all", theme: choiceNode.theme, icon: "list", title: `All ${n} Items`, sub: "Download full playlist", edgeLabel: `1–${n}`, detected: true, nextStep: nextAfter, delta: { playlist_items: `1-${n}` } });
+      if (n > 0) {
+        const count = Math.min(n, capLimit);
+        list.push({ key: "pr_all", theme: choiceNode.theme, icon: "list", title: `${known && n <= capLimit ? "All" : "First"} ${count} Items`, sub: known && n <= capLimit ? "Download full playlist" : "Bounded selection; more items may exist", edgeLabel: `1–${count}`, detected: true, nextStep: nextAfter, delta: { playlist_items: `1-${count}` } });
       }
       if (n > 5) {
         list.push({ key: "pr_5", theme: choiceNode.theme, icon: "list", title: "First 5 Items", sub: "Items 1 through 5", edgeLabel: "1–5", nextStep: nextAfter, delta: { playlist_items: "1-5" } });
@@ -1503,14 +1557,15 @@
       if (n > 10) {
         list.push({ key: "pr_10", theme: choiceNode.theme, icon: "list", title: "First 10 Items", sub: "Items 1 through 10", edgeLabel: "1–10", nextStep: nextAfter, delta: { playlist_items: "1-10" } });
       }
-      list.push({ key: "pr_custom", theme: choiceNode.theme, icon: "sliders-horizontal", title: "Custom Selection", sub: "e.g. 1-3 or 1,4,7", edgeLabel: "RANGE", inputKind: "playlist_range", isLeaf: true, delta: acc.mode === "audio" ? { audio_format: "mp3", audio_bitrate: "320k" } : { video_quality: "1080", video_container: "mp4" } });
+      list.push({ key: "pr_custom", theme: choiceNode.theme, icon: "sliders-horizontal", title: "Custom Selection", sub: "Choose items, then quality & format", edgeLabel: "RANGE", inputKind: "playlist_range", nextStep: nextAfter, delta: {} });
       return list;
     }
 
     if (step === "gallery_range") {
-      const n = cap.itemCount || 10;
+      const n = cap.itemCount;
+      const count = Math.min(n, 200, state.capabilities?.limits?.gallery_items || 100);
       const list = [
-        { key: "gr_all", theme: "image", icon: "archive", title: `All ${Math.min(n, 100)} Images`, sub: "Pack entire gallery into archive", edgeLabel: `1–${Math.min(n, 100)}`, detected: true, nextStep: "image_format", delta: { gallery_range_start: 1, gallery_range_end: Math.min(n, 100) } },
+        { key: "gr_all", theme: "image", icon: "archive", title: `${n <= count ? "All" : "First"} ${count} Items`, sub: "Image settings apply to photos; videos keep their source format", edgeLabel: `1–${count}`, detected: true, nextStep: "image_format", delta: { gallery_range_start: 1, gallery_range_end: count } },
       ];
       if (n > 10) {
         list.push({ key: "gr_10", theme: "image", icon: "layers", title: "First 10 Images", sub: "Quick subset archive", edgeLabel: "1–10", nextStep: "image_format", delta: { gallery_range_start: 1, gallery_range_end: 10 } });
@@ -1522,7 +1577,7 @@
     }
 
     if (step === "discovered_items") {
-      return cap.items.slice(0, 8).map((item, idx) => ({
+      return pageChoices(cap.items, (item, idx) => ({
         key: `item_${item.index || idx}`,
         theme: item.content_type === "image" ? "image" : item.content_type === "audio" ? "audio" : "video",
         icon: item.content_type === "image" ? "image" : item.content_type === "audio" ? "headphones" : "external-link",
@@ -1625,7 +1680,7 @@
   function subtreeHasRealOutput(nodeId) {
     const n = state.nodes.get(nodeId);
     if (!n) return false;
-    if (n.type === "result" || n.type === "note" || n.type === "player") return true;
+    if (n.type === "result" || n.type === "note" || n.type === "player" || n.submitting || n.retrying) return true;
     const kids = state.edges.filter((e) => e.from === nodeId).map((e) => e.to);
     return kids.some((cid) => subtreeHasRealOutput(cid));
   }
@@ -1636,7 +1691,7 @@
     for (const cid of kids) pruneChoiceSubtree(cid);
     const n = state.nodes.get(nodeId);
     if (n && n.type === "choice") {
-      destroyPlayerHls(nodeId);
+      disposeNode(n);
       state.nodes.delete(nodeId);
       state.edges = state.edges.filter((e) => e.from !== nodeId && e.to !== nodeId);
       document.querySelector(`[data-node-id="${CSS.escape(nodeId)}"]`)?.remove();
@@ -1679,6 +1734,7 @@
   }
 
   function spawnChoiceChildren(parentNode, specs, autoFocus = true, playSound = true) {
+    if (!isCurrentNode(parentNode)) return [];
     const rootId = parentNode.type === "source" ? parentNode.id : parentNode.rootSourceId;
     const parentDepth = parentNode.type === "source" ? 0 : (parentNode.depth || 1);
     const parentAcc = parentNode.accumulated || {};
@@ -1693,6 +1749,8 @@
       const srcDur = state.nodes.get(rootId)?.probe?.duration_seconds;
       const defaultPresets = buildTrimPresets(srcDur);
       const branchDir = resolveBranchDir(parentNode, spec);
+      const accumulated = { ...parentAcc, ...(spec.delta || {}) };
+      const selectionContext = accumulated.playlist_items ? `Items ${accumulated.playlist_items}` : "";
       const node = {
         id,
         type: "choice",
@@ -1703,12 +1761,13 @@
         theme: spec.theme || parentNode.theme || "video",
         icon: spec.icon,
         title: spec.title,
-        sub: spec.sub,
+        sub: selectionContext && !spec.sub?.startsWith(selectionContext) ? `${selectionContext} · ${spec.sub || ""}` : spec.sub,
         detected: !!spec.detected,
         isLeaf: !!spec.isLeaf,
         nextStep: spec.nextStep || null,
+        listOffset: spec.listOffset || 0,
         inputKind: spec.inputKind || null,
-        accumulated: { ...parentAcc, ...(spec.delta || {}) },
+        accumulated,
         expanded: false,
         panelOpen: false,
         demo: !!parentNode.demo,
@@ -1727,7 +1786,7 @@
         imgQuality: spec.delta?.image_quality || 90,
         imgMaxWidth: null,
         imgStripExif: spec.delta?.strip_metadata !== false,
-        playlistRangeVal: "1-5",
+        playlistRangeVal: window.NeonClient.compressIndices(state.nodes.get(rootId)?.probe?.items?.slice(0, 5).map((item) => item.index) || []) || "1",
         x: parentNode.x + 360,
         y: parentNode.y,
       };
@@ -1749,6 +1808,7 @@
       const midChild = spawned[Math.floor(spawned.length / 2)];
       glideToWorld((parentNode.x + midChild.x) / 2 + 120, midChild.y + 35, Math.min(camera.zoom, 0.94));
     }
+    for (const node of spawned) if (node.accumulated?.playlist_items) schedulePlaylistSizes(state.nodes.get(rootId), node.accumulated.playlist_items);
     return spawned;
   }
 
@@ -2097,10 +2157,38 @@
     }
   }
 
+  function continuePlaylistSelection(choiceNode) {
+    if (!isCurrentNode(choiceNode)) return;
+    let selected;
+    try {
+      selected = window.NeonClient.parseIndices(choiceNode.playlistRangeVal || "");
+      const limit = Math.min(200, state.capabilities?.limits?.playlist_items || 50);
+      if (!selected.length) throw new Error("Choose at least one playlist item.");
+      if (selected.length > limit) throw new Error(`Choose up to ${limit} items per download. You can select any playlist positions.`);
+    } catch (error) { toast(error.message, "err"); return; }
+    promoteDemoTreeToReal();
+    const selection = window.NeonClient.compressIndices(selected);
+    const nextStep = choiceNode.accumulated?.mode === "audio" ? "audio_format" : "video_quality";
+    const snapshot = { ...choiceNode, nextStep, accumulated: { ...choiceNode.accumulated, playlist_items: selection } };
+    const specs = getNextChoicesFor(snapshot).map((spec) => ({
+      ...spec,
+      key: `selection_${hashUrl(selection)}_${spec.key}`,
+      sub: `Items ${selection} · ${spec.sub || ""}`,
+      delta: { ...spec.delta, playlist_items: selection },
+    }));
+    // Completed and running branches retain their original selection/settings.
+    for (const edge of [...state.edges]) if (edge.from === choiceNode.id) pruneChoiceSubtree(edge.to);
+    const children = spawnChoiceChildren(choiceNode, specs, true, true);
+    if (children[0]) document.querySelector(`[data-node-id="${CSS.escape(children[0].id)}"] .choice-card`)?.focus({ preventScroll: true });
+  }
+
   async function executeChoiceLeaf(choiceNode) {
+    if (!isCurrentNode(choiceNode)) return;
+    if (choiceNode.inputKind === "playlist_range") return continuePlaylistSelection(choiceNode);
     promoteDemoTreeToReal();
     refreshActiveLineageHighlight(choiceNode.id);
     const src = state.nodes.get(choiceNode.rootSourceId);
+    if (!src) return;
     const acc = { ...(choiceNode.accumulated || {}) };
 
     // Handle Live Network Stream Watch / Listen leaf (VLC-style zero-download playback!)
@@ -2126,6 +2214,12 @@
     if (choiceNode.inputKind === "trim") {
       acc.clip_start_seconds = parseTime(choiceNode.clipStart);
       acc.clip_end_seconds = parseTime(choiceNode.clipEnd);
+      if (!Number.isFinite(acc.clip_start_seconds) || !Number.isFinite(acc.clip_end_seconds) || acc.clip_start_seconds < 0 || acc.clip_end_seconds <= acc.clip_start_seconds) {
+        return toast("Enter a valid clip start and an end after the start.", "err");
+      }
+      if (src?.probe?.duration_seconds && acc.clip_end_seconds > src.probe.duration_seconds) {
+        return toast("The clip extends beyond this media. Choose an earlier end.", "err");
+      }
       if (acc.video_output_action === "gif" || acc.video_output_action === "webp_anim") {
         acc.gif_fps = choiceNode.gifFps || acc.gif_fps || 12;
         acc.gif_width = choiceNode.gifWidth || acc.gif_width || 640;
@@ -2149,12 +2243,6 @@
       acc.image_max_width = choiceNode.imgMaxWidth || null;
       acc.strip_metadata = !!choiceNode.imgStripExif;
     }
-    if (choiceNode.inputKind === "playlist_range") {
-      const rVal = (choiceNode.playlistRangeVal || "").trim();
-      if (!rVal) return toast("Enter playlist items (e.g. 1-5 or 1,3,5)", "err");
-      acc.playlist_items = rVal;
-    }
-
     // Build clean DownloadRequest payload
     const targetUrl = acc._useThumbnailUrl && src?.probe?.thumbnail?.url ? src.probe.thumbnail.url : src.url;
     delete acc._useThumbnailUrl;
@@ -2163,32 +2251,44 @@
     delete acc._spawnUrl;
 
     const payload = { url: targetUrl, ...acc };
+    const limits = state.capabilities?.limits;
+    if (src?.probe?.content_type === "gallery") payload.max_items = Math.min(200, limits?.gallery_items || 100);
+    if (src?.probe?.content_type === "playlist") payload.max_items = Math.min(200, limits?.playlist_items || 50);
     if (targetUrl === src?.probe?.thumbnail?.url && src?.title) {
       payload.custom_filename_prefix = src.title.replace(/[^a-zA-Z0-9_-]+/g, "_").slice(0, 32);
     }
     osc.set(true, `EXTRACTING · ${choiceNode.title.toUpperCase()}…`);
     sfx.capture();
 
+    if (choiceNode.submitting) return;
+    choiceNode.submitting = true;
+    updateActivityStatus();
+    choiceNode.submissionKey ||= uid("request");
+    payload.idempotency_key = choiceNode.submissionKey;
     try {
-      const res = await fetch("/v1/jobs", {
+      const job = await apiRequest("/v1/jobs", {
         method: "POST",
         headers: apiHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify(payload),
       });
-      const job = await res.json();
-      if (!res.ok) {
-        toast(job.detail?.message || "Extraction rejected", "err");
-        osc.set(false, "CANVAS READY");
+      recordHistoryJob(job);
+      if (!isCurrentNode(choiceNode)) {
+        state.hiddenJobIds.add(job.job_id);
+        persistWorkspace();
         return;
       }
+      delete choiceNode.submissionKey;
       const resNode = upsertResultNodeForJob(job, choiceNode, null, choiceNode.theme);
       layoutTreeFromRoot(choiceNode.rootSourceId);
       gravity.shockAt(resNode.x + 180, resNode.y + 80);
       glideToWorld((choiceNode.x + resNode.x) / 2 + 160, resNode.y + 90, Math.min(camera.zoom, 0.92));
       watchJob(job.job_id, resNode);
     } catch (err) {
-      toast(`Network error: ${err.message}`, "err");
+      if (isCurrentNode(choiceNode)) toast(err.message, "err");
       osc.set(false, "CANVAS READY");
+    } finally {
+      choiceNode.submitting = false;
+      updateActivityStatus();
     }
   }
 
@@ -2278,20 +2378,53 @@
     drawMinimap();
     const emptyHud = $("empty-canvas-hud");
     if (emptyHud) emptyHud.classList.toggle("hidden", state.nodes.size > 0);
+    updateActivityStatus();
+  }
+
+  function disposeNode(node) {
+    node.sizeController?.abort();
+    clearTimeout(node.sizeTimer);
+    destroyPlayerHls(node.id);
+    const element = document.querySelector(`[data-node-id="${CSS.escape(node.id)}"]`);
+    element?.querySelectorAll("video, audio").forEach((media) => {
+      media.pause();
+      media.removeAttribute("src");
+      media.load();
+    });
+    if (node.jobId) {
+      state.sse.get(node.jobId)?.close();
+      state.sse.delete(node.jobId);
+      state.hiddenJobIds.add(node.jobId);
+    }
   }
 
   function clearEntireCanvas() {
-    for (const n of state.nodes.values()) {
-      if (n.type === "player" && n.hls) {
-        try { n.hls.destroy(); } catch (_) {}
-      }
-    }
+    state.workspaceRevision++;
+    if (camera.anim) { cancelAnimationFrame(camera.anim); camera.anim = null; }
+    for (const node of state.nodes.values()) disposeNode(node);
+    for (const watcher of state.sse.values()) watcher.close();
+    state.sse.clear();
+    for (const id of [...playerHls.keys()]) destroyPlayerHls(id);
+    for (const job of state.historyJobs) if (!terminal(job.status)) state.hiddenJobIds.add(job.job_id);
     state.nodes.clear();
     state.edges = [];
     state.sourceByUrl.clear();
     state.resultByJobId.clear();
     state.selectedNodeId = null;
     state.hasDemoGraph = false;
+    state.spaceHeld = false;
+    closePatchMenu();
+    $("draft-wire-group").classList.add("hidden");
+    $("viewport").classList.remove("space-ready", "space-pan", "panning", "wiring");
+    setBatchOpen(false);
+    $("url-input").value = "";
+    $("batch-input").value = "";
+    $("batch-count").textContent = "0 links";
+    syncDockModeVisuals();
+    camera.x = window.innerWidth * 0.5;
+    camera.y = (window.innerHeight - 54) * 0.44;
+    camera.zoom = 1;
+    applyCamera();
     $("sandbox-banner")?.classList.add("hidden");
     const layer = $("nodes-layer");
     if (layer) layer.innerHTML = "";
@@ -2300,9 +2433,11 @@
     persistWorkspace();
     sfx.click();
     toast("Canvas cleared", "ok");
+    $("url-input").focus({ preventScroll: true });
   }
 
   function addEdge(fromId, toId, kind = "extract", active = false, label = "", isDemo = false, customLabel = false) {
+    if (!state.nodes.has(fromId) || !state.nodes.has(toId)) return null;
     if (fromId === toId) return null;
     const exists = state.edges.find((e) => e.from === fromId && e.to === toId);
     if (exists) {
@@ -2330,25 +2465,30 @@
   function removeNode(nodeId) {
     const n = state.nodes.get(nodeId);
     if (!n) return;
-    if (n.type === "source") {
-      // Remove orphan choice children belonging to this source
-      for (const [cid, cn] of Array.from(state.nodes.entries())) {
-        if (cn.type === "choice" && cn.rootSourceId === nodeId && !subtreeHasRealOutput(cid)) {
-          state.nodes.delete(cid);
-          state.edges = state.edges.filter((e) => e.from !== cid && e.to !== cid);
-          document.querySelector(`[data-node-id="${CSS.escape(cid)}"]`)?.remove();
+    const removed = new Set([nodeId]);
+    // Remove dependent controls/players; completed outputs and notes remain usable.
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const child of state.nodes.values()) {
+        if (removed.has(child.id) || !["choice", "player"].includes(child.type)) continue;
+        if ((n.type === "source" && child.rootSourceId === nodeId) || removed.has(child.parentId) || (child.type === "player" && state.edges.some((edge) => removed.has(edge.from) && edge.to === child.id))) {
+          removed.add(child.id); changed = true;
         }
       }
-      if (n.url) state.sourceByUrl.delete(n.url);
     }
-    if (n.type === "result" && n.jobId) state.resultByJobId.delete(n.jobId);
-    if (n.type === "player" && n.hls) {
-      try { n.hls.destroy(); } catch (_) {}
-      n.hls = null;
+    for (const id of removed) {
+      const node = state.nodes.get(id);
+      disposeNode(node);
+      if (node.type === "source" && node.url) state.sourceByUrl.delete(node.url);
+      if (node.jobId) state.resultByJobId.delete(node.jobId);
+      state.nodes.delete(id);
+      document.querySelector(`[data-node-id="${CSS.escape(id)}"]`)?.remove();
     }
-    state.nodes.delete(nodeId);
-    state.edges = state.edges.filter((e) => e.from !== nodeId && e.to !== nodeId);
-    document.querySelector(`[data-node-id="${CSS.escape(nodeId)}"]`)?.remove();
+    for (const node of state.nodes.values()) if (removed.has(node.rootSourceId)) node.rootSourceId = null;
+    if (removed.has(state.selectedNodeId)) state.selectedNodeId = null;
+    if (removed.has(state.pendingPatch?.fromNodeId)) closePatchMenu();
+    state.edges = state.edges.filter((edge) => !removed.has(edge.from) && !removed.has(edge.to));
     sfx.click();
     renderThreads();
     syncWorkspaceMeta();
@@ -2589,7 +2729,7 @@
 
     srcNode[promKey] = (async () => {
       try {
-        const res = await fetch("/v1/stream/resolve", {
+        const data = await apiRequest("/v1/stream/resolve", {
           method: "POST",
           headers: apiHeaders({ "Content-Type": "application/json" }),
           body: JSON.stringify({
@@ -2598,8 +2738,6 @@
             preferred_quality: "480",
           }),
         });
-        if (!res.ok) return null;
-        const data = await res.json();
         srcNode[cacheKey] = data;
         return data;
       } catch (_) {
@@ -2675,6 +2813,7 @@
       }
       if (loadBtn) loadBtn.textContent = "Connecting preview…";
       const data = await resolvePreviewStreamForSource(src, isAudioOnly);
+      if (!isCurrentNode(node) || !isCurrentNode(src) || !el.isConnected) return;
       const track = data?.tracks?.find((t) => (isAudioOnly ? t.kind === "audio" : t.kind === "video")) || data?.tracks?.[0];
       if (!track) {
         if (loadBtn) loadBtn.textContent = "Preview unavailable · Use timestamps";
@@ -2937,6 +3076,7 @@
   }
 
   function renderNode(node) {
+    if (!isCurrentNode(node)) return;
     const layer = $("nodes-layer");
     let el = document.querySelector(`[data-node-id="${CSS.escape(node.id)}"]`);
     if (!el) {
@@ -3169,41 +3309,59 @@
           </div>
         `;
       } else if (node.panelOpen && node.inputKind === "playlist_range") {
-        const srcItems = state.nodes.get(node.rootSourceId)?.probe?.items || [];
-        const hasItems = srcItems.length > 0;
+        const source = state.nodes.get(node.rootSourceId);
+        const srcItems = source?.probe?.items || [];
+        const page = playlistPage(source);
+        let selected = new Set();
+        try { selected = new Set(window.NeonClient.parseIndices(node.playlistRangeVal || "")); } catch (_) {}
         inlineExtra = `
           <div class="choice-inline-body">
-            ${hasItems ? `
               <div class="preview-search-row">
-                <input type="text" class="cfg-input mono" data-pl-filter placeholder="Filter ${srcItems.length} items…" />
+                <input type="text" class="cfg-input mono" data-pl-filter value="${esc(node.playlistFilter || "")}" placeholder="Filter ${srcItems.length} loaded items…" aria-label="Filter loaded playlist items" />
                 <button type="button" class="scrubber-btn" data-pl-quick="1-5">1–5</button>
-                <button type="button" class="scrubber-btn" data-pl-quick="all">All</button>
+                <button type="button" class="scrubber-btn" data-pl-quick="all">All loaded</button>
               </div>
-              <div class="picker-list" data-pl-list>
-                ${srcItems.slice(0, 40).map((it, idx) => {
+              <div class="picker-list" data-pl-list tabindex="0" role="group" aria-label="Playlist items">
+                ${srcItems.map((it, idx) => {
                   const num = it.index || (idx + 1);
                   return `
                     <label class="picker-row" data-pl-title="${esc((it.title || "").toLowerCase())}">
-                      <input type="checkbox" data-pl-chk="${num}" ${num <= 5 ? "checked" : ""} />
+                      <input type="checkbox" data-pl-chk="${num}" ${selected.has(num) ? "checked" : ""} aria-label="Select item ${num}" />
                       <span class="mono muted" style="font-size:9.5px;min-width:18px;">#${num}</span>
                       ${it.thumbnail_url ? `<img class="picker-thumb" src="${esc(it.thumbnail_url)}" alt="" loading="lazy" />` : ""}
                       <span class="picker-title">${esc(it.title || `Item #${num}`)}</span>
-                      ${it.duration_seconds ? `<span class="mono muted" style="font-size:9px;">${esc(fmtDuration(it.duration_seconds))}</span>` : ""}
+                      <span class="picker-details mono">
+                        ${it.duration_seconds ? `<span>${esc(fmtDuration(it.duration_seconds))}</span>` : ""}
+                        <button type="button" class="picker-size-btn" data-item-size-check="${num}" aria-label="Inspect size for item ${num}" title="${esc(it._sizeError || "Inspect source metadata for a size estimate; output depends on quality.")}" ${it._checkingSize ? "disabled" : ""}>${it._checkingSize ? "Checking…" : it._sizeError ? "Retry size" : window.NeonSize.itemSize(it).bytes == null && !it._sizeAttempted ? "Inspect size" : esc(window.NeonSize.label(window.NeonSize.itemSize(it)))}</button>
+                      </span>
                       <button type="button" class="picker-spawn-btn mono" data-pl-spawn="${esc(it.direct_media_url || it.url)}" title="Open single item on canvas">↗</button>
                     </label>
                   `;
                 }).join("")}
               </div>
-            ` : ""}
-            <input type="text" class="cfg-input mono" data-pl-range value="${esc(node.playlistRangeVal || "1-5")}" placeholder="e.g. 1-5 or 1,3,7" />
-            <button class="reactor-fire btn-sm" data-run-inline-leaf="${esc(node.id)}">${iconSvg("play", "ico-xs")}<span>Extract Selected</span></button>
+              <div class="playlist-load-row">
+                <span class="mono muted" data-pl-loaded role="status">${srcItems.length}${page.total !== null ? ` of ${page.total}` : ""} loaded</span>
+                ${page.has_more ? `
+                  <button type="button" class="scrubber-btn" data-pl-load="next" ${source?.collectionLoading ? "disabled" : ""}>${source?.collectionLoading ? "Loading…" : "Load more"}</button>
+                  ${page.total !== null && page.total <= 1000 ? `<button type="button" class="scrubber-btn" data-pl-load="all" ${source?.collectionLoading ? "disabled" : ""}>Load all</button>` : ""}
+                ` : ""}
+              </div>
+              ${source?.collectionError ? `<p class="playlist-feedback" role="alert">${esc(source.collectionError)} Try loading again.</p>` : ""}
+              <p class="playlist-feedback hidden" data-pl-no-matches>No matches in the loaded items.${page.has_more ? " Load more to search the rest." : ""}</p>
+            <input type="text" class="cfg-input mono" data-pl-range value="${esc(node.playlistRangeVal ?? "1-5")}" placeholder="e.g. 1-5 or 1,3,7" aria-label="Selected playlist positions" />
+            <div class="playlist-load-row">
+              <span class="playlist-feedback" data-pl-selection-summary aria-live="polite"></span>
+              <button type="button" class="scrubber-btn" data-pl-quick="none">Clear</button>
+            </div>
+            <div class="playlist-feedback" data-pl-total-size></div>
+            <button class="reactor-fire btn-sm" data-run-inline-leaf="${esc(node.id)}">${iconSvg("chevron-right", "ico-xs")}<span>${node.accumulated?.mode === "audio" ? "Choose audio format" : "Choose video quality"}</span></button>
           </div>
         `;
       }
 
       inner = `
         ${ports}
-        <div class="choice-card" ${node.inputKind ? 'data-drag-handle="1"' : `data-choice-click="${esc(node.id)}"`}>
+        <div class="choice-card" role="button" tabindex="0" aria-label="${esc(node.title)}" aria-expanded="${!!(node.expanded || node.panelOpen)}" ${node.inputKind ? 'data-drag-handle="1"' : `data-choice-click="${esc(node.id)}"`}>
           <div class="choice-left">
             <div class="choice-icon">${iconSvg(node.icon)}</div>
             <div style="min-width:0;">
@@ -3211,10 +3369,10 @@
                 ${node.detected ? '<span class="detected-dot" title="Detected in stream"></span>' : ""}
                 <span>${esc(node.title)}</span>
               </div>
-              <div class="choice-sub mono">${esc(node.sub || "")}</div>
+              <div class="choice-sub mono">${choiceSubtitle(node)}</div>
             </div>
           </div>
-          ${arrowHtml ? `<span class="choice-arrow mono">${arrowHtml}</span>` : ""}
+            ${arrowHtml ? `<span class="choice-arrow mono">${arrowHtml}</span>` : ""}
         </div>
         ${inlineExtra}
       `;
@@ -3233,7 +3391,7 @@
       const metaBits = node.probeError
         ? [shortHost(node.url), node.probeError]
         : p
-          ? [p.source?.domain, p.author?.name, p.content_type?.toUpperCase(), p.size_bytes ? fmtBytes(p.size_bytes) : null, "Neon Sync"].filter(Boolean)
+          ? [p.source?.domain, p.author?.name, p.content_type?.toUpperCase(), "Neon Sync"].filter(Boolean)
           : [shortHost(node.url), node.probing ? "Inspecting real streams & tracks…" : "Ready"];
       const caps = [];
       if (p) {
@@ -3283,6 +3441,7 @@
           <div class="node-body-collapsible">
             ${thumbHtml}
             <div class="node-meta mono" ${node.probeError ? 'style="color:var(--err);"' : ""}>${esc(metaBits.join(" · "))}</div>
+            ${p ? `<div class="node-size" data-source-size>${sizeBadge(window.NeonSize.estimate(p))}</div>` : ""}
             ${caps.length ? `<div class="node-caps">${caps.map((c) => `<span class="cap-tag mono">${esc(c)}</span>`).join("")}</div>` : ""}
             ${canPlayLive ? `
               <div class="source-quick-bar">
@@ -3303,13 +3462,15 @@
       const isErr = j.status === "failed" || j.status === "cancelled";
       const isActive = !isDone && !isErr;
       const dl = j.result?.download;
+      const isExpired = dl?.expires_at && new Date(dl.expires_at) < new Date();
       const tr = j.result?.transcript;
       const mediaInfo = j.result?.metadata?.extra?.media_analysis;
       const title = dl?.filename || j.result?.title || j.url || "Extraction";
 
       const metaBits = [];
       if (isErr) metaBits.push(j.error || j.status);
-      else if (isDone) metaBits.push(fmtBytes(dl?.size_bytes));
+      else if (isExpired) metaBits.push("This file has expired. Retry the download to create a fresh copy.");
+      else if (isDone) metaBits.push("Ready to save");
       else metaBits.push(j.progress?.message || j.status || "queued");
       if (isActive && j.progress?.speed_bps) metaBits.push(`${fmtBytes(j.progress.speed_bps)}/s`);
       if (mediaInfo) {
@@ -3325,7 +3486,7 @@
         <div class="node-head" data-drag-handle="1">
           <span class="node-type-pill mono"><span class="node-type-dot"></span>ARTIFACT · ${esc(extBadge)}</span>
           <div class="node-head-right">
-            <span class="status-pill mono ${isDone ? "ok" : isErr ? "err" : "warn"}">${esc(j.status || "queued")}</span>
+            <span class="status-pill mono ${isExpired ? "warn" : isDone ? "ok" : isErr ? "err" : "warn"}">${esc(isExpired ? "expired" : j.status || "queued")}</span>
             <button class="node-icon-btn" data-node-collapse="${esc(node.id)}">${node.collapsed ? "▸" : "▾"}</button>
             <button class="node-icon-btn" data-node-del="${esc(node.id)}">×</button>
           </div>
@@ -3334,13 +3495,16 @@
           <h3 class="node-title" title="${esc(j.url || "")}">${esc(title)}</h3>
           <div class="progress-rail"><div class="progress-bar ${isDone ? "done" : isErr ? "err" : ""}" style="width:${Math.min(100, Math.max(5, pct))}%"></div></div>
           <div class="node-meta mono">${esc(metaBits.filter(Boolean).join(" · "))}</div>
+          <div class="node-size mono" data-job-size>${esc(jobSizeText(j))}</div>
+          ${(j.result?.warnings || []).map((warning) => `<p class="node-meta" role="status">${esc(warning.message)}</p>`).join("")}
           <div class="node-body-collapsible">
-            ${isDone ? buildInlinePreviewHtml(dl) : ""}
+            ${isDone && !isExpired ? buildInlinePreviewHtml(dl) : ""}
             <div class="node-actions">
-              ${dl?.artifact_url ? `<a class="btn-link" href="${esc(dl.artifact_url)}" download="${esc(dl.filename || "download")}">Save File</a>` : ""}
-              ${tr?.artifact_url ? `<a class="ghost-btn btn-xs" href="${esc(tr.artifact_url)}">Transcript .txt</a>` : ""}
+              ${dl?.artifact_url && !isExpired ? `<a class="btn-link" href="${esc(dl.artifact_url)}" download="${esc(dl.filename || "download")}">Save File</a>` : ""}
+              ${tr?.artifact_url && !isExpired ? `<a class="ghost-btn btn-xs" href="${esc(tr.artifact_url)}">Transcript .txt · ${esc(window.NeonSize.bytesText(tr.size_bytes))}</a>` : ""}
               ${dl?.sha256 ? `<button class="ghost-btn btn-xs mono" data-sha="${esc(dl.sha256)}">SHA-256</button>` : ""}
               ${isActive ? `<button class="ghost-btn btn-xs" data-cancel-job="${esc(j.job_id)}">Cancel</button>` : ""}
+              ${isErr || isExpired ? `<button class="btn-link" data-retry-job="${esc(j.job_id)}">Retry download</button>` : ""}
             </div>
           </div>
         </div>
@@ -3460,6 +3624,18 @@
   }
 
   function bindNodeElementEvents(el, node) {
+    el.addEventListener("input", () => updateChoiceSize(node), { capture: true });
+    el.addEventListener("click", () => queueMicrotask(() => updateChoiceSize(node)), { capture: true });
+    el.querySelector(".choice-card")?.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault(); event.stopPropagation();
+      onChoiceClicked(node);
+      queueMicrotask(() => {
+        const childId = state.edges.find((edge) => edge.from === node.id && state.nodes.get(edge.to)?.type === "choice")?.to;
+        const target = childId ? document.querySelector(`[data-node-id="${CSS.escape(childId)}"] .choice-card`) : el.querySelector("input, textarea, .choice-card");
+        target?.focus({ preventScroll: true });
+      });
+    });
     el.onpointerdown = () => {
       state.selectedNodeId = node.id;
       document.querySelectorAll(".node.selected").forEach((x) => x.classList.remove("selected"));
@@ -3716,13 +3892,44 @@
     // Interactive Playlist Checklist Picker wiring
     const plFilter = el.querySelector("[data-pl-filter]");
     const plList = el.querySelector("[data-pl-list]");
+    const plRange = el.querySelector("[data-pl-range]");
+    const syncPlaylistSelection = () => {
+      if (!plList || !plRange) return;
+      const limit = Math.min(200, state.capabilities?.limits?.playlist_items || 50);
+      let selected = [];
+      let issue = "";
+      try { selected = window.NeonClient.parseIndices(node.playlistRangeVal || ""); }
+      catch (error) { issue = error.message; }
+      if (!issue && !selected.length) issue = "Select at least one item.";
+      if (!issue && selected.length > limit) issue = `${selected.length} selected. Choose up to ${limit} per download; any playlist positions are allowed.`;
+      const numbers = new Set(selected);
+      plList.querySelectorAll("[data-pl-chk]").forEach((checkbox) => { checkbox.checked = numbers.has(Number(checkbox.dataset.plChk)); });
+      plRange.setAttribute("aria-invalid", String(!!issue));
+      const summary = el.querySelector("[data-pl-selection-summary]");
+      if (summary) {
+        summary.textContent = issue || `${selected.length} selected · up to ${limit} per download`;
+        summary.classList.toggle("invalid", !!issue);
+      }
+      const submit = el.querySelector("[data-run-inline-leaf]");
+      if (submit) submit.disabled = !!issue;
+      const sizeHost = el.querySelector("[data-pl-total-size]");
+      if (sizeHost) sizeHost.innerHTML = selected.length ? `Selected size: ${sizeBadge(choiceEstimate(node))}` : "Choose items to see their total size.";
+      if (!issue) schedulePlaylistSizes(state.nodes.get(node.rootSourceId), node.playlistRangeVal);
+      updateChoiceSize(node);
+    };
     if (plList) {
       const syncCheckedToRange = () => {
-        const nums = Array.from(plList.querySelectorAll("[data-pl-chk]:checked")).map((c) => parseInt(c.dataset.plChk, 10)).sort((a, b) => a - b);
-        const val = nums.join(",");
+        const nums = new Set();
+        try { for (const index of window.NeonClient.parseIndices(node.playlistRangeVal || "")) nums.add(index); } catch (_) {}
+        plList.querySelectorAll("[data-pl-chk]").forEach((checkbox) => {
+          const number = Number(checkbox.dataset.plChk);
+          if (checkbox.checked) nums.add(number); else nums.delete(number);
+        });
+        const val = window.NeonClient.compressIndices(nums);
         node.playlistRangeVal = val;
         const rInp = el.querySelector("[data-pl-range]");
         if (rInp) rInp.value = val;
+        syncPlaylistSelection();
       };
       plList.querySelectorAll("[data-pl-chk]").forEach((chk) => {
         chk.onpointerdown = (e) => e.stopPropagation();
@@ -3738,26 +3945,50 @@
           sfx.capture();
         };
       });
+      plList.querySelectorAll("[data-item-size-check]").forEach((button) => {
+        button.onpointerdown = (event) => event.stopPropagation();
+        button.onclick = (event) => {
+          event.preventDefault(); event.stopPropagation();
+          inspectPlaylistItemSize(state.nodes.get(node.rootSourceId), Number(button.dataset.itemSizeCheck));
+        };
+      });
+      const applyPlaylistFilter = () => {
+        const q = (node.playlistFilter || "").trim().toLowerCase();
+        let matches = 0;
+        plList.querySelectorAll(".picker-row").forEach((row) => {
+          const shown = !q || (row.dataset.plTitle || "").includes(q);
+          row.style.display = shown ? "" : "none";
+          if (shown) matches++;
+        });
+        el.querySelector("[data-pl-no-matches]")?.classList.toggle("hidden", !q || matches > 0);
+      };
       if (plFilter) {
         plFilter.onpointerdown = (e) => e.stopPropagation();
         plFilter.oninput = () => {
-          const q = plFilter.value.trim().toLowerCase();
-          plList.querySelectorAll(".picker-row").forEach((row) => {
-            row.style.display = !q || (row.dataset.plTitle || "").includes(q) ? "" : "none";
-          });
+          node.playlistFilter = plFilter.value;
+          applyPlaylistFilter();
         };
+        applyPlaylistFilter();
       }
       el.querySelectorAll("[data-pl-quick]").forEach((btn) => {
         btn.onpointerdown = (e) => e.stopPropagation();
         btn.onclick = (e) => {
           e.stopPropagation();
           const mode = btn.dataset.plQuick;
+          if (mode === "none") node.playlistRangeVal = "";
           plList.querySelectorAll("[data-pl-chk]").forEach((chk) => {
             const n = parseInt(chk.dataset.plChk, 10);
-            chk.checked = mode === "all" ? true : n <= 5;
+            chk.checked = mode === "all" || (mode === "1-5" && n <= 5);
           });
           syncCheckedToRange();
           sfx.click();
+        };
+      });
+      el.querySelectorAll("[data-pl-load]").forEach((button) => {
+        button.onpointerdown = (event) => event.stopPropagation();
+        button.onclick = (event) => {
+          event.stopPropagation();
+          loadMorePlaylistItems(state.nodes.get(node.rootSourceId), button.dataset.plLoad === "all");
         };
       });
     }
@@ -3770,12 +4001,12 @@
         })
         .catch(() => { textPreviewEl.textContent = "Click Save File to view full text."; });
     }
-    const plRange = el.querySelector("[data-pl-range]");
     if (plRange) {
       plRange.onpointerdown = (e) => e.stopPropagation();
-      plRange.oninput = () => { node.playlistRangeVal = plRange.value; };
+      plRange.oninput = () => { node.playlistRangeVal = plRange.value; syncPlaylistSelection(); };
       plRange.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); executeChoiceLeaf(node); } };
     }
+    syncPlaylistSelection();
     el.querySelector("[data-run-inline-leaf]")?.addEventListener("click", (e) => { e.stopPropagation(); executeChoiceLeaf(node); });
 
     // Magnetic Patch Cable Dragging from Output Jack
@@ -3921,8 +4152,30 @@
     });
     el.querySelector("[data-cancel-job]")?.addEventListener("click", async (e) => {
       const id = e.currentTarget.dataset.cancelJob;
-      const res = await fetch(`/v1/jobs/${id}/cancel`, { method: "POST" });
-      if (res.ok) { node.job = await res.json(); renderNode(node); }
+      try {
+        node.job = await apiRequest(`/v1/jobs/${id}/cancel`, { method: "POST" });
+        renderNode(node);
+      } catch (error) { toast(error.message, "err"); }
+    });
+    el.querySelector("[data-retry-job]")?.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      if (node.retrying) return;
+      node.retrying = true;
+      updateActivityStatus();
+      try {
+        node.retryKey ||= uid("retry");
+        const job = await apiRequest("/v1/jobs", {
+          method: "POST",
+          headers: apiHeaders({ "Content-Type": "application/json" }),
+          body: JSON.stringify({ ...node.job.request, idempotency_key: node.retryKey }),
+        });
+        recordHistoryJob(job);
+        if (!isCurrentNode(node)) { state.hiddenJobIds.add(job.job_id); persistWorkspace(); return; }
+        delete node.retryKey;
+        const child = upsertResultNodeForJob(job, node);
+        watchJob(job.job_id, child);
+      } catch (error) { if (isCurrentNode(node)) toast(error.message, "err"); }
+      finally { node.retrying = false; updateActivityStatus(); }
     });
     const noteArea = el.querySelector("[data-note-input]");
     if (noteArea) {
@@ -3941,6 +4194,7 @@
   };
 
   function openPatchMenu(fromNodeId, sx, sy, wx, wy) {
+    if (!state.nodes.has(fromNodeId)) return;
     state.pendingPatch = { fromNodeId, wx, wy };
     const menu = $("patch-menu");
     const fromNode = state.nodes.get(fromNodeId);
@@ -4004,8 +4258,8 @@
       }
     }
     const id = `src_${hashUrl(url)}`;
-    const pos = dropCoords || pickNewRootPosition();
-    const node = { id, type: "source", url, x: pos.x, y: pos.y, probing: autoProbe, probe: null };
+    const pos = dropCoords || state.savedPositions[id] || pickNewRootPosition();
+    const node = { id, type: "source", url, x: pos.x, y: pos.y, collapsed: !!pos.collapsed, probing: autoProbe, probe: null };
     state.nodes.set(id, node);
     state.sourceByUrl.set(url, id);
     renderNode(node);
@@ -4015,7 +4269,206 @@
     return node;
   }
 
+  function playlistPage(source) {
+    const probe = source?.probe;
+    const page = probe?.metadata?.extra?.playlist_page;
+    if (page) return page;
+    const indices = (probe?.items || []).map((item) => item.index).filter(Number.isFinite);
+    const end = indices.length ? Math.max(...indices) : 0;
+    const known = probe?.metadata?.extra?.collection_total_known !== false;
+    const total = known && Number.isFinite(probe?.metadata?.item_count_total) ? probe.metadata.item_count_total : null;
+    const hasMore = total !== null ? end < total : indices.length >= 50;
+    return { start: 1, end, limit: 50, total, has_more: hasMore, next_start: hasMore ? end + 1 : null };
+  }
+
+  function refreshPlaylistPickers(source) {
+    for (const node of state.nodes.values()) {
+      if (node.rootSourceId !== source.id || node.inputKind !== "playlist_range" || !node.panelOpen) continue;
+      const oldList = document.querySelector(`[data-node-id="${CSS.escape(node.id)}"] [data-pl-list]`);
+      const scrollTop = oldList?.scrollTop || 0;
+      const hadFocus = oldList?.contains(document.activeElement);
+      const active = document.activeElement;
+      const focusedInput = active?.matches("[data-pl-filter]") ? "[data-pl-filter]" : active?.matches("[data-pl-range]") ? "[data-pl-range]" : null;
+      const selectionStart = focusedInput ? active.selectionStart : null;
+      const selectionEnd = focusedInput ? active.selectionEnd : null;
+      renderNode(node);
+      const list = document.querySelector(`[data-node-id="${CSS.escape(node.id)}"] [data-pl-list]`);
+      if (list) { list.scrollTop = scrollTop; if (hadFocus) list.focus({ preventScroll: true }); }
+      if (focusedInput) {
+        const input = document.querySelector(`[data-node-id="${CSS.escape(node.id)}"] ${focusedInput}`);
+        input?.focus({ preventScroll: true });
+        input?.setSelectionRange(selectionStart, selectionEnd);
+      }
+    }
+  }
+
+  function refreshPlaylistSizeDisplays(source) {
+    if (!isCurrentNode(source)) return;
+    for (const node of state.nodes.values()) {
+      if (node.rootSourceId !== source.id) continue;
+      updateChoiceSize(node);
+      if (node.inputKind !== "playlist_range" || !node.panelOpen) continue;
+      const element = document.querySelector(`[data-node-id="${CSS.escape(node.id)}"]`);
+      const total = element?.querySelector("[data-pl-total-size]");
+      if (total) total.innerHTML = node.playlistRangeVal ? `Selected size: ${sizeBadge(choiceEstimate(node))}` : "Choose items to see their total size.";
+      for (const item of source.probe.items || []) {
+        const button = element?.querySelector(`[data-item-size-check="${item.index}"]`);
+        if (!button) continue;
+        button.disabled = !!item._checkingSize;
+        button.textContent = item._checkingSize ? "Checking…" : item._sizeError ? "Retry size" : item._sizeAttempted || window.NeonSize.itemSize(item).bytes != null ? window.NeonSize.label(window.NeonSize.itemSize(item)) : "Inspect size";
+        button.title = item._sizeError || "Source size; the output estimate depends on your selected quality.";
+      }
+    }
+    const host = document.querySelector(`[data-node-id="${CSS.escape(source.id)}"] [data-source-size]`);
+    const size = window.NeonSize.estimate(source.probe);
+    if (source.probe.items?.some((item) => item._checkingSize)) size.pending = true;
+    if (host) host.innerHTML = sizeBadge(size);
+    updateActivityStatus();
+  }
+
+  function schedulePlaylistSizes(source, selection, force = false) {
+    if (!isCurrentNode(source) || source.demo || source.probe?.content_type !== "playlist") return;
+    let selected;
+    try { selected = new Set(window.NeonClient.parseIndices(selection || "", state.capabilities?.limits?.playlist_items || 50)); }
+    catch (_) { return; }
+    if (!source.sizeController || source.sizeController.signal.aborted) {
+      source.sizeController = new AbortController();
+      source.sizeQueue = new Set();
+      source.sizeBatches = 0;
+    }
+    let added = false;
+    for (const item of source.probe.items || []) {
+      if (!selected.has(item.index) || !item.url || item._checkingSize || (!force && (item._sizeAttempted || item._sizeProbe))) continue;
+      if (["image", "livestream"].includes(item.content_type)) continue;
+      item._checkingSize = true;
+      item._sizeAttempted = true;
+      item._sizeError = null;
+      source.sizeQueue.add(item.url);
+      added = true;
+    }
+    if (!added) return;
+    refreshPlaylistSizeDisplays(source);
+    // Coalesce typing and overlapping range/quality cards into the same metadata queue.
+    clearTimeout(source.sizeTimer);
+    source.sizeTimer = setTimeout(() => pumpPlaylistSizes(source), 300);
+  }
+
+  function pumpPlaylistSizes(source) {
+    if (!isCurrentNode(source) || !source.sizeController || source.sizeController.signal.aborted) return;
+    const wait = (source.sizeRetryAt || 0) - Date.now();
+    if (wait > 0) {
+      clearTimeout(source.sizeTimer);
+      source.sizeTimer = setTimeout(() => pumpPlaylistSizes(source), wait);
+      return;
+    }
+    while (source.sizeQueue.size && source.sizeBatches < 2) {
+      const urls = [...source.sizeQueue].slice(0, 5);
+      for (const url of urls) source.sizeQueue.delete(url);
+      source.sizeBatches++;
+      runPlaylistSizeBatch(source, urls, source.sizeController);
+    }
+  }
+
+  async function runPlaylistSizeBatch(source, urls, controller) {
+    const remaining = new Set(urls);
+    const current = () => isCurrentNode(source) && source.sizeController === controller && !controller.signal.aborted;
+    const apply = (result) => {
+      if (!current() || !remaining.delete(result.url)) return;
+      for (const item of source.probe.items || []) {
+        if (item.url !== result.url) continue;
+        item._checkingSize = false;
+        item._sizeError = result.error?.message || null;
+        if (result.probe && !["playlist", "gallery"].includes(result.probe.content_type)) {
+          item._sizeProbe = result.probe;
+          const size = window.NeonSize.estimate(result.probe);
+          if (size.bytes != null) {
+            item.size_bytes = size.bytes;
+            item.size_is_approx = !!size.approximate;
+          }
+        }
+      }
+      refreshPlaylistSizeDisplays(source);
+    };
+    try {
+      await window.NeonClient.probeSizes(urls, apply, { signal: controller.signal, headers: apiHeaders() });
+      for (const url of [...remaining]) apply({ url, error: { message: "Size metadata did not arrive. Try again." } });
+    } catch (error) {
+      if (!current()) return;
+      if (error.status === 429) {
+        source.sizeRetryAt = Date.now() + error.retryAfter * 1000;
+        for (const url of remaining) source.sizeQueue.add(url);
+      } else {
+        for (const url of [...remaining]) apply({ url, error: { message: error.message } });
+      }
+    } finally {
+      if (current()) {
+        source.sizeBatches--;
+        pumpPlaylistSizes(source);
+      }
+    }
+  }
+
+  function inspectPlaylistItemSize(source, index) {
+    schedulePlaylistSizes(source, String(index), true);
+  }
+
+  async function loadMorePlaylistItems(source, all = false) {
+    if (!source?.probe || source.collectionLoading || !playlistPage(source).has_more) return;
+    source.collectionLoading = true;
+    source.collectionError = null;
+    refreshPlaylistPickers(source);
+    try {
+      do {
+        const originalProbe = source.probe;
+        const page = playlistPage(source);
+        if (!page.has_more) break;
+        const data = await apiRequest("/v1/probe", {
+          method: "POST", headers: apiHeaders({ "Content-Type": "application/json" }),
+          body: JSON.stringify({ url: source.url, playlist_start: page.next_start, max_items: page.limit, include_subtitles: true }),
+        });
+        if (!isCurrentNode(source) || source.probe !== originalProbe) break;
+        const nextPage = data.metadata?.extra?.playlist_page;
+        if (data.content_type !== "playlist" || !nextPage || nextPage.start !== page.next_start || (nextPage.has_more && nextPage.next_start <= page.next_start)) {
+          throw new Error("More playlist items could not be loaded.");
+        }
+        const items = new Map((originalProbe.items || []).map((item) => [item.index, item]));
+        for (const item of data.items || []) items.set(item.index, item);
+        const merged = [...items.values()].sort((a, b) => a.index - b.index);
+        const total = nextPage.total ?? page.total;
+        source.probe = {
+          ...originalProbe, items: merged,
+          metadata: {
+            ...originalProbe.metadata,
+            item_count_total: total ?? merged.length, item_count_returned: merged.length,
+            extra: {
+              ...originalProbe.metadata?.extra,
+              collection_total_known: total !== null,
+              collection_unavailable_count: (originalProbe.metadata?.extra?.collection_unavailable_count || 0) + (data.metadata?.extra?.collection_unavailable_count || 0),
+              playlist_page: { ...nextPage, total },
+            },
+          },
+        };
+        renderNode(source);
+        refreshPlaylistPickers(source);
+        for (const node of state.nodes.values()) if (node.rootSourceId === source.id && node.accumulated?.playlist_items) schedulePlaylistSizes(source, node.accumulated.playlist_items);
+        refreshPlaylistSizeDisplays(source);
+      } while (all && playlistPage(source).has_more && (playlistPage(source).total || Infinity) <= 1000);
+    } catch (error) { source.collectionError = error.message; }
+    finally {
+      source.collectionLoading = false;
+      if (isCurrentNode(source)) refreshPlaylistPickers(source);
+    }
+  }
+
   async function probeAndBloomLevel1(node, { allowBrowserFallback = false, bypassCache = false } = {}) {
+    if (!isCurrentNode(node)) return;
+    const probeRun = (node.probeRun || 0) + 1;
+    node.probeRun = probeRun;
+    node.sizeController?.abort();
+    clearTimeout(node.sizeTimer);
+    node.sizeController = null;
+    node.sizeQueue = null;
+    node.sizeRetryAt = 0;
     // Prune any previous non-result choice branches belonging to this source before re-blooming!
     const existingChildren = state.edges.filter((e) => e.from === node.id).map((e) => e.to);
     for (const cid of existingChildren) pruneChoiceSubtree(cid);
@@ -4027,7 +4480,7 @@
     osc.set(true, allowBrowserFallback ? "DEEP SCANNING PAGE…" : "PROBING REAL CONTENT…");
 
     try {
-      const res = await fetch("/v1/probe", {
+      const data = await apiRequest("/v1/probe", {
         method: "POST",
         headers: apiHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({
@@ -4037,16 +4490,13 @@
           bypass_cache: bypassCache,
         }),
       });
-      const data = await res.json();
-      if (res.ok) {
-        node.probe = data;
-        node.title = data.title || node.url;
-        node.probeError = null;
-      } else {
-        node.probeError = data.detail?.message || `Probe failed (HTTP ${res.status})`;
-      }
+      if (!isCurrentNode(node) || node.probeRun !== probeRun) return;
+      node.probe = data;
+      node.title = data.title || node.url;
+      node.probeError = null;
     } catch (err) {
-      node.probeError = `Network error: ${err.message}`;
+      if (!isCurrentNode(node) || node.probeRun !== probeRun) return;
+      node.probeError = err.message;
     }
 
     node.probing = false;
@@ -4089,6 +4539,7 @@
 
   function upsertResultNodeForJob(job, parentNode, forcedPos = null, kind = "extract") {
     recordHistoryJob(job);
+    state.hiddenJobIds.delete(job.job_id);
     const existingId = state.resultByJobId.get(job.job_id);
     if (existingId && state.nodes.has(existingId)) {
       const node = state.nodes.get(existingId);
@@ -4115,31 +4566,33 @@
 
   function watchJob(jobId, resNode) {
     if (state.sse.has(jobId)) return;
-    const es = new EventSource(`/v1/jobs/${jobId}/events`);
-    state.sse.set(jobId, es);
-    es.addEventListener("progress", async (ev) => {
-      const p = JSON.parse(ev.data);
-      resNode.job = { ...(resNode.job || {}), job_id: jobId, status: p.status, progress: p };
-      renderNode(resNode);
-      if (["completed", "failed", "cancelled"].includes(p.status)) {
-        es.close(); state.sse.delete(jobId); osc.set(false, "EXTRACTION COMPLETE");
-        const full = await (await fetch(`/v1/jobs/${jobId}`)).json();
+    const watcher = window.NeonClient.watchJob(jobId, {
+      onUpdate(job) {
+        if (!isCurrentNode(resNode)) return;
+        resNode.job = { ...(resNode.job || {}), ...job };
+        renderNode(resNode);
+      },
+      onComplete(full) {
+        if (!isCurrentNode(resNode)) return;
+        state.sse.delete(jobId);
+        osc.set(false, full.status === "completed" ? "EXTRACTION COMPLETE" : full.status.toUpperCase());
         recordHistoryJob(full);
         resNode.job = full;
         for (const e of state.edges) if (e.to === resNode.id) e.active = false;
         renderNode(resNode);
         const dl = full.result?.download;
-        if (p.status === "completed" && dl?.artifact_url) {
+        if (full.status === "completed" && dl?.artifact_url) {
           sfx.complete(); gravity.pulseAt(resNode.x + 180, resNode.y + 100);
           if (state.autoSave && !state.autoSavedJobs.has(jobId)) {
             state.autoSavedJobs.add(jobId);
             triggerBrowserSave(dl.artifact_url, dl.filename);
-            toast(`Saved ${dl.filename} to Downloads`, "ok");
+            toast(`Download started: ${dl.filename}`, "ok");
           } else toast(`Ready: ${dl.filename}`, "ok");
-        } else if (p.status === "failed") toast(full.error || "Extraction failed", "err");
-      }
+        } else if (full.status === "failed") toast(full.error || "Extraction failed", "err");
+      },
+      onError(error) { state.sse.delete(jobId); toast(error.message, "err"); },
     });
-    es.onerror = () => { es.close(); state.sse.delete(jobId); };
+    state.sse.set(jobId, watcher);
   }
 
   /* ---------- Live Network Stream Player (VLC Mode · Zero Download) ---------- */
@@ -4182,6 +4635,7 @@
   }
 
   async function launchLivePlayerFromParent(parentNode, url, mode = "video") {
+    if (!isCurrentNode(parentNode)) return;
     // Reuse existing live player node if already open for the exact same URL
     const existing = Array.from(state.nodes.values()).find((n) => n.type === "player" && n.url === url && !n.error);
     if (existing) {
@@ -4221,20 +4675,12 @@
     osc.set(true, "CONNECTING LIVE STREAM…");
 
     try {
-      const res = await fetch("/v1/stream/resolve", {
+      const data = await apiRequest("/v1/stream/resolve", {
         method: "POST",
         headers: apiHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({ url, mode, preferred_quality: "auto" }),
       });
-      const data = await res.json();
-      if (!res.ok) {
-        playerNode.loading = false;
-        playerNode.error = data.detail?.message || "Could not open live stream for this link.";
-        if (edge) edge.active = false;
-        renderNode(playerNode);
-        osc.set(false, "STREAM UNAVAILABLE");
-        return;
-      }
+      if (!isCurrentNode(playerNode)) return;
       playerNode.loading = false;
       playerNode.stream = data;
       playerNode.title = data.title;
@@ -4245,8 +4691,9 @@
       sfx.complete();
       osc.set(false, "STREAMING LIVE · ZERO DOWNLOAD");
     } catch (err) {
+      if (!isCurrentNode(playerNode)) return;
       playerNode.loading = false;
-      playerNode.error = `Network error: ${err.message}`;
+      playerNode.error = err.message;
       if (edge) edge.active = false;
       renderNode(playerNode);
       osc.set(false, "CANVAS READY");
@@ -4257,9 +4704,13 @@
   function syncDockModeVisuals() {
     const raw = $("url-input").value.trim();
     $("clear-url-btn").classList.toggle("hidden", !raw);
-    const url = extractUrl(raw);
-    if (url) { $("platform-tag").textContent = shortHost(url).toUpperCase(); $("platform-tag").classList.remove("hidden"); }
-    else $("platform-tag").classList.add("hidden");
+  }
+
+  function setBatchOpen(open) {
+    state.batchOpen = open;
+    $("dock-popover").classList.toggle("hidden", !open);
+    $("dock-batch-btn").classList.toggle("active", open);
+    $("dock-batch-btn").setAttribute("aria-expanded", String(open));
   }
 
   async function fireDockCommand() {
@@ -4275,13 +4726,19 @@
   }
 
   function spawnBatchTrees() {
-    const urls = $("batch-input").value.split(/\r?\n/).map((u) => extractUrl(u)).filter(Boolean);
+    const lines = $("batch-input").value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    const urls = [...new Set(lines.map(extractUrl).filter(Boolean))];
     if (!urls.length) return toast("Paste at least one valid URL", "err");
+    if (lines.some((line) => !extractUrl(line))) return toast("One or more lines have no valid URL. Correct them and try again.", "err");
+    const limit = state.capabilities?.limits?.batch_urls || 10;
+    if (urls.length > limit) return toast(`Use up to ${limit} unique links at a time. All links are still in the input.`, "err");
     if (state.hasDemoGraph) clearDemoGraph();
-    $("dock-popover").classList.add("hidden"); $("dock-batch-btn").classList.remove("active"); state.batchOpen = false;
+    setBatchOpen(false);
     sfx.capture();
-    urls.slice(0, 6).forEach((u, idx) => spawnSourceWithPossibilities(u, { x: -560, y: idx * 460 - 150 }, true));
-    toast(`Spawning ${Math.min(6, urls.length)} possibility trees…`, "ok");
+    urls.forEach((u, idx) => spawnSourceWithPossibilities(u, { x: -560, y: idx * 460 - 150 }, true));
+    $("batch-input").value = "";
+    $("batch-count").textContent = "0 links";
+    toast(`Inspecting ${urls.length} unique links…`, "ok");
   }
 
   /* ---------- Pin Saved Job to Canvas ---------- */
@@ -4299,20 +4756,69 @@
       renderNode(src);
     }
     const rn = upsertResultNodeForJob(job, src, null, "extract");
+    if (!terminal(job.status)) watchJob(job.job_id, rn);
     sfx.plug();
     glideToWorld((src.x + rn.x) / 2 + 170, rn.y + 100, 0.92);
   }
 
-  /* ---------- Minimal Core Health Indicator ---------- */
+  /* ---------- Runtime availability ---------- */
+  function capabilityAvailable(id) {
+    return state.capabilities?.capabilities?.some((cap) => cap.id === id && cap.status === "operational") || false;
+  }
+
   async function loadCoreHealth() {
     try {
-      const res = await fetch("/v1/health");
-      if (!res.ok) return;
-      const data = await res.json();
-      const ok = data.status === "ok";
-      if ($("status-pill-text")) $("status-pill-text").textContent = ok ? "Core OK" : "Degraded";
-      if ($("status-led")) $("status-led").classList.toggle("live", ok);
-    } catch (_) {}
+      const data = await apiRequest("/v1/capabilities", {}, 12000);
+      state.capabilities = data;
+      const ok = data.status === "ready";
+      $("status-pill-text").textContent = ok ? "Ready" : data.status === "limited" ? "Limited" : "Unavailable";
+      $("status-pill").dataset.state = data.status;
+      $("status-pill").setAttribute("aria-label", `Features ${data.status}. View availability and limits.`);
+      $("status-led").classList.toggle("live", ok);
+      $("service-support-note").textContent = data.support_note;
+      $("service-capabilities").innerHTML = data.capabilities.map((cap) => `
+        <section class="service-capability">
+          <header><strong>${esc(cap.name)}</strong><span class="status-pill mono ${cap.status === "operational" ? "ok" : "warn"}">${cap.status === "operational" ? "Ready" : cap.status === "standby" ? "Not installed" : "Unavailable"}</span></header>
+          <p>${esc(cap.description)}</p>
+        </section>`).join("");
+      const limits = data.limits;
+      $("service-limits").textContent = `Up to ${fmtBytes(limits.max_file_bytes)} per job · ${limits.batch_urls} links per batch · ${limits.downloads_per_hour} downloads per hour · Files expire after ${Math.round(limits.artifact_ttl_seconds / 3600 * 10) / 10} hours. Missing features must be enabled by the person running this installation.`;
+    } catch (error) {
+      state.capabilities = null;
+      $("status-pill-text").textContent = "Offline";
+      $("status-pill").dataset.state = "offline";
+      $("status-led").classList.remove("live");
+      $("service-support-note").textContent = error.message;
+      $("service-capabilities").replaceChildren();
+      $("service-limits").textContent = "Queued jobs keep running on the server. Reconnect to check their progress.";
+    }
+  }
+
+  async function showRecentJobs() {
+    const host = $("recent-jobs-list");
+    host.textContent = "Loading recent jobs…";
+    try {
+      state.historyJobs = await apiRequest("/v1/jobs?limit=200", {}, 12000);
+      host.innerHTML = state.historyJobs.length ? state.historyJobs.map((job) => {
+        const dl = job.result?.download;
+        const expired = dl?.expires_at && new Date(dl.expires_at) < new Date();
+        return `<section class="service-capability">
+          <header><strong>${esc(dl?.filename || job.result?.title || shortHost(job.url))}</strong><span class="status-pill mono ${job.status === "completed" ? "ok" : "warn"}">${esc(expired ? "expired" : job.status)}</span></header>
+          <p>${esc(job.url)}</p>
+          <p class="job-size mono">${esc(jobSizeText(job))}</p>
+          <div class="node-actions">
+            <button class="ghost-btn btn-xs" data-view-job="${esc(job.job_id)}">View on canvas</button>
+            ${dl?.artifact_url && !expired ? `<a class="btn-link" href="${esc(dl.artifact_url)}" download="${esc(dl.filename)}">Save file</a>` : ""}
+          </div>
+        </section>`;
+      }).join("") : "No jobs yet. Paste a link to get started.";
+      host.querySelectorAll("[data-view-job]").forEach((button) => {
+        button.onclick = () => {
+          const job = state.historyJobs.find((item) => item.job_id === button.dataset.viewJob);
+          if (job) { $("recent-jobs-dialog").close(); pinJobToCanvas(job); }
+        };
+      });
+    } catch (error) { host.textContent = error.message; }
   }
 
   /* ---------- Viewport, Minimap & Event Wiring ---------- */
@@ -4336,7 +4842,14 @@
     });
 
     vp.addEventListener("wheel", (e) => {
-      if (e.target.closest(".note-textarea")) return;
+      // Nested lists/readers keep native scrolling, including at their edges.
+      // Pinch/modified wheel still controls canvas zoom.
+      if (!e.ctrlKey && !e.metaKey) {
+        for (let element = e.target instanceof Element ? e.target : null; element && element !== vp; element = element.parentElement) {
+          const style = getComputedStyle(element);
+          if (/(auto|scroll)/.test(`${style.overflowY} ${style.overflowX}`)) return;
+        }
+      }
       e.preventDefault();
       if (e.ctrlKey || e.metaKey) {
         const rect = vp.getBoundingClientRect();
@@ -4385,11 +4898,187 @@
     $("shortcuts-btn").onclick = () => { sfx.click(); $("shortcuts-modal")?.classList.toggle("hidden"); };
     $("close-shortcuts-modal").onclick = () => $("shortcuts-modal")?.classList.add("hidden");
     $("empty-focus-btn").onclick = () => { sfx.click(); $("url-input")?.focus(); };
+    if ($("empty-capture-btn")) $("empty-capture-btn").onclick = () => { sfx.click(); openQuickCaptureDialog(); };
     $("empty-demo-btn").onclick = () => { sfx.click(); spawnDefaultShowcase(); };
+  }
+
+  function isStandaloneApp() {
+    return window.matchMedia?.("(display-mode: standalone)")?.matches || window.navigator.standalone === true;
+  }
+
+  function syncInstallUi() {
+    const standalone = isStandaloneApp();
+    const bezelBtn = $("install-app-btn");
+    const modalBtn = $("pwa-install-btn");
+    const badge = $("pwa-install-badge");
+    const hint = $("pwa-install-hint");
+    if (bezelBtn) bezelBtn.classList.toggle("hidden", standalone || !deferredInstallPrompt);
+    if (!modalBtn || !badge || !hint) return;
+    if (standalone) {
+      badge.textContent = "INSTALLED";
+      hint.textContent = "Neon Sync is running as a standalone browser app on this device.";
+      modalBtn.classList.add("hidden");
+    } else if (deferredInstallPrompt) {
+      badge.textContent = "1-CLICK READY";
+      hint.textContent = "Install Neon Sync to your home screen or dock for fullscreen launch and native Share Sheet support.";
+      modalBtn.classList.remove("hidden");
+      modalBtn.textContent = "Install App";
+      modalBtn.disabled = false;
+    } else {
+      const ua = navigator.userAgent || "";
+      const isIOS = /iPhone|iPad|iPod/i.test(ua);
+      badge.textContent = isIOS ? "SAFARI" : "BROWSER MENU";
+      hint.textContent = isIOS
+        ? "In Safari, tap the Share icon and choose 'Add to Home Screen' to install Neon Sync as a fullscreen app."
+        : "Use your browser's address-bar Install icon or menu ('Add to Home Screen' / 'Install Neon Sync') to launch it like a native app.";
+      modalBtn.classList.add("hidden");
+    }
+  }
+
+  async function triggerPwaInstall() {
+    if (!deferredInstallPrompt) {
+      openQuickCaptureDialog();
+      return;
+    }
+    const promptEvent = deferredInstallPrompt;
+    deferredInstallPrompt = null;
+    syncInstallUi();
+    try {
+      await promptEvent.prompt();
+      const choice = await promptEvent.userChoice;
+      if (choice?.outcome === "accepted") toast("Neon Sync installed as a browser app", "ok");
+    } catch (_) {}
+    syncInstallUi();
+  }
+
+  function copyQuickText(text, successMsg) {
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+      navigator.clipboard.writeText(text).then(
+        () => toast(successMsg, "ok"),
+        () => toast("Could not copy automatically — select and copy the text above.", "err"),
+      );
+    } else {
+      toast("Select and copy the text above.", "ok");
+    }
+  }
+
+  function openQuickCaptureDialog() {
+    const dialog = $("quick-capture-dialog");
+    if (!dialog) return;
+    const origin = window.location.origin.replace(/\/+$/, "");
+    const prefixBase = `${origin}/`;
+    const shortcutBase = `${origin}/?url=`;
+    const bookmarklet = buildBookmarkletHref(origin);
+    if ($("capture-prefix-example")) $("capture-prefix-example").textContent = `${prefixBase}https://youtu.be/...`;
+    if ($("capture-shortcut-url")) $("capture-shortcut-url").textContent = `${shortcutBase}[Shortcut Input]`;
+    const bm = $("bookmarklet-link");
+    if (bm) {
+      bm.setAttribute("href", bookmarklet);
+      bm.onclick = (e) => {
+        e.preventDefault();
+        toast("Drag 'Send to Neon Sync' to your bookmarks bar, or click Copy bookmarklet.", "ok");
+      };
+    }
+    syncInstallUi();
+    if (!dialog.open) dialog.showModal();
+  }
+
+  function captureIncomingUrlFromLocation() {
+    const incomingUrl = extractIncomingUrl(window.location.search);
+    if (!incomingUrl) return false;
+    try {
+      window.history.replaceState({}, document.title, "/");
+    } catch (_) {}
+    const existingId = state.sourceByUrl.get(incomingUrl);
+    const existing = existingId ? state.nodes.get(existingId) : null;
+    if (existing) {
+      glideToWorld(existing.x + 260, existing.y + 110, 0.92);
+      if (!existing.probe && !existing.probing) {
+        existing.probing = true;
+        renderNode(existing);
+        probeAndBloomLevel1(existing);
+      }
+      toast("Opened captured link on canvas", "ok");
+      return true;
+    }
+    sfx.capture();
+    spawnSourceWithPossibilities(incomingUrl, null, true);
+    toast("Captured link — inspecting available formats…", "ok");
+    return true;
+  }
+
+  function registerServiceWorker() {
+    if (!("serviceWorker" in navigator)) return;
+    const isSecure = window.isSecureContext || window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
+    if (!isSecure) return;
+    navigator.serviceWorker.register("/sw.js", { scope: "/" }).catch(() => {});
   }
 
   function bindAllEvents() {
     bindCanvasNavigation();
+    if (window.ResizeObserver) {
+      const dockObserver = new ResizeObserver(([entry]) => {
+        document.documentElement.style.setProperty("--dock-height", `${Math.ceil(entry.target.getBoundingClientRect().height)}px`);
+      });
+      dockObserver.observe($("reactor-shell"));
+    }
+    document.addEventListener("pointerdown", (event) => {
+      const menu = $("workspace-menu");
+      if (menu.open && !menu.contains(event.target)) menu.open = false;
+    });
+    $("recent-jobs-btn").onclick = () => { $("recent-jobs-dialog").showModal(); showRecentJobs(); };
+    $("close-recent-jobs").onclick = () => $("recent-jobs-dialog").close();
+    $("refresh-recent-jobs").onclick = showRecentJobs;
+    $("status-pill").onclick = () => { $("service-status-dialog").showModal(); loadCoreHealth(); };
+    $("close-service-status").onclick = () => $("service-status-dialog").close();
+    $("refresh-service-status").onclick = loadCoreHealth;
+    if ($("quick-capture-btn")) {
+      $("quick-capture-btn").onclick = () => {
+        $("workspace-menu").open = false;
+        sfx.click();
+        openQuickCaptureDialog();
+      };
+    }
+    if ($("close-quick-capture")) $("close-quick-capture").onclick = () => $("quick-capture-dialog")?.close();
+    if ($("install-app-btn")) $("install-app-btn").onclick = () => { sfx.click(); triggerPwaInstall(); };
+    if ($("pwa-install-btn")) $("pwa-install-btn").onclick = () => { sfx.click(); triggerPwaInstall(); };
+    if ($("copy-prefix-btn")) {
+      $("copy-prefix-btn").onclick = () => copyQuickText(`${window.location.origin.replace(/\/+$/, "")}/`, "Copied URL prefix — paste before any link");
+    }
+    if ($("copy-bookmarklet-btn")) {
+      $("copy-bookmarklet-btn").onclick = () => copyQuickText(buildBookmarkletHref(window.location.origin), "Copied bookmarklet code");
+    }
+    if ($("copy-shortcut-url-btn")) {
+      $("copy-shortcut-url-btn").onclick = () => copyQuickText(`${window.location.origin.replace(/\/+$/, "")}/?url=`, "Copied shortcut URL prefix");
+    }
+    window.addEventListener("beforeinstallprompt", (event) => {
+      event.preventDefault();
+      deferredInstallPrompt = event;
+      syncInstallUi();
+    });
+    window.addEventListener("appinstalled", () => {
+      deferredInstallPrompt = null;
+      syncInstallUi();
+      toast("Neon Sync installed", "ok");
+    });
+    syncInstallUi();
+    window.addEventListener("online", loadCoreHealth);
+    window.addEventListener("offline", () => {
+      $("status-pill-text").textContent = "Offline";
+      $("status-pill").dataset.state = "offline";
+      $("status-led").classList.remove("live");
+    });
+    window.addEventListener("pagehide", () => {
+      for (const watcher of state.sse.values()) watcher.close();
+      state.sse.clear();
+    });
+    window.addEventListener("pageshow", (event) => {
+      if (!event.persisted) return;
+      loadCoreHealth();
+      for (const node of state.nodes.values()) {
+        if (node.type === "result" && !terminal(node.job.status)) watchJob(node.jobId, node);
+      }
+    });
 
     const input = $("url-input");
     input.addEventListener("input", syncDockModeVisuals);
@@ -4421,14 +5110,16 @@
     });
 
     document.addEventListener("keydown", (e) => {
+      if (document.querySelector("dialog[open]")) return;
       const typing = document.activeElement?.tagName === "INPUT" || document.activeElement?.tagName === "TEXTAREA";
       if (e.key === "Escape") {
         closePatchMenu();
         $("shortcuts-modal")?.classList.add("hidden");
-        $("dock-popover").classList.add("hidden");
-        state.batchOpen = false;
+        setBatchOpen(false);
+        $("workspace-menu").open = false;
         return;
       }
+      if (e.target.closest(".toolbar-menu")) return;
       if (typing) return;
 
       if (e.code === "Space" && !state.spaceHeld) {
@@ -4471,28 +5162,17 @@
     if ($("clear-sandbox-btn")) $("clear-sandbox-btn").onclick = () => { sfx.click(); clearDemoGraph(); };
 
     $("dock-batch-btn").onclick = () => {
-      sfx.click(); state.batchOpen = !state.batchOpen;
-      $("dock-popover").classList.toggle("hidden", !state.batchOpen);
-      $("dock-batch-btn").classList.toggle("active", state.batchOpen);
+      sfx.click(); setBatchOpen(!state.batchOpen);
     };
     $("exit-batch-btn").onclick = () => $("dock-batch-btn").click();
     $("batch-input").oninput = () => { const n = $("batch-input").value.split(/\r?\n/).filter((x) => x.trim()).length; $("batch-count").textContent = `${n} link${n === 1 ? "" : "s"}`; };
     $("spawn-batch-btn").onclick = spawnBatchTrees;
-
-    $("paste-btn").onclick = async () => {
-      try { const text = await navigator.clipboard.readText(); if (text) { input.value = text.trim(); syncDockModeVisuals(); input.focus(); } }
-      catch (_) { input.focus(); toast("Press ⌘V / Ctrl+V to paste"); }
+    $("clear-batch-btn").onclick = () => {
+      $("batch-input").value = "";
+      $("batch-count").textContent = "0 links";
+      $("batch-input").focus();
     };
     $("clear-url-btn").onclick = () => { input.value = ""; syncDockModeVisuals(); input.focus(); };
-    $("watch-live-btn").onclick = async () => {
-      const raw = $("url-input").value.trim();
-      const url = extractUrl(raw);
-      if (!url) return toast("Paste a video, audio, or live stream URL to watch live", "err");
-      $("url-input").value = "";
-      syncDockModeVisuals();
-      const src = spawnSourceWithPossibilities(url, null, true);
-      await launchLivePlayerFromParent(src, url, "video");
-    };
     $("download-btn").onclick = fireDockCommand;
 
     $("tidy-graph-btn").onclick = tidyGraphLayout;
@@ -4508,31 +5188,50 @@
       };
     }
 
-    const syncAutosave = () => $("autosave-pill").classList.toggle("active", state.autoSave);
+    const syncAutosave = () => { $("autosave-pill").classList.toggle("active", state.autoSave); $("autosave-pill").setAttribute("aria-pressed", String(state.autoSave)); };
     syncAutosave();
     $("autosave-pill").onclick = () => { state.autoSave = !state.autoSave; localStorage.setItem("neon_autosave", String(state.autoSave)); syncAutosave(); sfx.click(); };
 
-    const syncSfx = () => { $("sfx-btn").classList.toggle("active", state.sfxEnabled); $("sfx-text").textContent = state.sfxEnabled ? "SFX" : "Muted"; };
+    const syncSfx = () => { $("sfx-btn").classList.toggle("active", state.sfxEnabled); $("sfx-btn").setAttribute("aria-pressed", String(state.sfxEnabled)); $("sfx-text").textContent = state.sfxEnabled ? "Sound" : "Muted"; };
     syncSfx();
     $("sfx-btn").onclick = () => { state.sfxEnabled = !state.sfxEnabled; localStorage.setItem("neon_sfx", String(state.sfxEnabled)); syncSfx(); if (state.sfxEnabled) sfx.click(); };
 
-    const applyTheme = (t) => { document.documentElement.setAttribute("data-theme", t); localStorage.setItem("neon_sync_theme", t); $("theme-text").textContent = t === "dark" ? "Light" : "Dark"; gravity.wake(); };
+    const applyTheme = (t) => {
+      document.documentElement.setAttribute("data-theme", t);
+      localStorage.setItem("neon_sync_theme", t);
+      $("theme-text").textContent = t === "dark" ? "Light theme" : "Dark theme";
+      const themeMeta = $("meta-theme-color");
+      if (themeMeta) themeMeta.setAttribute("content", t === "dark" ? "#08090d" : "#f4f3ef");
+      gravity.wake();
+    };
     applyTheme(localStorage.getItem("neon_sync_theme") || "dark");
     $("theme-btn").onclick = () => { sfx.click(); applyTheme((document.documentElement.getAttribute("data-theme") || "dark") === "dark" ? "light" : "dark"); };
   }
 
   /* ---------- Hydrate History Drawer & Launch Cascading Possibility Tree ---------- */
   async function hydrateFromBackend() {
+    const revision = state.workspaceRevision;
     let saved = {};
     try { saved = JSON.parse(localStorage.getItem(LAYOUT_STORAGE_KEY) || "{}"); } catch (_) {}
 
     try {
-      const jobs = await (await fetch("/v1/jobs?limit=40")).json();
+      const jobs = await apiRequest("/v1/jobs?limit=200", {}, 12000);
       state.historyJobs = jobs;
-      for (const j of jobs) state.autoSavedJobs.add(j.job_id);
-    } catch (_) {}
+      for (const j of jobs) if (terminal(j.status)) state.autoSavedJobs.add(j.job_id);
+    } catch (error) { toast(`Could not restore recent jobs. ${error.message}`, "err"); }
+    if (revision !== state.workspaceRevision) {
+      for (const job of state.historyJobs) if (!terminal(job.status)) state.hiddenJobIds.add(job.job_id);
+      persistWorkspace();
+      return;
+    }
 
-    const pinnedJobIds = Object.keys(saved.positions || {}).filter((k) => k.startsWith("job_")).map((k) => k.slice(4));
+    const pinnedJobIds = new Set(Object.keys(saved.positions || {}).filter((k) => k.startsWith("job_")).map((k) => k.slice(4)));
+    for (const source of (saved.sources || [])) {
+      if (typeof source.url !== "string" || !extractUrl(source.url)) continue;
+      const node = spawnSourceWithPossibilities(source.url, null, false);
+      spawnChoiceChildren(node, getLevel1Choices(node), false, false);
+    }
+    for (const job of state.historyJobs) if (!terminal(job.status) && !state.hiddenJobIds.has(job.job_id)) pinnedJobIds.add(job.job_id);
     for (const jid of pinnedJobIds) {
       const j = state.historyJobs.find((x) => x.job_id === jid);
       if (j) pinJobToCanvas(j);
@@ -4544,9 +5243,7 @@
       }
     }
 
-    if (state.nodes.size === 0) {
-      spawnDefaultShowcase();
-    } else {
+    if (state.nodes.size > 0) {
       setTimeout(() => { renderThreads(); fitAllNodes(); }, 60);
     }
     syncWorkspaceMeta();
@@ -4558,7 +5255,9 @@
       window.lucide.createIcons();
     }
     bindAllEvents();
-    await loadCoreHealth();
-    await hydrateFromBackend();
+    registerServiceWorker();
+    syncWorkspaceMeta();
+    await Promise.all([loadCoreHealth(), hydrateFromBackend()]);
+    captureIncomingUrlFromLocation();
   })();
 })();

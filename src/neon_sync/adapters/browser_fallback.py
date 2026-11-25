@@ -626,10 +626,22 @@ class PlaywrightFallbackAdapter(ExtractorAdapter):
 
         ver = pkg_version("playwright")
         self._version = ver
+        if self._settings.enable_browser_fallback:
+            from playwright.async_api import async_playwright
+
+            async with async_playwright() as runtime:
+                browser_installed = Path(runtime.chromium.executable_path).is_file()
+        else:
+            browser_installed = False
         return HealthReport(
             engine_id=self.id,
-            installation_status=InstallationStatus.INSTALLED,
+            installation_status=(
+                InstallationStatus.INSTALLED if browser_installed else InstallationStatus.MISCONFIGURED
+            ),
             version=ver,
-            healthy=self._settings.enable_browser_fallback,
-            detail=f"Playwright {ver} ready (max_contexts={self._settings.browser_max_contexts})",
+            healthy=browser_installed,
+            detail=(
+                f"Playwright {ver} ready (max_contexts={self._settings.browser_max_contexts})"
+                if browser_installed else "Browser fallback is disabled or Chromium is not installed."
+            ),
         )

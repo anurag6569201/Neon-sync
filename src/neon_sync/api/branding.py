@@ -92,7 +92,7 @@ def build_public_capabilities(manifests: list[EngineManifest]) -> list[Capabilit
         return any(
             (m := by_id.get(i)) is not None
             and m.installation_status == InstallationStatus.INSTALLED
-            and m.health_status.state.value in {"healthy", "degraded"}
+            and m.health_status.state.value == "healthy"
             for i in ids
         )
 

@@ -16,7 +16,7 @@ from neon_sync.config import Settings
 from neon_sync.models import DownloadRequest, JobRecord, JobStatus, ProgressEvent
 from neon_sync.security import CancellationToken, SubprocessCancelledError, UrlValidationError
 
-from .job_store import InMemoryJobStore, JobStore
+from .job_store import TERMINAL_STATUSES, InMemoryJobStore, JobStore
 from .orchestrator import ExtractionOrchestrator
 
 log = logging.getLogger("neon_sync.queue")
@@ -24,6 +24,10 @@ log = logging.getLogger("neon_sync.queue")
 
 class RateLimitExceededError(RuntimeError):
     """Raised when a caller exceeds their sliding-window request budget."""
+
+
+class QueueCapacityError(RuntimeError):
+    """Raised before submission when the bounded queue is full."""
 
 
 class SlidingWindowRateLimiter:
@@ -34,17 +38,19 @@ class SlidingWindowRateLimiter:
         self.window_seconds = window_seconds
         self._hits: dict[str, deque[float]] = defaultdict(deque)
 
-    def check_and_consume(self, key: str) -> None:
+    def check_and_consume(self, key: str, count: int = 1) -> None:
+        if count < 1:
+            raise ValueError("count must be positive")
         now = time.monotonic()
         cutoff = now - self.window_seconds
         bucket = self._hits[key]
         while bucket and bucket[0] < cutoff:
             bucket.popleft()
-        if len(bucket) >= self.max_requests:
+        if len(bucket) + count > self.max_requests:
             raise RateLimitExceededError(
                 f"Rate limit exceeded: max {self.max_requests} requests per {int(self.window_seconds)}s."
             )
-        bucket.append(now)
+        bucket.extend([now] * count)
 
 
 class JobManager:
@@ -104,20 +110,53 @@ class JobManager:
     def list_jobs(self, limit: int = 50) -> list[JobRecord]:
         return self._store.list_recent(limit=limit)
 
+    def ensure_capacity(self, count: int = 1) -> None:
+        if len(self._active) + count > self._settings.max_pending_jobs:
+            raise QueueCapacityError("The download queue is full. Try again after a job finishes.")
+
+    def find_idempotent_job(self, request: DownloadRequest) -> JobRecord | None:
+        if request.idempotency_key:
+            job_id = self._store.get_idempotency(request.idempotency_key)
+            if job_id:
+                return self.get_job(job_id)
+        return None
+
+    def recover_interrupted_jobs(self) -> int:
+        """Finish stale records after restart; do not silently repeat downloads."""
+        recovered = 0
+        for record in self._store.list_unfinished():
+            if record.job_id in self._active:
+                continue
+            now = datetime.now(UTC)
+            record.status = JobStatus.FAILED
+            record.error = "Server restarted before this job finished. Retry the download."
+            record.updated_at = now
+            record.completed_at = now
+            record.progress = ProgressEvent(
+                job_id=record.job_id,
+                status=JobStatus.FAILED,
+                stage="interrupted",
+                message=record.error,
+            )
+            self._store.save(record)
+            recovered += 1
+        return recovered
+
     async def _broadcast(self, job_id: str, event: ProgressEvent | None) -> None:
         for q in list(self._subscribers.get(job_id, ())):
             try:
                 q.put_nowait(event)
             except asyncio.QueueFull:
-                pass
+                # Slow subscribers need the latest state, especially completion.
+                q.get_nowait()
+                q.put_nowait(event)
 
     async def submit(self, request: DownloadRequest) -> JobRecord:
-        if request.idempotency_key:
-            existing_id = self._store.get_idempotency(request.idempotency_key)
-            if existing_id:
-                existing = self.get_job(existing_id)
-                if existing is not None:
-                    return existing
+        existing = self.find_idempotent_job(request)
+        if existing is not None:
+            return existing
+
+        self.ensure_capacity()
 
         job_id = f"job_{uuid.uuid4().hex[:16]}"
         record = JobRecord(
@@ -289,20 +328,39 @@ class JobManager:
                 await asyncio.wait_for(asyncio.shield(task), timeout=2.0)
             except (TimeoutError, asyncio.CancelledError):
                 pass
+            # A task cancelled before its first event-loop turn never enters
+            # _run_job's try/finally, so finish and release it here.
+            if task.done() and record.status not in TERMINAL_STATUSES:
+                now = datetime.now(UTC)
+                record.status = JobStatus.CANCELLED
+                record.error = reason
+                record.updated_at = now
+                record.completed_at = now
+                record.progress = ProgressEvent(
+                    job_id=job_id, status=JobStatus.CANCELLED, stage="cancelled", message=reason,
+                )
+                self._store.save(record)
+                await self._broadcast(job_id, record.progress)
+                await self._broadcast(job_id, None)
+                self._tasks.pop(job_id, None)
+                self._tokens.pop(job_id, None)
+                self._active.pop(job_id, None)
         return self.get_job(job_id)
 
     async def subscribe(self, job_id: str) -> AsyncIterator[ProgressEvent]:
-        record = self.get_job(job_id)
-        if record is None:
-            return
-        if record.progress is not None:
-            yield record.progress
-        if record.status in {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED}:
-            return
-
         q: asyncio.Queue[ProgressEvent | None] = asyncio.Queue(maxsize=100)
+        # Register before yielding the snapshot: a job may finish while the
+        # consumer is handling that first event.
         self._subscribers[job_id].add(q)
         try:
+            record = self.get_job(job_id)
+            if record is None:
+                return
+            terminal = record.status in TERMINAL_STATUSES
+            if record.progress is not None:
+                yield record.progress
+            if terminal:
+                return
             while True:
                 event = await q.get()
                 if event is None:
@@ -310,6 +368,8 @@ class JobManager:
                 yield event
         finally:
             self._subscribers[job_id].discard(q)
+            if not self._subscribers[job_id]:
+                self._subscribers.pop(job_id, None)
 
     async def shutdown(self) -> None:
         for job_id in list(self._tasks.keys()):

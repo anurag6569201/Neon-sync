@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
+import logging
 import re
 from collections.abc import AsyncIterator
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Annotated, Literal
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request, status
@@ -24,6 +27,7 @@ from neon_sync.models import (
     get_format_catalog,
 )
 from neon_sync.pipeline import (
+    QueueCapacityError,
     RateLimitExceededError,
     convert_json3_to_vtt,
     normalize_subtitle_to_transcript,
@@ -46,6 +50,7 @@ if TYPE_CHECKING:
     from .app import AppContainer
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def _container(request: Request) -> AppContainer:
@@ -105,6 +110,35 @@ async def list_format_catalog() -> FormatCatalog:
     return get_format_catalog()
 
 
+@router.get("/capabilities", tags=["system"])
+async def runtime_capabilities(request: Request) -> dict:
+    """Describe actual runtime coverage and limits without requiring an account."""
+    c = _container(request)
+    capabilities = build_public_capabilities(c.registry.list_manifests())
+    ready_count = sum(cap.status == "operational" for cap in capabilities)
+    return {
+        "status": "ready" if ready_count == len(capabilities) else (
+            "limited" if ready_count else "unavailable"
+        ),
+        "capabilities": [cap.model_dump(mode="json") for cap in capabilities],
+        "limits": {
+            "batch_urls": 10,
+            "max_file_bytes": c.settings.max_job_bytes,
+            "artifact_ttl_seconds": c.settings.artifact_ttl_seconds,
+            "concurrent_downloads": c.settings.max_concurrent_downloads,
+            "downloads_per_hour": c.settings.rate_limit_downloads_per_hour,
+            "playlist_items": c.settings.max_playlist_items,
+            "gallery_items": c.settings.max_gallery_items,
+            "live_duration_seconds": c.settings.max_livestream_duration_seconds,
+        },
+        "support_note": (
+            "No Neon Sync account or paid plan is required. Available features depend on "
+            "this installation and the source. Private, sign-in-only, DRM-protected, "
+            "or region-restricted media may be unavailable."
+        ),
+    }
+
+
 @router.post("/probe", response_model=NormalizedMediaOutput, tags=["extraction"])
 async def probe_url(body: ProbeRequest, request: Request) -> NormalizedMediaOutput:
     """Inspect a URL and return normalized media metadata, streams, subtitles & thumbnails."""
@@ -145,6 +179,55 @@ async def probe_url(body: ProbeRequest, request: Request) -> NormalizedMediaOutp
                 request_id=_request_id(request),
             ),
         ) from exc
+
+
+class SizeProbeRequest(BaseModel):
+    urls: list[Annotated[str, Field(min_length=4, max_length=4096)]] = Field(min_length=1, max_length=5)
+
+
+@router.post("/probe/sizes", tags=["extraction"])
+async def probe_sizes(body: SizeProbeRequest, request: Request) -> StreamingResponse:
+    """Stream individual metadata results so playlist totals can update progressively."""
+    c = _container(request)
+    try:
+        c.probe_limiter.check_and_consume(_client_key(request))
+    except RateLimitExceededError as exc:
+        raise HTTPException(
+            status_code=429, headers={"Retry-After": "60"},
+            detail=brand_error_detail(ErrorCode.ERR_RATE_LIMITED.value, str(exc), retryable=True),
+        ) from exc
+
+    async def inspect(url: str) -> dict:
+        try:
+            result = await c.orchestrator.probe(ProbeRequest(
+                url=url, max_items=1, include_subtitles=False, allow_browser_fallback=False,
+            ))
+            return {"url": url, "probe": brand_media_output(result).model_dump(mode="json")}
+        except (UrlValidationError, AdapterError) as exc:
+            return {"url": url, "error": brand_error_detail(
+                exc.code.value, exc.message, retryable=getattr(exc, "retryable", False),
+            )}
+        except Exception:
+            logger.exception("Size metadata probe failed")
+            return {"url": url, "error": brand_error_detail(
+                ErrorCode.ERR_INTERNAL.value, "Size metadata could not be loaded. Try again.",
+                retryable=True,
+            )}
+
+    async def results() -> AsyncIterator[str]:
+        tasks = [asyncio.create_task(inspect(url)) for url in dict.fromkeys(body.urls)]
+        try:
+            for task in asyncio.as_completed(tasks):
+                yield json.dumps(await task) + "\n"
+        finally:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    return StreamingResponse(results(), media_type="application/x-ndjson", headers={
+        "Cache-Control": "no-store", "X-Accel-Buffering": "no",
+    })
 
 
 class SubtitlePreviewRequest(BaseModel):
@@ -350,8 +433,18 @@ async def create_job(body: DownloadRequest, request: Request) -> JobRecord:
             ),
         ) from exc
 
+    existing = c.job_manager.find_idempotent_job(body)
+    if existing is not None:
+        return brand_job_record(existing)
     try:
+        c.job_manager.ensure_capacity()
         c.download_limiter.check_and_consume(client_key)
+    except QueueCapacityError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=brand_error_detail("ERR_QUEUE_FULL", str(exc), retryable=True),
+            headers={"Retry-After": "10"},
+        ) from exc
     except RateLimitExceededError as exc:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -363,7 +456,14 @@ async def create_job(body: DownloadRequest, request: Request) -> JobRecord:
             ),
         ) from exc
 
-    record = await c.job_manager.submit(body)
+    try:
+        record = await c.job_manager.submit(body)
+    except QueueCapacityError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=brand_error_detail("ERR_QUEUE_FULL", str(exc), retryable=True),
+            headers={"Retry-After": "10"},
+        ) from exc
     return brand_job_record(record)
 
 
@@ -411,23 +511,28 @@ async def create_batch_jobs(body: BatchDownloadRequest, request: Request) -> lis
         )
 
     shared = body.model_dump(exclude={"urls"})
-    records: list[JobRecord] = []
-    for url in cleaned_urls:
-        dl_req = DownloadRequest(url=url, **shared)
-        try:
-            c.download_limiter.check_and_consume(client_key)
-        except RateLimitExceededError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail=brand_error_detail(
-                    ErrorCode.ERR_RATE_LIMITED.value,
-                    str(exc),
-                    retryable=True,
-                    request_id=_request_id(request),
-                ),
-            ) from exc
-        records.append(brand_job_record(await c.job_manager.submit(dl_req)))
-    return records
+    # Validate every request and reserve the entire budget before creating work.
+    requests = [DownloadRequest(url=url, **shared) for url in cleaned_urls]
+    try:
+        c.job_manager.ensure_capacity(len(requests))
+        c.download_limiter.check_and_consume(client_key, count=len(requests))
+    except QueueCapacityError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=brand_error_detail("ERR_QUEUE_FULL", str(exc), retryable=True),
+            headers={"Retry-After": "10"},
+        ) from exc
+    except RateLimitExceededError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=brand_error_detail(
+                ErrorCode.ERR_RATE_LIMITED.value,
+                str(exc),
+                retryable=True,
+                request_id=_request_id(request),
+            ),
+        ) from exc
+    return [brand_job_record(await c.job_manager.submit(req)) for req in requests]
 
 
 @router.get("/jobs", response_model=list[JobRecord], tags=["jobs"])

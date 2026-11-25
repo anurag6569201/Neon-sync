@@ -3,6 +3,14 @@
 > **Architecture:** Modular Universal Engine Registry & Adapter Orchestrator (Option E + C)
 > **Status:** Phase 1 & Phase 2 Implemented & Tested (8 Registered Engines, Safe Egress Proxy, Tier-3 Playwright Fallback, SQLite Persistence, Optional S3/R2 Storage, Web UI & Multi-Plane Docker)
 
+Paste a public link, inspect the available formats, and save a file. Neon Sync requires no account or paid plan. It routes across installed adapters automatically; coverage depends on the source and the features installed on your server. It cannot guarantee every service, authenticated source, region, or DRM-protected stream.
+
+The UI's feature status shows actual runtime coverage and limits. **Jobs** lists recent work, restores active progress after a page reload, and lets you reopen results or retry failed downloads. If SSE disconnects, progress falls back to polling. Files expire after six hours by default; save a local copy before expiry.
+
+Playlist previews load in pages, with **Load more** and **Load all** controls for the remaining entries. Selections and filters persist as items arrive. The 50-item default download limit applies to how many items are saved in one job, not which playlist positions can be browsed or selected: a range such as `151-166` is valid. The UI displays the selection limit before submission. API clients can request later metadata pages with `playlist_start` on `POST /v1/probe`; pagination details are returned in `metadata.extra.playlist_page`.
+
+File sizes appear on sources, quality/format choices, playlist items and selected totals, download progress, and recent jobs. `~` marks an estimate from source sizes or duration and bitrate. Playlist selections automatically load item metadata in bounded batches without downloading media, and quality cards show the total beside the item range. While metadata loads, the UI shows **Calculating…**; incomplete totals show **Size unavailable** instead of a misleading subtotal. Failed item checks can be retried in the picker. Generated outputs may need encoding before their size is available. Completed artifacts and transcripts show their actual stored size.
+
 Neon Sync is an API-first, security-hardened **Universal Media Extraction Engine** that accepts a URL, intelligently identifies its content type, selects the best extraction engine via a capability registry, executes downloads in isolated subprocesses routed through a **Safe Egress Proxy**, validates/post-processes media via zero-egress **FFmpeg**, and returns a canonical JSON contract + safe artifact downloads.
 
 ---
@@ -25,6 +33,26 @@ uv pip install --python .venv/bin/python -e ".[dev]"
 NEON_SYNC_EGRESS_PROXY_URL=http://127.0.0.1:3128 .venv/bin/neon-sync-api
 ```
 
+For normal local use, install the extraction features and run both services together:
+
+```bash
+.venv/bin/pip install -e ".[engines,webpage]"
+# Install ffmpeg (including ffprobe), aria2, and Deno using your system package manager.
+# Optional dynamic pages, screenshots, and PDFs:
+.venv/bin/pip install -e ".[browser]"
+.venv/bin/python -m playwright install chromium
+./scripts/run-local.sh
+```
+
+Open [Neon Sync](http://127.0.0.1:8000/). The launcher persists job history in `data/jobs.sqlite3` and stops both child services when it exits. An incomplete download after a server restart is marked interrupted and can be retried with the original settings. The queue allows 100 pending/running jobs by default. Batch quota/capacity rejections create no partial jobs; repeated single-job submissions can use `idempotency_key` to safely retrieve the original job.
+
+Local artifacts use relative download URLs by default, so they work on the domain serving the app. Set `NEON_SYNC_ARTIFACT_BASE_URL` only when downloads need an explicit external base URL. S3/R2 credentials are optional; local storage works without any cloud account. When constructing `Settings()` programmatically, set `job_db_path` to persist history (the launcher and Docker configuration already do this).
+
+This version shares job history across visitors to the same installation. Use it locally or within a trusted group; independent user workspaces and distributed job processing are not implemented. Run one API worker per job database.
+
+Browser transport and size calculations can be checked with `node --test tests/browser_*.test.cjs` in addition to the Python suite.
+With Playwright Chromium installed, run `NEON_SYNC_BROWSER_TESTS=1 .venv/bin/pytest -q tests/test_ui_browser.py` to verify playlist scrolling and layout in both themes.
+
 ### Multi-Plane Docker Deployment (Network-Segmented)
 
 ```bash
@@ -40,10 +68,9 @@ docker compose up --build
 | Method & Path | Description |
 |---|---|
 | `GET /` | **Neon Sync Studio Web UI** (presets, tabbed video/audio/image/subtitle/clip settings, format picker, batch queue, live SSE progress) |
-| `GET /v1/health` | Service status + installed/missing engine overview |
+| `GET /v1/health` | Core service status and capability counts |
+| `GET /v1/capabilities` | Runtime feature availability, source limitations, and installation limits |
 | `GET /v1/formats` | Declarative catalog of supported qualities, codecs, containers, bitrates, image formats & presets |
-| `GET /v1/engines` | List all registered engine manifests, capabilities, versions, and circuit/health telemetry |
-| `POST /v1/engines/refresh` | Re-run live health & version checks across all registered adapters |
 | `POST /v1/probe` | Non-downloading metadata & format probe (canonical cached, SSRF-checked, normalized output) |
 | `POST /v1/jobs` | Enqueue an async extraction/download job with advanced video/audio/image/subtitle/clipping options |
 | `POST /v1/jobs/batch` | Validate & enqueue up to 10 URLs at once sharing advanced extraction settings |

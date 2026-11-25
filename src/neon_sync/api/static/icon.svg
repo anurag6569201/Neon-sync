@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Neon Sync">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#111420"/>
+      <stop offset="100%" stop-color="#07080d"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#22f0b8"/>
+      <stop offset="100%" stop-color="#0ea5e9"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <rect x="20" y="20" width="472" height="472" rx="96" fill="none" stroke="#22f0b8" stroke-opacity="0.22" stroke-width="6"/>
+  <!-- Spatial node & downward sync signal -->
+  <circle cx="152" cy="176" r="24" fill="url(#accent)"/>
+  <circle cx="360" cy="176" r="24" fill="url(#accent)" fill-opacity="0.72"/>
+  <path d="M174 188 C 216 210, 232 232, 256 264 C 280 232, 296 210, 338 188" fill="none" stroke="url(#accent)" stroke-width="20" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M256 132 L256 334" fill="none" stroke="url(#accent)" stroke-width="24" stroke-linecap="round"/>
+  <path d="M196 286 L256 346 L316 286" fill="none" stroke="url(#accent)" stroke-width="24" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="164" y="380" width="184" height="20" rx="10" fill="url(#accent)" fill-opacity="0.88"/>
+</svg>

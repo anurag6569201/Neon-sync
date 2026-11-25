@@ -117,6 +117,7 @@ class HealthReport(BaseModel):
 class ProbeOptions(BaseModel):
     timeout_seconds: int = Field(default=25, ge=1, le=120)
     max_items: int = Field(default=50, ge=1, le=500)
+    playlist_start: int = Field(default=1, ge=1, le=1_000_000)
     include_subtitles: bool = True
     preferred_engine: str | None = None
     allow_browser_fallback: bool = False

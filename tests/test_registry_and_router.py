@@ -229,3 +229,20 @@ async def test_orchestrator_caches_probes_and_cleans_scratch(tmp_path: Path):
     assert dl.download.status == "completed"
     assert dl.download.sha256 is not None
     assert not (settings.scratch_dir / "job_clean_1").exists()  # Scratch purged!
+
+
+async def test_playlist_page_cache_does_not_reuse_another_page(tmp_path: Path):
+    from neon_sync.models import ProbeRequest
+
+    settings = Settings(storage_dir=tmp_path / "storage")
+    registry = EngineRegistry()
+    stub = _StubEngine("yt-dlp", confidence=95)
+    registry.register_extractor(stub)
+    storage = LocalArtifactStorage(settings)
+    orchestrator = ExtractionOrchestrator(settings, registry, storage)
+    try:
+        for start in [1, 51, 1, 51]:
+            await orchestrator.probe(ProbeRequest(url="https://www.youtube.com/playlist?list=test", playlist_start=start))
+        assert stub.probe_calls == 2
+    finally:
+        storage.close()

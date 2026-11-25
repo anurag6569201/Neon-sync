@@ -53,11 +53,13 @@ def test_format_catalog_and_ytdlp_format_selectors():
     )
     assert "[height<=1080][fps<=60][vcodec^=avc]" in sel
     assert "bestaudio[ext=m4a]" in sel
-    assert sel.endswith("bestvideo+bestaudio/best")
+    # Fallbacks must retain requested limits and must never resolve to audio alone.
+    assert all("[height<=1080][fps<=60][vcodec^=avc]" in part for part in sel.split("/"))
+    assert all(part.startswith(("bestvideo", "best[")) for part in sel.split("/"))
 
     # Muted video-only selector
     vo = build_ytdlp_format_selector(mode="video", video_quality="1080", video_only=True)
-    assert vo == "bestvideo[height<=1080]/bestvideo"
+    assert vo == "bestvideo[height<=1080]"
     assert "bestaudio" not in vo
 
 

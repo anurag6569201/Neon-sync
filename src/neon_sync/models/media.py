@@ -133,6 +133,7 @@ class TranscriptInfo(BaseModel):
     language: str | None = None
     source: Literal["manual_captions", "auto_captions", "webpage_text"] | None = None
     artifact_url: str | None = None
+    size_bytes: int | None = Field(default=None, ge=0)
 
 
 class MediaItem(BaseModel):
@@ -146,6 +147,7 @@ class MediaItem(BaseModel):
     height: int | None = None
     duration_seconds: float | None = None
     size_bytes: int | None = None
+    size_is_approx: bool = False
     thumbnail_url: str | None = None
     direct_media_url: str | None = None
 
@@ -217,6 +219,7 @@ class NormalizedMediaOutput(BaseModel):
     thumbnail: ThumbnailInfo | None = None
     duration_seconds: float | None = Field(default=None, ge=0)
     size_bytes: int | None = Field(default=None, ge=0)
+    size_is_approx: bool = False
     author: AuthorInfo | None = None
     available_formats: list[FormatInfo] = Field(default_factory=list)
     subtitles: list[SubtitleTrack] = Field(default_factory=list)

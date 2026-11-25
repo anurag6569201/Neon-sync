@@ -23,7 +23,8 @@ class Settings(BaseSettings):
     environment: str = "development"
     api_host: str = "127.0.0.1"
     api_port: int = 8000
-    artifact_base_url: str = "http://127.0.0.1:8000"
+    # Relative links work on localhost, custom domains, and HTTPS reverse proxies.
+    artifact_base_url: str = ""
 
     # Security & Safe Egress Proxy
     egress_proxy_url: str | None = None
@@ -42,6 +43,8 @@ class Settings(BaseSettings):
     # Resource quotas & timeouts
     max_job_bytes: int = 2 * 1024 * 1024 * 1024  # 2 GiB
     max_playlist_items: int = 50
+    # Metadata browsing is paged independently of the per-download item limit.
+    playlist_probe_page_size: int = Field(default=50, ge=1, le=200)
     max_gallery_items: int = 100
     max_livestream_duration_seconds: int = 1800  # 30 min live recording cap
     probe_timeout_seconds: int = 40
@@ -73,6 +76,7 @@ class Settings(BaseSettings):
     # Concurrency & rate limiting
     max_concurrent_probes: int = 8
     max_concurrent_downloads: int = 3
+    max_pending_jobs: int = Field(default=100, ge=1)
     rate_limit_probes_per_minute: int = 30
     rate_limit_downloads_per_hour: int = 20
     probe_cache_ttl_seconds: int = 300  # 5 minutes

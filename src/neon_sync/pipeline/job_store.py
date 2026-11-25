@@ -7,7 +7,9 @@ import threading
 from pathlib import Path
 from typing import Protocol
 
-from neon_sync.models import JobRecord
+from neon_sync.models import JobRecord, JobStatus
+
+TERMINAL_STATUSES = {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED}
 
 
 class JobStore(Protocol):
@@ -16,6 +18,7 @@ class JobStore(Protocol):
     def save(self, record: JobRecord) -> None: ...
     def get(self, job_id: str) -> JobRecord | None: ...
     def list_recent(self, limit: int = 50) -> list[JobRecord]: ...
+    def list_unfinished(self) -> list[JobRecord]: ...
     def get_idempotency(self, key: str) -> str | None: ...
     def set_idempotency(self, key: str, job_id: str) -> None: ...
 
@@ -37,6 +40,9 @@ class InMemoryJobStore:
 
     def get_idempotency(self, key: str) -> str | None:
         return self._idempotency.get(key)
+
+    def list_unfinished(self) -> list[JobRecord]:
+        return [job for job in self._jobs.values() if job.status not in TERMINAL_STATUSES]
 
     def set_idempotency(self, key: str, job_id: str) -> None:
         self._idempotency[key] = job_id
@@ -115,6 +121,14 @@ class SQLiteJobStore:
                 (key,),
             ).fetchone()
         return str(row[0]) if row else None
+
+    def list_unfinished(self) -> list[JobRecord]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT payload_json FROM jobs WHERE status NOT IN (?, ?, ?)",
+                tuple(status.value for status in TERMINAL_STATUSES),
+            ).fetchall()
+        return [JobRecord.model_validate_json(row[0]) for row in rows]
 
     def set_idempotency(self, key: str, job_id: str) -> None:
         with self._lock:

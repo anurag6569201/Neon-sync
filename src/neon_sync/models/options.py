@@ -10,7 +10,9 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from .selection import playlist_indices
 
 VideoQuality = Literal["best", "2160", "1440", "1080", "720", "480", "360", "worst"]
 VideoContainer = Literal["auto", "mp4", "mkv", "webm", "mov"]
@@ -239,7 +241,7 @@ def build_ytdlp_format_selector(
     if mode == "audio":
         return "bestaudio/best"
     if video_quality == "worst":
-        return "worstvideo/worst" if video_only else "worstvideo+worstaudio/worst"
+        return "worstvideo" if video_only else "worstvideo+worstaudio/worst"
 
     filters: list[str] = []
     if video_quality != "best" and video_quality.isdigit():
@@ -259,28 +261,18 @@ def build_ytdlp_format_selector(
     v_filter = "".join(f"[{f}]" for f in filters)
 
     if video_only:
-        height_only = f"[height<={video_quality}]" if video_quality.isdigit() else ""
         if v_filter:
-            parts = [f"bestvideo{v_filter}"]
-            if height_only and height_only != v_filter:
-                parts.append(f"bestvideo{height_only}")
-            parts.append("bestvideo")
-            return "/".join(parts)
+            return f"bestvideo{v_filter}"
         if video_container == "mp4":
             return "bestvideo[ext=mp4]/bestvideo"
         return "bestvideo"
 
-    # Prefer matching audio container when MP4 requested for lossless remuxing
-    a_pref = "bestaudio[ext=m4a]/bestaudio" if video_container == "mp4" else "bestaudio"
-
     if v_filter:
-        # Graceful fallback chain: exact filter -> height-only -> best available
-        height_only = f"[height<={video_quality}]" if video_quality.isdigit() else ""
-        parts = [f"bestvideo{v_filter}+{a_pref}", f"best{v_filter}"]
-        if height_only and height_only != v_filter:
-            parts.append(f"bestvideo{height_only}+bestaudio")
-            parts.append(f"best{height_only}")
-        parts.append("bestvideo+bestaudio/best")
+        # Every fallback remains a video and honors the requested constraints.
+        parts = []
+        if video_container == "mp4":
+            parts.append(f"bestvideo{v_filter}+bestaudio[ext=m4a]")
+        parts.extend([f"bestvideo{v_filter}+bestaudio", f"best{v_filter}"])
         return "/".join(parts)
 
     if video_container == "mp4":
@@ -290,6 +282,8 @@ def build_ytdlp_format_selector(
 
 class AdvancedProcessingOptions(BaseModel):
     """Reusable mixin of advanced video/audio/image/subtitle/clipping settings."""
+
+    model_config = ConfigDict(allow_inf_nan=False)
 
     # Video
     video_quality: VideoQuality = "best"
@@ -327,7 +321,7 @@ class AdvancedProcessingOptions(BaseModel):
     # Clipping, Playlists & Live Streams
     clip_start_seconds: float | None = Field(default=None, ge=0)
     clip_end_seconds: float | None = Field(default=None, ge=0)
-    playlist_items: str | None = Field(default=None, max_length=64, pattern=r"^[0-9,\-: ]+$")
+    playlist_items: str | None = Field(default=None, max_length=4096, pattern=r"^[0-9,\-: ]+$")
     livestream_max_duration: int | None = Field(default=None, ge=5, le=7200)
 
     # Creative Studio & Compression (FFmpeg / Pillow)
@@ -343,3 +337,19 @@ class AdvancedProcessingOptions(BaseModel):
 
     # Naming
     custom_filename_prefix: str = Field(default="", max_length=64)
+
+    @model_validator(mode="after")
+    def validate_ranges(self) -> AdvancedProcessingOptions:
+        if self.gallery_range_end is not None and self.gallery_range_end < self.gallery_range_start:
+            raise ValueError("Gallery range end must be greater than or equal to its start.")
+        if self.clip_end_seconds is not None:
+            start = self.clip_start_seconds or 0.0
+            if self.clip_end_seconds <= start:
+                raise ValueError("Clip end must be greater than clip start.")
+            if self.clip_start_seconds is None:
+                self.clip_start_seconds = 0.0
+        if self.playlist_items is not None:
+            playlist_indices(self.playlist_items, limit=getattr(self, "max_items", 500))
+        if not self.subtitle_languages or any(not lang.strip() for lang in self.subtitle_languages):
+            raise ValueError("Choose at least one non-empty subtitle language.")
+        return self

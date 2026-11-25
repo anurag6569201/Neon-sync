@@ -12,10 +12,11 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from urllib.parse import quote, urlsplit
 
 import uvicorn
-from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
@@ -51,6 +52,45 @@ from .stream_routes import LiveStreamRegistry, stream_router
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
 _STATIC_INDEX = _STATIC_DIR / "index.html"
 _REQ_ID_SAFE_RE = re.compile(r"^[a-zA-Z0-9._-]{4,64}$")
+_INCOMING_HTTP_URL_RE = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
+_PREFIX_SCHEME_RE = re.compile(r"^(https?):/+(.+)$", re.IGNORECASE)
+
+
+def _extract_incoming_http_url(*values: str | None, max_length: int = 4096) -> str | None:
+    """Extract the first http(s) URL from query/share fields for same-origin UI handoff."""
+    for raw in values:
+        if not raw:
+            continue
+        match = _INCOMING_HTTP_URL_RE.search(raw.strip())
+        if not match:
+            continue
+        candidate = match.group(0).rstrip(").,;!?\"'}]")
+        if len(candidate) > max_length:
+            continue
+        parsed = urlsplit(candidate)
+        if parsed.scheme.lower() in {"http", "https"} and parsed.netloc:
+            return candidate
+    return None
+
+
+def _extract_prefix_target_url(raw_path: str, raw_query: str, *, max_length: int = 4096) -> str | None:
+    """Reconstruct a target http(s) URL from `/<url>` prefix paths (preserving query strings)."""
+    match = _PREFIX_SCHEME_RE.match(raw_path.lstrip("/"))
+    if not match:
+        return None
+    scheme = match.group(1).lower()
+    remainder = match.group(2).lstrip("/")
+    if not remainder:
+        return None
+    candidate = f"{scheme}://{remainder}"
+    if raw_query:
+        candidate = f"{candidate}?{raw_query}"
+    if len(candidate) > max_length:
+        return None
+    parsed = urlsplit(candidate)
+    if parsed.scheme in {"http", "https"} and parsed.netloc:
+        return candidate
+    return None
 
 
 class _NeonSyncStdoutFormatter(logging.Formatter):
@@ -183,14 +223,19 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger = configure_neon_logging()
-        await container.registry.refresh_health()
-        logger.info("Neon Sync v%s initialized (%s)", __version__, cfg.environment)
-        yield
-        await container.job_manager.shutdown()
-        if isinstance(job_store, SQLiteJobStore):
-            job_store.close()
-        if isinstance(storage, LocalArtifactStorage):
-            storage.close()
+        try:
+            recovered = container.job_manager.recover_interrupted_jobs()
+            await container.registry.refresh_health()
+            logger.info("Neon Sync v%s initialized (%s)", __version__, cfg.environment)
+            if recovered:
+                logger.info("Recovered %s interrupted job records", recovered)
+            yield
+        finally:
+            await container.job_manager.shutdown()
+            if isinstance(job_store, SQLiteJobStore):
+                job_store.close()
+            if isinstance(storage, LocalArtifactStorage):
+                storage.close()
 
     # Disable public OpenAPI/Swagger/ReDoc schemas so internal API definitions stay hidden
     app = FastAPI(
@@ -214,6 +259,62 @@ def create_app(
         if _STATIC_INDEX.exists():
             return HTMLResponse(_STATIC_INDEX.read_text(encoding="utf-8"))
         return HTMLResponse("<h1>Neon Sync</h1>")
+
+    @app.get("/manifest.webmanifest", include_in_schema=False)
+    async def pwa_manifest() -> FileResponse:
+        path = _STATIC_DIR / "manifest.webmanifest"
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="Not Found")
+        return FileResponse(path, media_type="application/manifest+json")
+
+    @app.get("/sw.js", include_in_schema=False)
+    async def pwa_service_worker() -> FileResponse:
+        path = _STATIC_DIR / "sw.js"
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="Not Found")
+        return FileResponse(
+            path,
+            media_type="application/javascript",
+            headers={"Cache-Control": "no-cache", "Service-Worker-Allowed": "/"},
+        )
+
+    @app.get("/apple-touch-icon.png", include_in_schema=False)
+    async def apple_touch_icon() -> FileResponse:
+        path = _STATIC_DIR / "icon-192.png"
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="Not Found")
+        return FileResponse(path, media_type="image/png")
+
+    @app.get("/favicon.ico", include_in_schema=False)
+    async def favicon() -> FileResponse:
+        path = _STATIC_DIR / "icon.svg"
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="Not Found")
+        return FileResponse(path, media_type="image/svg+xml")
+
+    @app.get("/share", include_in_schema=False)
+    async def share_target(
+        url: str | None = None,
+        text: str | None = None,
+        title: str | None = None,
+    ) -> RedirectResponse:
+        """PWA Web Share Target receiver: redirects safely to same-origin `/?url=...`."""
+        target = _extract_incoming_http_url(url, text, title, max_length=cfg.max_url_length)
+        dest = f"/?url={quote(target, safe='')}" if target else "/"
+        return RedirectResponse(url=dest, status_code=302)
+
+    @app.get("/https:{target_rest:path}", include_in_schema=False)
+    @app.get("/http:{target_rest:path}", include_in_schema=False)
+    async def url_prefix_capture(target_rest: str, request: Request) -> RedirectResponse:
+        """Instant URL prefix shortcut: `https://host/https://example.com/v` -> `/?url=...`."""
+        target = _extract_prefix_target_url(
+            request.url.path,
+            request.url.query,
+            max_length=cfg.max_url_length,
+        )
+        if not target:
+            raise HTTPException(status_code=404, detail="Not Found")
+        return RedirectResponse(url=f"/?url={quote(target, safe='')}", status_code=302)
 
     return app
 
